@@ -1,0 +1,69 @@
+schema_version = 1
+plugin = "mxfp4_gemm_base"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/mxfp4_gemm_base.hip"
+source_sha256 = "515c359c43daab4821e6d29a2ea8088dcb8cda0a632e25280d873343ad4ba37f"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "f539dd9170b0ded5d86fc164e947c5bd88970fcb03324d48b6a7bd172c5bd3e1"
+hsaco = "mxfp4_gemm_base.hsaco"
+hsaco_sha256 = "3fe16c8dba00a79c01c21d142d9455bcb14b1c46ecd3ae21dfeda038f5e1457e"
+
+[[kernel]]
+name = "mxfp4_gemm_base"
+symbol = "mxfp4_gemm_base.kd"
+kernarg_segment_size = 52
+kernarg_segment_align = 8
+group_segment_fixed_size = 13952
+private_segment_fixed_size = 0
+vgpr_count = 100
+sgpr_count = 22
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"

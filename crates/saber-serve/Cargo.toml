@@ -1,0 +1,32 @@
+[package]
+name = "saber-serve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+saber-model = { path = "../saber-model" }
+saber-vision-input = { path = "../saber-vision-input" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+# `preserve_order` is load-bearing, not a nicety: tool-call arguments are compared
+# byte-for-byte against `json.dumps` of a Python dict, whose key order is insertion
+# order. A BTreeMap would sort the keys and every multi-parameter call would differ.
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+axum = { version = "0.8", features = ["json", "tokio", "http1"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-core = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# The reference parameter regexes use a lookahead — `(?=<\s*parameter\s*=)` — which the
+# `regex` crate cannot express. fancy-regex is the backtracking engine that can.
+fancy-regex = "0.14"
+
+[dev-dependencies]
+base64 = "0.22"
+png = "0.18"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }

@@ -1,0 +1,69 @@
+schema_version = 1
+plugin = "dflash_walk"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/dflash_walk.hip"
+source_sha256 = "9bb83ee213c7288a71c299694d3126f0a659e5dc28630b7679d2d6cb66c8f3f9"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "003d835c42b6f26fb64475cdc1ffaacd2ddd1b298a2758bdde6b942ef3d7e8dc"
+hsaco = "dflash_walk.hsaco"
+hsaco_sha256 = "e0dae07431f527b273c1e910ff8204e0f14d2c1aa2ad26aacfe29251552da70f"
+
+[[kernel]]
+name = "dflash_selector_walk_greedy"
+symbol = "dflash_selector_walk_greedy.kd"
+kernarg_segment_size = 52
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 15
+sgpr_count = 24
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "scores"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "candidates"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "req_state"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "tokens"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "realized"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "reqs"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "num_steps"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "top_k"

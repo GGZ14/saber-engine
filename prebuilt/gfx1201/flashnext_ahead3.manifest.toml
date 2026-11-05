@@ -1,0 +1,75 @@
+schema_version = 1
+plugin = "flashnext_ahead3"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_ahead3.hip"
+source_sha256 = "1ce61e14b1e9778990f290156113b71492b66a696f07e0c6f7fa9a94b66b1d0d"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "5856387a8813fddf4ddff44c7e2db8837df1ca078422ac59d6af7c28de97addc"
+hsaco = "flashnext_ahead3.hsaco"
+hsaco_sha256 = "e7170922f0801d02a1f7ad784e080bf6c2b83c5f336b2c5eb163c33ccd6afa04"
+
+[[kernel]]
+name = "fn119d_vemb"
+symbol = "fn119d_vemb.kd"
+kernarg_segment_size = 52
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 9
+sgpr_count = 21
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "ids"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "embh"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "pay"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "w"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "nseq"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "half"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "rank"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "ids_stride"

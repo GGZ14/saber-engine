@@ -1,0 +1,11 @@
+[package]
+name = "saber-test-scratch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Test-only: every crate takes this as a DEV-dependency, never a real one. It is the one place a
+# test or a `#[cfg(test)]` module may make scratch on disk (FN51h, tools/ci/structural.sh check 10).
+[dependencies]

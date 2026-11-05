@@ -1,0 +1,102 @@
+## The RAGGED decode attention (workstream C2), as DATA: the rows that route a decode ROW BAND's
+## attention to `saber_attn_ragged.hsaco` (the retired source generator RAGGED_SUBS: rx6's decode
+## kernel and split-KV combine with each sequence's query length read from `cu_q`, the step's
+## cumulative live-row prefix).
+##
+## A TABLE OF ITS OWN, merged into `saber::SaberRules::prod_saber()` beside `saber_gfx1201.toml`, for the
+## reason the policy digest is per table: every autotune record is keyed on the tables that own its
+## route's candidate plugins (`saber_kernels::rule_table_for_plugin`), so these rows living in the
+## rx6 table would re-key every saber route's record for a route none of them can bind. Here they
+## re-key nothing but the ragged route's own.
+##
+## The op is `attn_decode_paged_ragged`, not `attn_decode_paged`: a band's geometry asks for it by
+## name (`saber::attn_decode`, `Graph::route`), so a uniform geometry can never select a ragged entry
+## and a ragged one never a uniform entry — and `saber::attn_decode` refuses the mix by name anyway.
+## `q_len` is the PLAN's max verify width (the scratch stride and the NW choice); `ragged = 1` is the
+## key only a band states.
+
+schema_version = 1
+name = "saber-gfx1201-rx6-ragged"
+
+[[registry]]
+op = "attn_decode_paged_ragged"
+entry = "attn_decode_h256_gqa6_fp8kv_ragged"
+constraints = [
+  { key = "head_dim", op = "eq", ival = 256 },
+  { key = "gqa", op = "eq", ival = 6 },
+  { key = "block_size", op = "eq", ival = 16 },
+  { key = "causal", op = "eq", ival = 1 },
+  { key = "q_len", op = "le", ival = 10 },
+  { key = "q_dtype", op = "in", sval = "bf16" },
+  { key = "kv_dtype", op = "in", sval = "fp8_e4m3" },
+  { key = "ragged", op = "eq", ival = 1 },
+]
+
+[[registry]]
+op = "attn_decode_paged_ragged"
+entry = "attn_decode_h256_gqa6_bf16kv_ragged"
+constraints = [
+  { key = "head_dim", op = "eq", ival = 256 },
+  { key = "gqa", op = "eq", ival = 6 },
+  { key = "block_size", op = "eq", ival = 16 },
+  { key = "causal", op = "eq", ival = 1 },
+  { key = "q_len", op = "le", ival = 10 },
+  { key = "q_dtype", op = "in", sval = "bf16" },
+  { key = "kv_dtype", op = "in", sval = "bf16" },
+  { key = "ragged", op = "eq", ival = 1 },
+]
+
+## The ragged decode instantiations: the uniform rows' NW ladder (NW = ceil(q_len * gqa / 16) at the
+## plan's MAX width), each symbol taking `cu_q`, so a band captures one symbol for every width
+## multiset it can run.
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_fp8kv_ragged"
+nw = 1
+symbol = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw1"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_fp8kv_ragged"
+nw = 2
+symbol = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw2"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_fp8kv_ragged"
+nw = 3
+symbol = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw3"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_fp8kv_ragged"
+nw = 4
+symbol = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw4"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_bf16kv_ragged"
+nw = 1
+symbol = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw1"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_bf16kv_ragged"
+nw = 2
+symbol = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw2"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_bf16kv_ragged"
+nw = 3
+symbol = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw3"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_bf16kv_ragged"
+nw = 4
+symbol = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw4"
+
+## The ragged combine: the job's sequence by a walk of `cu_q`, zeros past `cu_q[num_seqs]` (a band's
+## padding rows). PF16 = 1 is the live path, as for the uniform combine.
+[[attn_combine]]
+pf16 = true
+ragged = true
+symbol = "saber_attn_splitkv_combine_ragged_h256_pf1"
+
+[[attn_combine]]
+pf16 = false
+ragged = true
+symbol = "saber_attn_splitkv_combine_ragged_h256_pf0"

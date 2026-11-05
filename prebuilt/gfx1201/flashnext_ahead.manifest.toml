@@ -1,0 +1,381 @@
+schema_version = 1
+plugin = "flashnext_ahead"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_ahead.hip"
+source_sha256 = "df03bb69bdd5646a67d4469399a1713e4620fde8da2a1ea07246ed833d65db82"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "9529d2e35f482782d78bc26f57aef0877a574e80e64a187de51fb2be1ec6b3b7"
+hsaco = "flashnext_ahead.hsaco"
+hsaco_sha256 = "6a69128b742da25079b544628126acf7df3880f50f6b3ebf058a9d97c0f6aec3"
+
+[[kernel]]
+name = "fn119_draw_walk"
+symbol = "fn119_draw_walk.kd"
+kernarg_segment_size = 52
+kernarg_segment_align = 8
+group_segment_fixed_size = 10324
+private_segment_fixed_size = 0
+vgpr_count = 70
+sgpr_count = 41
+wavefront_size = 32
+max_flat_workgroup_size = 160
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "seam_a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "seam_b"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "rp"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "sq"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "rowout"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "nseq"
+
+[[kernel]]
+name = "fn119_expf_probe"
+symbol = "fn119_expf_probe.kd"
+kernarg_segment_size = 16
+kernarg_segment_align = 8
+group_segment_fixed_size = 2048
+private_segment_fixed_size = 0
+vgpr_count = 16
+sgpr_count = 35
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "base"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "per"
+
+[[kernel]]
+name = "fn119a_backup"
+symbol = "fn119a_backup.kd"
+kernarg_segment_size = 288
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 9
+sgpr_count = 15
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "rowout"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "lg"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "stg"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "row16"
+
+[[kernel]]
+name = "fn119a_emb"
+symbol = "fn119a_emb.kd"
+kernarg_segment_size = 48
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 9
+sgpr_count = 20
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "rowout"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "embh"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "pay"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "w"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "nseq"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "half"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "rank"
+
+[[kernel]]
+name = "fn119a_gather"
+symbol = "fn119a_gather.kd"
+kernarg_segment_size = 32
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 9
+sgpr_count = 20
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "strm"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "prev"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "w"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "rowh"
+
+[[kernel]]
+name = "fn119a_push"
+symbol = "fn119a_push.kd"
+kernarg_segment_size = 32
+kernarg_segment_align = 8
+group_segment_fixed_size = 4
+private_segment_fixed_size = 0
+vgpr_count = 6
+sgpr_count = 14
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "seam"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "win_peer"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "ctr"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "rows_max"
+
+[[kernel]]
+name = "fn119a_sel"
+symbol = "fn119a_sel.kd"
+kernarg_segment_size = 32
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 9
+sgpr_count = 12
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "var"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "dst"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "stride16"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "n16"
+
+[[kernel]]
+name = "fn119a_walk"
+symbol = "fn119a_walk.kd"
+kernarg_segment_size = 64
+kernarg_segment_align = 8
+group_segment_fixed_size = 10324
+private_segment_fixed_size = 0
+vgpr_count = 69
+sgpr_count = 42
+wavefront_size = 32
+max_flat_workgroup_size = 160
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "seam_a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "win"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "ctr"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "rp"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "sq"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "rowout"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "nseq"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "rows_max"

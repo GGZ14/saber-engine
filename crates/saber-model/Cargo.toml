@@ -1,0 +1,30 @@
+[package]
+name = "saber-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+# `preserve_order` keeps JSON object key order, which the chat template's `tojson`
+# depends on: Python's json.dumps emits keys in insertion order.
+serde_json = { workspace = true, features = ["preserve_order"] }
+minijinja = { version = "2.24", features = ["loop_controls", "preserve_order"] }
+minijinja-contrib = { version = "2.24", features = ["pycompat"] }
+tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
+# The layer graph asks the kernel plane whether a route EXISTS for each op, rather than keeping
+# its own list of what is ported: `saber::Registry::select` over the committed `[[registry]]` rows
+# and `rules::resolve` over the committed MXFP4 bands, with `prebuilt::ALL` as the artifact
+# ledger. This crate is pure Rust — it links no HIP and touches no GPU — so a host `cargo test`
+# still runs everything (see saber-kernels' own module docs).
+saber-kernels = { path = "../saber-kernels" }
+# FN144: the CSF census and the fp4-local plan hash decoded planes.
+sha2 = { workspace = true }
+
+[dev-dependencies]
+# Test scratch under target/, deleted on drop -- never /tmp (FN51h; structural.sh check 10).
+saber-test-scratch = { path = "../saber-test-scratch" }
+hex = { workspace = true }

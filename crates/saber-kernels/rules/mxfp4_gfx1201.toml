@@ -1,0 +1,512 @@
+## MXFP4 W4A8 launch rules for gfx1201, as DATA.
+##
+## Every row below is a decision the prod launcher (ref/ref_mxfp4_fp8.hip,
+## `launch_impl` :1136, `launch_at_impl` :1660, `split_k_for` :1097, `decode_bk64` :1089) makes in
+## C++ from a macro ladder and a `getenv`. Ordering is load-bearing: the band tables are
+## first-match-wins and mirror the reference's else-if chains line for line, so the two can be
+## diffed. The measured cell-by-cell sweeps that produced these numbers are quoted in the kernel
+## source; nothing here is a fresh guess.
+##
+## Provenance of the knob values: prod defaults from ref/serve-mxfp4.sh:932-936 with
+## MAXSEQS=8 (TP=2, the qwen_prod_nvfp4 unit).
+
+schema_version = 1
+name = "mxfp4-w4a8-gfx1201-prod"
+## decode split-K ladder (DEC_KS is its last entry). Top-level, so it must precede every table.
+split_k_ladder = [1, 2, 4]
+
+[knobs]
+# SABER_MXFP4_DECODE_MAX_M: which M take the decode kernel at all. 64 covers the 8-stream
+# default exactly (dflash SPEC=7 -> 8x8); a 16-concurrent serve sets 128.
+decode_max_m = 64
+# SABER_MXFP4_A_TILED_MIN_M: at and above this M the producers emit fragment-tiled activations
+# and the GEMM takes the A-direct prefill kernel. Must exceed max(512, decode_max_m).
+a_tiled_min_m = 513
+# DEC_MAX_N / DEC_MAX_TM / DEC_MTILE / DEC_DWN / DEC_KS from the kernel source. `dec_max_n` is the
+# width of the SPLIT-K SCRATCH (the partial slab and the per-n-block counter), so it guards the
+# split arm only: at ks = 1 the kernel writes C directly, this plan binds both slots null, and the
+# vocabulary GEMM takes the decode tile instead of the prefill one -- 0.35x, bit-identical, measured
+# 2026-09-19 (see rules.rs at the band test, and docs/LEDGER.md).
+dec_max_n = 36864
+dec_max_tm = 8
+dec_mtile = 16
+dec_dwn = 8
+dec_ks = 4
+# Weight layout and load hint, set once per process by the loader. These pick the SYMBOL; they
+# must agree with the tensor that was packed or the weight is read as garbage.
+wperm = true
+decode_nt = true
+# Epilogue fast path: bit-identical by construction, +7.7-8.0% at prefill shapes.
+epifast = true
+# K must be a multiple of the GEMM's K slab; the A-tiled kernel needs a 128-deep slab.
+k_multiple = 64
+atiled_k_multiple = 128
+# Merged-linear partition boundaries must be n-tile aligned for every kernel (decode 128).
+partition_align = 128
+# Tiles. base: BM/BN/NWAVE*32. folded+atiled: BMF, WN, NTHREADS.
+base_bm = 128
+base_bn = 64
+base_block = 256
+folded_bmf = 256
+folded_wn = 2
+folded_block = 256
+# The fused quant/norm producers: one workgroup per row, 512 threads at prefill-class M.
+quant_large_min_m = 2048
+quant_small_block = 256
+quant_large_block = 512
+# saber_add_rms_quant: K <= 40*256 and K % 8; tiled needs K % 16.
+quant_max_k = 10240
+# saber_silu_mul_quant: N <= 40*512; N > 40*256 forces the 512-thread instantiation.
+silu_max_n = 20480
+silu_large_n = 10240
+# saber_gdn_norm_quant: N <= 40*256, N % 128, z row stride % 8.
+gdn_max_n = 10240
+gdn_n_multiple = 128
+# SABER-AUTHORED (G2): saber_gdn_norm_quant has one row-major instantiation, so on the
+# reference's law the GDN out_proj is the one prefill GEMM on the folded kernel. With this on,
+# gdn_norm_quant_t256_tiled1 (hip/mxfp4_gdn_norm_tiled.h) writes the fragment-tiled layout at
+# a_tiled_min_m like the other producers and out_proj takes the A-tiled family. Bit-exact: the
+# tiled bytes are a permutation of the reference's, and the folded and A-tiled GEMMs are one
+# summation class (docs/LEDGER.md, G2).
+gdn_norm_tiled = true
+# SABER-AUTHORED (G5): the folded prefill GEMM's mid-M tile heights, `[[folded_mt]]` below. OFF here:
+# `saber serve --engine-mid-chunk-gemm` (`saber engine --mid-chunk-gemm`, `step-tp2 --mid-chunk-gemm`)
+# turns it on for every plan's rules (bit-exact: one summation class with the reference's tile).
+folded_mt = false
+# SABER-AUTHORED (G6): THE LAYOUT LAW'S MID BAND. With `atiled_mid` on, every fused quant producer
+# (add_rms_quant, silu_mul_quant, gdn_norm_quant, attn_gate_quant -- all four already carry a
+# tiled1 store) writes the fragment-tiled A layout from `atiled_mid_min_m` rows up, and the GEMMs
+# reading those edges take the A-tiled family: `[[atiled_mt]]` below, else the reference's A-tiled
+# tile. `rules::ATiledLaw` is the one question every reader asks (producers, glue, graph, GEMM).
+# The edge must exceed decode_max_m and C6's small chunk (128): those rows run the decode kernel,
+# which reads row-major. OFF here: `saber serve --engine-mid-chunk-atiled`.
+atiled_mid = false
+atiled_mid_min_m = 129
+# SABER-AUTHORED (G6): the skinny-N body for the 48-wide GDN gate, `[[skinny]]` below. OFF here:
+# `saber serve --engine-skinny-gate`.
+skinny = false
+
+## ---- decode split-K, M <= 64: split_k_for's fill rule -------------------------------------
+## "the smallest split whose grid still fills the machine". Cost rises with M, benefit does not,
+## so the fill target FALLS as M rises. Re-measured with branchless staging 2026-08-28.
+[[split_k_fill]]
+m_max = 24
+fill = 110
+
+[[split_k_fill]]
+fill = 78
+
+## ---- decode BK, M <= 64: decode_bk64 ------------------------------------------------------
+## BK=64 only at DTM=4 with no split -- the one cell (gate_up at M=49..64) where the LDS cliff
+## beats BK=128's deeper slab. 0.80x/0.79x measured at M=56/64.
+[[decode_bk]]
+tm = 4
+ks = 1
+bk = 64
+
+[[decode_bk]]
+bk = 128
+
+## ---- decode band for M > 64 ----------------------------------------------------------------
+## launch_impl's M>64 ladder, measured cell-by-cell 2026-08-29 (tier7, DRAM-fed, six shapes to
+## M=128). First match wins, in this order -- the later rows are only reachable for the nblk
+## range the earlier ones did not claim, exactly as the C++ else-if chain intends.
+[[decode_band]]
+m_min = 65
+nblk_min = 110
+ks = 1
+bk = 64                       # gate_up: bk128 is +38% at M=128 (251 vs 181 us)
+
+[[decode_band]]
+m_min = 65
+nblk_min = 48
+ks = 1
+bk = 128                      # n8192/n7168: the old fill=78 rule picked dks2, -5%
+
+[[decode_band]]
+m_min = 65
+nblk_max = 8
+ks = 4
+bk = 128                      # gate48: widest split, as everywhere
+
+[[decode_band]]
+m_min = 65
+m_max = 80
+k_min = 6144
+ks = 2
+bk = 128                      # down (68 k-slabs) up to M=80
+
+[[decode_band]]
+m_min = 81
+k_min = 6144
+ks = 4
+bk = 64                       # down goes non-monotonic: d4/b64 111.8 vs d2/b128 153.4 at M=128
+
+[[decode_band]]
+m_min = 65
+ks = 1
+bk = 128                      # out (24 k-slabs): few slabs, splits never pay
+
+## WITHDRAWN 2026-09-20, and left here as a warning about the instrument rather than deleted.
+##
+## From 2026-09-19 to 2026-09-20 this file carried a Saber-only row -- `m_max = 64, nblk_min = 110,
+## ks = 1, bk = 64` -- on the strength of a sweep that said BK=64 beat BK=128 by 30-37% at
+## `layer.mlp.gate_up` (N=17408, nblk 136). It does not. That sweep measured every sample against
+## ONE set of buffers, so gate_up's 47.4 MB of weights sat in the 64 MB Infinity Cache and the
+## kernels were ranked on a cache the step never has: the step streams 15.4 GB of weights per
+## token. Re-measured with the buffers rotated and a 128 MB scrub between samples (`saber tune`,
+## IC-cold, the default since 2026-09-20), at the same shape, same box, same power cap:
+##
+##     M      bk128_ks1   bk64_ks1     cold        hot said
+##      5        96.22      106.10     -10.3%       +30.3%
+##     10        95.66      106.32     -11.1%       +37.2%
+##     20        99.42      110.50     -11.1%       +17.7%
+##     40       104.36      115.94     -11.1%        -1.9%
+##
+## Cold, BK=64 is 10-11% SLOWER at every decode M, and 106.10 us for 47.4 MB is 450 GB/s -- which
+## is the rate H13 measured for this kernel IN CHAIN (453 GB/s at b1s5). The hot number, 63.18 us,
+## is 750 GB/s: above this card's 635 GB/s DRAM peak, which is how a cache announces itself.
+##
+## So the band below -- `split_k_for` + `decode_bk64`, the reference's own -- is what ships again,
+## and the eight oracle cells this row deviated on agree with the reference once more. The
+## vocabulary width (nblk 970) that the row also covered is a TIE cold (-1.3% at M=20, -0.7% at
+## M=40, inside the floor), so nothing replaces it there either.
+
+## The M <= 64 band: split_k_for + decode_bk64, as shipped. Last row, so it only sees M <= 64.
+[[decode_band]]
+m_max = 64
+ks_from_fill = true
+bk_from_tm = true
+
+## ---- K alignment override ------------------------------------------------------------------
+## The decode kernel stages whole DBK-byte K slabs with no k bound, so K must be a multiple of the
+## slab. TP=3 dummy-head padding makes down_proj K = 17472/5824: a multiple of 64 but not 128, and
+## at BK=128 the last slab read the NEXT row -- a serve that emitted nothing but token 0
+## (2026-09-06). BK=64 exists for splits 1 and 4 only, so the split-2 cell widens to 4.
+[k_align_override]
+k_modulus = 128
+bk = 64
+ks_from = 2
+ks_to = 4
+
+## ---- prefill N tile ------------------------------------------------------------------------
+## TN is the N tile: BNF = WN * TN * 16, so TN=4 covers 128 columns per workgroup and TN=2 covers
+## 64. The reference launcher picks it from M alone (SABER_MXFP4_TN4_MIN_M, default 2048) and
+## hands the same answer to BOTH prefill kernels. That is the part Saber does not copy.
+##
+## The two kernels do not share an optimum, and the proof needs no model of either: at one and
+## the same shape, measured in one interleaved sweep (2026-09-19, prod down, 210 W, 5+20 rounds),
+##
+##     (M, N, K)          folded (A row-major)           A-tiled (A in fragment order)
+##     2048, 5120, 3072   TN2 328.60 / TN4  358.76 us    TN4  271.66 / TN2  286.80 us
+##     8192, 5120, 3072   TN2 1290.0 / TN4 1439.98 us    TN4 1305.70 / TN2 1363.52 us
+##
+## -- opposite winners, by 9.2%/11.6% one way and 5.6%/4.4% the other. M, N and K are identical
+## down the row, so NO condition on M, N or K can separate them: the axis is which kernel reads
+## A. The folded kernel stages A through LDS (BMF*BK = 16 KB per K-slab against W's 2 KB, an
+## ablation in the reference prices it at 24% of runtime) and TN=4 exists to amortise exactly
+## that staging over twice the columns; the A-tiled kernel has no A stage to amortise, it reads
+## the fragments directly, and its TN=4 pays for a different reason (and takes LBK=64 with it,
+## see atiled_lbk). Hence `a_tiled` on the row: a row that does not say which kernel it is for
+## cannot be right for both.
+##
+## The A-tiled row is the shipped one, unchanged and re-confirmed at every prefill shape in the
+## plan: TN=4 by +2.8..+6.0% at n5120/n7168/n8192/n17408, and TN=2 by +42..+57% at N=48 (the gdn
+## gate), which is the n_min = 128 case -- 128 columns computed against 48 real ones.
+##
+## The folded row is TN=2 at every M, and this is where Saber stops following the reference. The
+## reference's own crossover comment (ref_mxfp4_fp8.hip:227-233) measured TN=4 at +10.0%
+## (M=8192) .. +1.3% (M=2048) and set TN4_MIN_M=2048 from it -- but it measured on **gate_up
+## 17408x5120**, and in this engine gate_up never reaches the folded kernel at a prefill M: its A
+## is fragment-tiled, so it takes the A-tiled kernel. The folded kernel is reached only by a
+## ROW-MAJOR edge, and this model has exactly two: `layer.attn.o_proj` (N=5120, K=3072 at TP=2),
+## whose numbers are in the table above, and `lm_head` (N=124160), which is M<=40 at every bucket
+## -- where TN=2 also wins, by +12.0..+13.0%. Every folded cell this plan can produce is measured,
+## and TN=2 wins all of them.
+##
+## The reference's number is not contradicted, it is out of reach: at N=17408 the wide tile has
+## ceil(17408/128) = 136 column blocks, at N=5120 it has 40, and at M=2048 that is 320 workgroups
+## for 64 CUs -- one pass with no tail slack, against 640 at TN=2. That is the kernel's own "below
+## the crossover the wide tile cannot fill" argument on the N axis; the reference only ever varied
+## M, on one N. RE-OPEN THIS ROW if a row-major edge at a wide N ever enters the model: the
+## boundary between nblk128 40 (measured, TN=2) and 136 (the reference's TN=4) has NOT been
+## measured, and this row does not pretend to know where it is.
+[[folded_tn]]
+a_tiled = true
+m_min = 2048
+n_min = 128
+tn = 4
+
+[[folded_tn]]
+tn = 2
+
+## ---- A-tiled prefill K slab ----------------------------------------------------------------
+## LBK is keyed on TN: at TN=2 a 128-deep W slab is 2-4% faster on every shape; at TN=4 it costs
+## registers (246 VGPRs, occupancy 5) and loses 12-17%.
+[[atiled_lbk]]
+tn = 2
+lbk = 128
+
+[[atiled_lbk]]
+tn = 4
+lbk = 64
+
+## ---- A-tiled tile height (SABER-AUTHORED, workstream G1, 2026-09-23) ----------------------
+## `wm` = waves down M. Absent a row, 4: the reference's 256-row tile. WM = 8 is the 512-row tile
+## in `hip/mxfp4_atiled_wm.h` (16 waves, the W slab folded once per 512 rows, A loads issued after
+## the fold, s_setprio across the staging): BIT-IDENTICAL to the reference kernel on every shape
+## (13 incl. ragged M, controls failing), and at M = 2048 on the TP=2 shards 0.943-0.950x its
+## time on gate_up, 0.948-0.964 down, 0.955 in_proj, 0.964-0.967 qkv, 0.976-0.991 o_proj
+## (IC-cold, 100 interleaved reps x 2 passes, card 1, 210 W). Only the fragment-order W layout is
+## compiled.
+## `variant` (SABER-AUTHORED, workstream G3, 2026-09-23) picks the compiled body of that height:
+## absent = G1's `_wm8`; "s" = `_wm8s` (W / Ws loads in the SADDR form, 31 VALU a slab instead of
+## 33 and no VCC carry stall); "sp" = `_wm8sp` (the same + the W slab double-buffered in LDS, one
+## barrier a slab, capped at 192 VGPRs). Each is 0 of 13 shapes differing against the reference.
+## At M = 2048 (G3 hold 2, card 1, 210 W, IC-cold, 100 reps x 2 passes, vs `_wm8`): "sp"
+## 0.963-0.969 gate_up, 0.947-0.964 down, 0.953-0.961 in_proj, 0.958-0.963 qkv, 0.959-0.962
+## o_proj; "s" 0.978-0.994.
+## G2 (2026-09-23): the envelope continues past the 2048-row chunk to the 8192-row one, on G1's
+## `_wm8` body (the one G2 gated and timed there): 0 bytes differing at 4096/8192 + ragged tails,
+## 0.972-0.986x the reference tile IC-cold at M = 4096/8192, served prefill -1.8 to -2.3 % at
+## 8k-32k under `--engine-prefill-rows 256,2048,8192` (docs/LEDGER.md, G2). G1's lab read of a loss
+## at 8192 did not reproduce.
+## G4 (2026-09-23): G3's `_wm8sp` body on 2049..8192 too (the second row's `variant`): 0 bytes
+## differing against the shipped `_wm8` on G2's 16 tall shapes (TP=2 shards at 4096/8192 + ragged
+## 8191/6007/2049/5000/7937/3000, controls failing), P0 `gate.sh --extra-cases
+## tools/capture/g2/wm8_cases.txt` bit-exact; timing and the served pair in docs/LEDGER.md, G4.
+[[atiled_wm]]
+tn = 4
+m_min = 2048
+m_max = 2048
+w_fragment_order = true
+wm = 8
+variant = "sp"
+
+[[atiled_wm]]
+tn = 4
+m_min = 2049
+m_max = 8192
+w_fragment_order = true
+wm = 8
+variant = "sp"
+
+## ---- folded tile mid-M heights (SABER-AUTHORED, workstream G5, 2026-09-24) ---------------
+## Bound only while `folded_mt` is on. The reference's folded tile is 256 rows (TM 4 x WM 4), and its
+## loop is WMMA-issue-bound (G1), so a rung of 257..384 rows paid TWO tiles (512 rows of WMMA) and
+## p192 paid one 256-row tile for 192. `hip/mxfp4_gemm_folded_mt.hip` is the same body with the
+## tile as TM x WM x 16 rows: 0 bytes differing against `mxfp4_gemm_folded_tn2_wperm1_epifast1` on
+## the TP=2 shards at M 129/192/200/256/257/300/320/333/383/384/512 (k-reversal and no-fold
+## controls failing, the W-byte flip moving the output). Unit time IC-cold (card 1, 210 W, 60 reps
+## x 2 passes, vs the reference tile at the same M; tools/capture/g5/unit_inner.sh):
+##
+##     M = 320          gate_up 17408  down 5120x8704  in_proj 8192  qkv 7168  o_proj 5120x3072
+##     t5w4 (320 rows)  0.73           0.83            0.71          0.76      0.83-0.85
+##     t5w2 (160 rows)  0.73           0.73-0.74       0.76          0.74-0.77 0.78-0.80
+##     M = 384 / 192    t3w4 (192 rows) 0.81 / 0.83   0.85 / 0.84    0.84 / 0.87  0.88 / 0.85  0.89-0.90 / 0.88
+##
+## The 48-wide GDN gate (one workgroup, K-serial) keeps the reference at 320 (t5w4 1.16x) and takes
+## t3w4 at 192 / 384 (0.90 / 0.92). p256 and p512 keep the reference tile (it IS their exact
+## height; t4w2 is 0.89 on down only). The decode kernel at one split in 128-row chunks (C6's
+## mechanism above 128 rows) is 1.03-1.79x the reference tile at every shape and is not a row.
+[[folded_mt]]
+m_min = 129
+m_max = 192
+tm = 3
+wm = 4
+
+[[folded_mt]]
+m_min = 257
+m_max = 320
+n_min = 8192
+tm = 5
+wm = 4
+
+[[folded_mt]]
+m_min = 257
+m_max = 320
+n_min = 128
+tm = 5
+wm = 2
+
+[[folded_mt]]
+m_min = 321
+m_max = 384
+tm = 3
+wm = 4
+
+## ---- A-tiled tile mid-M heights (SABER-AUTHORED, workstream G6, 2026-09-24) --------------
+## Bound only while `atiled_mid` is on AND M < a_tiled_min_m (the layout law's mid band). The body is
+## G5's lab A-tiled tile with TM as a parameter (`hip/mxfp4_atiled_mt.h`), `pipe` = the W slab's
+## global loads double-buffered. One summation class with the reference A-tiled tile and with the
+## folded tile over the same A (G2): 0 bytes on the TP=2 shards at M 129..512 incl. ragged tails and
+## the TP=1 shards (tools/capture/g6/unit_inner.sh, 1,851 arm x shape cells, k-reversal / no-fold
+## controls failing, the W-byte flip moving). Unit time IC-cold (card 1, 210 W, 60 reps x 2 passes)
+## as a multiple of the reference folded tile at the same M, against what the rung runs today:
+##     M     body            gate_up 17408  down 5120x8704  in_proj 8192  qkv 7168   o_proj 5120x3072
+##     192   t3w4  l128      0.76           0.65            0.75          0.70       0.71   (G5 t3w4 0.83-0.88)
+##     256   t4w4p l128      0.77           0.73            0.80-0.87     0.81-0.85  0.82   (reference 1.00)
+##     320   t5w4p l64       0.55-0.56      --              --            --         --     (G5 t5w4 0.73)
+##     320   t5w2p l64       0.64           0.61            0.60-0.63     0.62       0.66   (G5 t5w2 0.71-0.80)
+##     384   t6w4p l64       0.63           --              0.64-0.67     --         --     (G5 t3w4 0.81-0.89)
+##     384   t6w2p l64       --             0.67            --            0.68-0.71  0.74-0.75
+##     512   t4w4p l128      0.79           0.79            0.79-0.80     0.80-0.82  0.81-0.82 (reference 1.00)
+## Bound per rung: p320 gate_up (N >= 16384) on t5w4p, the rest t5w2p; p384 N >= 8192 on t6w4p, the
+## rest t6w2p. The 48-wide gate keeps these rows when the skinny body is off (the A-tiled t3w4
+## reads 44-47 us against the folded tile's 64-79).
+[[atiled_mt]]
+m_min = 129
+m_max = 192
+tn = 2
+lbk = 128
+tm = 3
+wm = 4
+
+[[atiled_mt]]
+m_min = 193
+m_max = 256
+tn = 2
+lbk = 128
+tm = 4
+wm = 4
+pipe = true
+
+[[atiled_mt]]
+m_min = 257
+m_max = 320
+n_min = 16384
+tn = 2
+lbk = 64
+tm = 5
+wm = 4
+pipe = true
+
+[[atiled_mt]]
+m_min = 257
+m_max = 320
+tn = 2
+lbk = 64
+tm = 5
+wm = 2
+pipe = true
+
+[[atiled_mt]]
+m_min = 321
+m_max = 384
+n_min = 8192
+tn = 2
+lbk = 64
+tm = 6
+wm = 4
+pipe = true
+
+[[atiled_mt]]
+m_min = 321
+m_max = 384
+tn = 2
+lbk = 64
+tm = 6
+wm = 2
+pipe = true
+
+[[atiled_mt]]
+m_min = 385
+m_max = 512
+tn = 2
+lbk = 128
+tm = 4
+wm = 4
+pipe = true
+
+## ---- the skinny-N body (SABER-AUTHORED, workstream G6, 2026-09-24) -----------------------
+## Bound only while `skinny` is on: N <= n_max (the 48-wide GDN gate at TP=2, 96 at TP=1), over the A
+## layout the edge carries (`a_tiled`), never in place of a SPLIT decode cell. One wave per 16-row
+## fragment and `tns` 16-column tiles walks all of K in the reference's order (`hip/mxfp4_skinny.h`):
+## one summation class, 0 bytes (the k-reversal control fails on wide-N shapes; on the gate the
+## no-fold control and the W-byte flip, the k-reversal being below the bf16 floor there, G5).
+## Unit time at N = 48, K = 5120, IC-cold, us (what runs today -> the row's body):
+##     p96 71.2 (decode ks1 tm6) -> 22.1 (r)     p128 86.0 (decode tm8) -> 22.5 (r)
+##     p192 61.3 (G5 t3w4) -> 24.4 (r) / 22.6 (t)  p256 70.9 (folded) -> 26.0 (r) / 23.0 (t)
+##     p320 66.8 (folded) -> 27.5 (r) / 23.3 (t)   p384 67.1 (G5 t3w4) -> 29.6 (r) / 23.6 (t)
+##     p512 78.6 (folded) -> 30.9 (r) / 25.1 (t)   p768 53.0 (A-tiled tn2) -> 27.0 (t)
+##     p1024 56.8 -> 29.4 (t)   p1536 66.2 -> 39.4 (t)   p2048 69-72 -> 49.5 (t); N = 96 alike.
+## TNS = 3 (one wave, 48 columns) is 42 us: the chain is WMMA-latency-bound, so parallel waves win.
+## The tiled row stops at 2048: no taller rung was timed.
+[[skinny]]
+m_min = 65
+n_max = 96
+a_tiled = false
+tns = 1
+wpb = 4
+unr = 8
+
+[[skinny]]
+m_min = 129
+m_max = 2048
+n_max = 96
+a_tiled = true
+tns = 1
+wpb = 4
+unr = 8
+
+## ---- the DIRECT=false decode control -------------------------------------------------------
+## `mxfp4_gemm_decode_bk128_ks1_tm1_wperm1_nt1_indirect` is the ONE instantiation the reference
+## keeps that the prod launcher cannot reach: at DKS==1 the DIRECT arm returns before it ever
+## touches the partial slab, so the "writes C directly" fast path would otherwise be asserted
+## rather than tested. This row is that test's target, and `resolve` refuses any shape that does
+## not land on the exact cell it was compiled for -- it is a control, not a route.
+# The fusion lever's second measurement: `silu_mul_quant` folded into the decode GEMM's A staging,
+# so the GEMM reads the bf16 gate_up output directly and the producer's launch disappears.
+#
+# SELECTABLE ONLY ON AN EDGE WHOSE A PRODUCER IS silu_mul. That is not a shape property and cannot
+# be derived from one: a decode GEMM at this shape normally takes a quantised A from whichever
+# producer wrote it. `gemm_decode_fused_silu` is therefore a function the graph calls BY NAME when
+# its edge says so, not an arm of `gemm` -- the same shape resolves to the plain kernel otherwise.
+#
+# Only the cells the decode band actually reaches for `down_proj` (N=5120, K=8704) at the M values
+# a decode step produces. A shape the band would send to another cell has no fused symbol and is
+# refused rather than served by a slower one.
+[[decode_fused_silu]]
+bk = 128
+ks = 4
+tm = 1
+kernel = "mxfp4_gemm_decode_fused_silu_bk128_ks4_tm1_wperm1_nt1"
+
+[[decode_fused_silu]]
+bk = 128
+ks = 4
+tm = 2
+kernel = "mxfp4_gemm_decode_fused_silu_bk128_ks4_tm2_wperm1_nt1"
+
+[[decode_fused_silu]]
+bk = 128
+ks = 2
+tm = 3
+kernel = "mxfp4_gemm_decode_fused_silu_bk128_ks2_tm3_wperm1_nt1"
+
+[decode_direct_control]
+kernel = "mxfp4_gemm_decode_bk128_ks1_tm1_wperm1_nt1_indirect"
+bk = 128
+ks = 1
+tm = 1
+# The layout the ONE compiled instantiation requires. Named `*_required` rather than reusing the
+# knob's spelling so that flipping the knob for a WPERM=0 run cannot silently flip this too --
+# there is no wperm0 indirect kernel, and the control must say so.
+wperm_required = true
+nt_required = true
+
+## ---- workspaces ----------------------------------------------------------------------------
+## Retires `set_decode_scratch`. The partial buffer is aliasable between launches; the block
+## counter is NOT -- it must be zeroed once and survive graph replay (the last block of a split
+## resets it in place, so a replay that re-zeroed it would be correct only by luck, and one that
+## reallocated it would corrupt a captured graph).
+[workspace.decode_partial]
+kind = "scratch"
+# DEC_KS(4) x 64 rows x DEC_MAX_N(36864) x 4 B, the way ref_mxfp4.py sizes it from
+# max(64, SABER_MXFP4_DECODE_MAX_M).
+capacity_bytes = 37748736
+
+[workspace.decode_counter]
+kind = "persistent"
+# one int per 128-wide n-block at DEC_MAX_N
+capacity_bytes = 1152

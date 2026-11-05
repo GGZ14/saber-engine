@@ -1,0 +1,39 @@
+[package]
+name = "saber-sched"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# The engine trait, StepEvent and the sampling params are the serving plane's contract;
+# saber-sched implements it. The dependency points this way and never back.
+saber-serve = { path = "../saber-serve" }
+# Buckets, spec widths and the GDN state budget are read from the resolved plan. No getenv.
+saber-plan = { path = "../saber-plan" }
+# The DFlash2 rules -- verify width policy, acceptance EMA, the spec-decode counters and their
+# per-position histogram -- are ported and GATED against prod's own code in `saber_model::draft`
+# (docs/abi/DFLASH2-SEMANTICS.md). This crate schedules with them rather than re-deriving them:
+# two implementations of a measured rule is how the two drift.
+saber-model = { path = "../saber-model" }
+# The byte ledger: the KV and GDN-state arenas are reserved through it before a token is served.
+saber-mem = { path = "../saber-mem" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# `sync` only: the step loop is a plain thread on purpose (ARCHITECTURE.md, "Rust-specific
+# hazards" -- a work-stealing scheduler adds variance to the one path that wants fixed cadence).
+# tokio is here for the per-request event channel the serving plane already consumes.
+tokio = { version = "1", default-features = false, features = ["sync"] }
+futures-core = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "io-util", "signal"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# tests/e2e_http.rs drives the real serving plane over a real socket: the properties under test
+# (one SSE chunk per engine step, exact usage, an abort on client disconnect) only exist once the
+# HTTP layer, the scheduler and a step loop are all present at once.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+saber-model = { path = "../saber-model" }
+# Reading `.cache/dflash_cases.jsonl` -- the captured output of prod's own dynamic-width code --
+# in tests/dflash_width_gate.rs. Test-only: nothing in the serve path parses JSON.
+serde_json = { workspace = true }

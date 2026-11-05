@@ -1,0 +1,729 @@
+schema_version = 1
+plugin = "mxfp4_gemm_decode_pf"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/mxfp4_gemm_decode_pf.hip"
+source_sha256 = "6d6e11d8799418fd5b38cf43478f1ac62d4c30fc12158b9e428b0d7487909c3f"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "3a726d1e4c9d7def4a38f6a495cfd01cf9d6b0e253e5ef1dab0ede39b25c5a69"
+hsaco = "mxfp4_gemm_decode_pf.hsaco"
+hsaco_sha256 = "0f5b6739c09adf4c8c7a956d5c6f175326bf7feefefbb4a04b459ee8fc48c0e9"
+
+[[kernel]]
+name = "mxfp4_gemm_decode_pair_pf_bk128_tm4_wperm1_nt1"
+symbol = "mxfp4_gemm_decode_pair_pf_bk128_tm4_wperm1_nt1.kd"
+kernarg_segment_size = 144
+kernarg_segment_align = 8
+group_segment_fixed_size = 26116
+private_segment_fixed_size = 0
+vgpr_count = 188
+sgpr_count = 46
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "wref"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "partial"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "counter"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "w_b"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "global_buffer"
+name = "ws_b"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "global_buffer"
+name = "wref_b"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "partial_b"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "counter_b"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "c_b"
+
+[[kernel.arg]]
+offset = 112
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 116
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 120
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 124
+size = 4
+value_kind = "by_value"
+name = "ks"
+
+[[kernel.arg]]
+offset = 128
+size = 4
+value_kind = "by_value"
+name = "nb"
+
+[[kernel.arg]]
+offset = 132
+size = 4
+value_kind = "by_value"
+name = "n_b"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "ks_b"
+
+[[kernel.arg]]
+offset = 140
+size = 4
+value_kind = "by_value"
+name = "nb_b"
+
+[[kernel]]
+name = "mxfp4_gemm_decode_pf_bk128_ks2_tm2_wperm1_nt1"
+symbol = "mxfp4_gemm_decode_pf_bk128_ks2_tm2_wperm1_nt1.kd"
+kernarg_segment_size = 96
+kernarg_segment_align = 8
+group_segment_fixed_size = 21764
+private_segment_fixed_size = 0
+vgpr_count = 133
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "wref"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "partial"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "counter"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "pb1"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "pb2"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "by_value"
+name = "astride"
+
+[[kernel]]
+name = "mxfp4_gemm_decode_pf_bk128_ks2_tm2_wperm1_nt1_dwn2"
+symbol = "mxfp4_gemm_decode_pf_bk128_ks2_tm2_wperm1_nt1_dwn2.kd"
+kernarg_segment_size = 96
+kernarg_segment_align = 8
+group_segment_fixed_size = 8708
+private_segment_fixed_size = 0
+vgpr_count = 139
+sgpr_count = 37
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "wref"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "partial"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "counter"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "pb1"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "pb2"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "by_value"
+name = "astride"
+
+[[kernel]]
+name = "mxfp4_gemm_decode_pf_bk128_ks2_tm2_wperm1_nt1_dwn4"
+symbol = "mxfp4_gemm_decode_pf_bk128_ks2_tm2_wperm1_nt1_dwn4.kd"
+kernarg_segment_size = 96
+kernarg_segment_align = 8
+group_segment_fixed_size = 13060
+private_segment_fixed_size = 0
+vgpr_count = 138
+sgpr_count = 34
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "wref"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "partial"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "counter"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "pb1"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "pb2"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "by_value"
+name = "astride"
+
+[[kernel]]
+name = "mxfp4_gemm_decode_pf_bk128_ks2_tm4_wperm1_nt1"
+symbol = "mxfp4_gemm_decode_pf_bk128_ks2_tm4_wperm1_nt1.kd"
+kernarg_segment_size = 96
+kernarg_segment_align = 8
+group_segment_fixed_size = 26116
+private_segment_fixed_size = 0
+vgpr_count = 186
+sgpr_count = 34
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "wref"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "partial"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "counter"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "pb1"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "pb2"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "by_value"
+name = "astride"
+
+[[kernel]]
+name = "mxfp4_gemm_decode_pf_bk128_ks2_tm4_wperm1_nt1_dwn4"
+symbol = "mxfp4_gemm_decode_pf_bk128_ks2_tm4_wperm1_nt1_dwn4.kd"
+kernarg_segment_size = 96
+kernarg_segment_align = 8
+group_segment_fixed_size = 17412
+private_segment_fixed_size = 0
+vgpr_count = 199
+sgpr_count = 37
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "wref"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "partial"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "counter"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "pb1"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "pb2"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "by_value"
+name = "astride"
+
+[[kernel]]
+name = "mxfp4_gemm_decode_pf_bk64_ks1_tm4_wperm1_nt1"
+symbol = "mxfp4_gemm_decode_pf_bk64_ks1_tm4_wperm1_nt1.kd"
+kernarg_segment_size = 96
+kernarg_segment_align = 8
+group_segment_fixed_size = 13824
+private_segment_fixed_size = 0
+vgpr_count = 114
+sgpr_count = 27
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "wref"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "partial"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "counter"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "pb1"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "pb2"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "by_value"
+name = "astride"

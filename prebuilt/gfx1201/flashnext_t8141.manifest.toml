@@ -1,0 +1,75 @@
+schema_version = 1
+plugin = "flashnext_t8141"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_t8141.hip"
+source_sha256 = "fa5ae93bdbf3512b00c6ea23b1bdd203e7dd74153215bf9dd5f51007a008fb29"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "c05494ca1036523d7494c55bc56d0dc51fbb7581c0e1be6e699d83d1157a77c8"
+hsaco = "flashnext_t8141.hsaco"
+hsaco_sha256 = "393866e2e1f4dc1a6c4a26f8592f20d0f100966ffe6e29432052dcf85754ee63"
+
+[[kernel]]
+name = "fn141_t8_a8w8_n64_pf4_ldc"
+symbol = "fn141_t8_a8w8_n64_pf4_ldc.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 2176
+private_segment_fixed_size = 0
+vgpr_count = 185
+sgpr_count = 31
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"

@@ -1,0 +1,28 @@
+[package]
+name = "saber-plan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+# The registry is built FROM the shipped artifacts (prebuilt/gfx1201/*.manifest.toml) and the
+# launch rules, not transcribed by hand -- see src/from_manifest.rs.
+saber-kernels = { path = "../saber-kernels" }
+
+[dev-dependencies]
+# Test scratch under target/, deleted on drop -- never /tmp (FN51h; structural.sh check 10).
+saber-test-scratch = { path = "../saber-test-scratch" }
+# The model restates one saber knob; a test asserts the copy still matches its source.
+saber-kernels = { path = "../saber-kernels" }
+# `saber_model::graph` is the OTHER description of the same forward pass -- ops, edges and their
+# layouts, per layer. `tests/prefill.rs` holds the two against each other so they cannot drift.
+# Dev-only and one-directional: saber-model does not depend on saber-plan, and the serve path
+# never asks the model crate a planning question.
+saber-model = { path = "../saber-model" }

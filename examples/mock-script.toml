@@ -1,0 +1,66 @@
+# What `saber serve --mock` "generates".
+#
+# The tokens are fake; everything else on the path is production code — the manifest is resolved
+# the way `saber explain` resolves it, the scheduler admits against the real paged-KV and
+# GDN-state allocators through the real byte ledger, the prompt is rendered by
+# qwen-fixed-v22.3.jinja and tokenized by the checkpoint's tokenizer, and the stream is one SSE
+# update per engine step with the qwen3_coder and qwen3 parsers on.
+#
+#   saber serve --mock examples/mock-script.toml \
+#               --manifest examples/qwen38-27b-nvfp4-tp2.toml \
+#               --autotune examples/autotune-gfx1201-210w.json --port 8099
+#
+# `tokens_per_step` is the lever a benchmark client sees: BetterBench classifies a stream from
+# `completion_tokens / n_chunks`, so five tokens per decode step is what makes it read `batched`
+# rather than `per_token`. The prefill step commits exactly one token — it verifies nothing, so it
+# can commit nothing else — which is why the measured ratio sits just under the step width, on a
+# mock exactly as it does in production.
+
+tokens_per_step = 5
+served_model_name = "Qwen3.8"
+
+# Responses are cycled in admission order, so a benchmark that sends hundreds of requests is
+# answered without a script per request.
+
+# Each response is prod-shaped: the chat template opens `<think>`, so the generated text starts
+# inside the reasoning channel and closes it with `</think>` before the answer. That is what makes
+# the `reasoning` field (not `reasoning_content` — the reference 0.26+) carry the first part of the stream
+# and the `content` field the rest, which is what a client's reasoning split reads.
+
+[[response]]
+text = """The question is general, so a short structural answer is better than a long one: name the \
+planes, then the one number that actually binds.</think>Saber is a modular inference engine written in Rust for AMD RDNA4 hardware. It keeps the \
+kernel plane behind a plain C ABI, resolves one manifest into an execution plan instead of reading \
+a hundred and thirty-seven environment variables, and captures one HIP graph per bucket so the \
+launch count per step is a budgeted number rather than an emergent one. The scheduler above it \
+does continuous batching over two separate allocators: paged KV for attention, and a slot-set \
+allocator for the gated delta net's recurrent state, which is three megabytes per layer per \
+sequence and is what actually caps concurrency below about four thousand six hundred tokens of \
+context. Speculative decoding runs underneath a scheduler-side cap on the verify width, driven by \
+each sequence's acceptance average, and that cap only engages once three or more requests are in \
+flight."""
+
+[[response]]
+text = """The user is asking for a short explanation, so I should keep this to a couple of \
+sentences and avoid jargon where a plain word will do.</think>Paged attention stores a sequence's \
+keys and values in fixed-size blocks rather than one contiguous buffer, so a batch of sequences \
+with different lengths can share one arena without copying or padding. The block table is a small \
+per-sequence index that the attention kernel walks, which is why the page size the scheduler hands \
+out and the block size the kernel is compiled for have to be the same number."""
+
+[[response]]
+text = """A grouped aggregate over one table; the only decision is whether to filter before or \
+after the group, and filtering first is always cheaper here.</think>Here is a first pass at the query. I read the table once, filter early, and aggregate at \
+the end so the planner does not have to keep intermediate rows around:
+
+```sql
+SELECT category,
+       count(*) AS runs,
+       round(avg(decode_tps), 2) AS decode_tps
+FROM   bench_runs
+WHERE  endpoint = 'saber' AND ok
+GROUP BY category
+ORDER BY decode_tps DESC;
+```
+
+If the table is large, an index on `(endpoint, ok, category)` turns the scan into a range read."""

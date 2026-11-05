@@ -1,0 +1,40 @@
+schema_version = 1
+plugin = "noop"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/noop.hip"
+source_sha256 = "7f8decb99b19c89e603a553e1e5df88ec42f499eb141c8bf4764d0527defe474"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "ac293ffa376a981502fd21f7d449b815a06a1bbcad0a3dc2f7d988cf16832918"
+hsaco = "noop.hsaco"
+hsaco_sha256 = "620e64fa7553144c825989fd54f1f4a0d18e85b49bc16a9f8a62ff51d97f9163"
+
+[[kernel]]
+name = "saber_noop"
+symbol = "saber_noop.kd"
+kernarg_segment_size = 0
+kernarg_segment_align = 4
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 0
+sgpr_count = 0
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+arg = []
+
+[[kernel]]
+name = "saber_noop_touch"
+symbol = "saber_noop_touch.kd"
+kernarg_segment_size = 8
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 2
+sgpr_count = 3
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "p"

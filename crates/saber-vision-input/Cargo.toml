@@ -1,0 +1,27 @@
+[package]
+name = "saber-vision-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# D3: the image INPUT path -- decode, EXIF orientation, RGB, smart_resize, the bicubic antialias
+# resample, normalise, patchify, and the `<|image_pad|>` expansion -- as prod's processor does it.
+# Pure Rust, no HIP, no GPU: every function here is host-tested against prod's own bytes
+# (`the internal reference harness`). The decoders are pure-Rust crates, each named for the
+# format it covers:
+#   png        -- PNG (lossless: PIL's decode is reproduced exactly);
+#   zune-jpeg  -- JPEG (PIL runs libjpeg-turbo's islow IDCT + fancy upsampling; the gate counts
+#                 the pixels that differ and names the cause);
+#   image-webp -- WebP lossy and lossless (image-rs' decoder, the one the `image` crate uses);
+#   base64     -- the `data:` URL payload.
+[dependencies]
+thiserror = { workspace = true }
+png = "0.18"
+zune-jpeg = "0.5"
+zune-core = "0.5"
+image-webp = "0.2"
+base64 = "0.22"
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,75 @@
+schema_version = 1
+plugin = "p27_tree_advl"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/p27_tree_advl.hip"
+source_sha256 = "1083bcf5040f052fac00b780713f4dfc3d6f55fdd0afc2fa2967d79b45224f19"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "54f9d015069d7a6215f6858561745e022a613c8162938b5bd1032b0ccc95b081"
+hsaco = "p27_tree_advl.hsaco"
+hsaco_sha256 = "af524e977bcd7d9eebb7f7f214950b51d1d799d006e2e38824557474df2c83ca"
+
+[[kernel]]
+name = "p27_gdn_tree_advance_layers_f16s_k128_v128"
+symbol = "p27_gdn_tree_advance_layers_f16s_k128_v128.kd"
+kernarg_segment_size = 72
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 138
+sgpr_count = 26
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "state_base"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "ts_base"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "slot"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "slot_out"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "by_value"
+name = "ts_seq"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "by_value"
+name = "ts_head"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "acc"

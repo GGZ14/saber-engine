@@ -1,0 +1,1257 @@
+schema_version = 1
+plugin = "saber_gdn_recurrent_update_f16s"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/saber_gdn_recurrent_update_f16s.hip"
+source_sha256 = "637cdcda37a4c68a3e012266eab97165fa731f474b77b63f3bf1170814217109"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "024793154431aa75c3c0f97a9b0fd58bd378e632db6ca614df9263406b19a52f"
+hsaco = "saber_gdn_recurrent_update_f16s.hsaco"
+hsaco_sha256 = "17b17743a05b021d406522661ff45a7f807d31d4879d29934293ce06cc28238d"
+
+[[kernel]]
+name = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm0_vs1"
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm0_vs1.kd"
+kernarg_segment_size = 168
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 213
+sgpr_count = 43
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "av"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bv"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "ab_stride"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "a_log"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "dt_bias"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "state"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "sidx"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "by_value"
+name = "sidx_stride"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "naccept"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "zg"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "nw"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "neps"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "nact"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 160
+size = 4
+value_kind = "by_value"
+name = "scale"
+
+[[kernel.arg]]
+offset = 164
+size = 4
+value_kind = "by_value"
+name = "sp_thr"
+
+[[kernel]]
+name = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm0_vs2"
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm0_vs2.kd"
+kernarg_segment_size = 168
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 213
+sgpr_count = 43
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "av"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bv"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "ab_stride"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "a_log"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "dt_bias"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "state"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "sidx"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "by_value"
+name = "sidx_stride"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "naccept"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "zg"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "nw"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "neps"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "nact"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 160
+size = 4
+value_kind = "by_value"
+name = "scale"
+
+[[kernel.arg]]
+offset = 164
+size = 4
+value_kind = "by_value"
+name = "sp_thr"
+
+[[kernel]]
+name = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm0_vs4"
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm0_vs4.kd"
+kernarg_segment_size = 168
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 213
+sgpr_count = 43
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "av"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bv"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "ab_stride"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "a_log"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "dt_bias"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "state"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "sidx"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "by_value"
+name = "sidx_stride"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "naccept"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "zg"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "nw"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "neps"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "nact"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 160
+size = 4
+value_kind = "by_value"
+name = "scale"
+
+[[kernel.arg]]
+offset = 164
+size = 4
+value_kind = "by_value"
+name = "sp_thr"
+
+[[kernel]]
+name = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm1_vs1"
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm1_vs1.kd"
+kernarg_segment_size = 168
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 223
+sgpr_count = 48
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "av"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bv"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "ab_stride"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "a_log"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "dt_bias"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "state"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "sidx"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "by_value"
+name = "sidx_stride"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "naccept"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "zg"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "nw"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "neps"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "nact"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 160
+size = 4
+value_kind = "by_value"
+name = "scale"
+
+[[kernel.arg]]
+offset = 164
+size = 4
+value_kind = "by_value"
+name = "sp_thr"
+
+[[kernel]]
+name = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm0_vs1"
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm0_vs1.kd"
+kernarg_segment_size = 168
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 215
+sgpr_count = 43
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "av"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bv"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "ab_stride"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "a_log"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "dt_bias"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "state"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "sidx"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "by_value"
+name = "sidx_stride"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "naccept"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "zg"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "nw"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "neps"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "nact"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 160
+size = 4
+value_kind = "by_value"
+name = "scale"
+
+[[kernel.arg]]
+offset = 164
+size = 4
+value_kind = "by_value"
+name = "sp_thr"
+
+[[kernel]]
+name = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm0_vs2"
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm0_vs2.kd"
+kernarg_segment_size = 168
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 215
+sgpr_count = 43
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "av"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bv"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "ab_stride"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "a_log"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "dt_bias"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "state"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "sidx"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "by_value"
+name = "sidx_stride"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "naccept"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "zg"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "nw"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "neps"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "nact"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 160
+size = 4
+value_kind = "by_value"
+name = "scale"
+
+[[kernel.arg]]
+offset = 164
+size = 4
+value_kind = "by_value"
+name = "sp_thr"
+
+[[kernel]]
+name = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm0_vs4"
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm0_vs4.kd"
+kernarg_segment_size = 168
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 215
+sgpr_count = 43
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "av"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bv"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "ab_stride"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "a_log"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "dt_bias"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "state"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "sidx"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "by_value"
+name = "sidx_stride"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "naccept"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "zg"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "nw"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "neps"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "nact"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 160
+size = 4
+value_kind = "by_value"
+name = "scale"
+
+[[kernel.arg]]
+offset = 164
+size = 4
+value_kind = "by_value"
+name = "sp_thr"
+
+[[kernel]]
+name = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm1_vs1"
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm1_vs1.kd"
+kernarg_segment_size = 168
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 224
+sgpr_count = 48
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "av"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bv"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "ab_stride"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "a_log"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "dt_bias"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "state"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "sidx"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "by_value"
+name = "sidx_stride"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "naccept"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "zg"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "nw"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "neps"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "nact"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 160
+size = 4
+value_kind = "by_value"
+name = "scale"
+
+[[kernel.arg]]
+offset = 164
+size = 4
+value_kind = "by_value"
+name = "sp_thr"

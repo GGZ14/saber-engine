@@ -1,0 +1,26 @@
+# Self-contained dev/serve image: a public ROCm base + Rust + bindgen. No local base image needed.
+#   tools/build-image.sh            
+#   SABER_ROCM_IMAGE=docker.io/rocm/dev-ubuntu-24.04:7.2.4 tools/build-image.sh   # another ROCm
+# Works with podman and docker. The engine loads /opt/rocm/lib/libamdhip64.so.7, so the base must be
+# ROCm 7.x. The project's own tuned image uses a newer ROCm (HIP 7.16 / ROCr 1.21) than the public
+# 7.x tags; the public one is functionally the same but may spin more CPU per rank in ROCr's
+# async-event loop.
+ARG SABER_ROCM_IMAGE=docker.io/rocm/dev-ubuntu-24.04:7.2.4
+FROM ${SABER_ROCM_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+      build-essential make pkg-config git curl ca-certificates libclang-dev python3 python3-venv python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+ENV RUSTUP_HOME=/opt/rust/rustup CARGO_HOME=/opt/rust/cargo
+ENV PATH=/opt/rust/cargo/bin:/opt/saber-py/bin:/opt/rocm/bin:/opt/rocm/llvm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path --default-toolchain stable \
+    && rustup component add clippy rustfmt \
+    && cargo install bindgen-cli --locked \
+    && python3 -m venv /opt/saber-py \
+    && chmod -R a+rwX /opt/rust /opt/saber-py
+ENV LIBCLANG_PATH=/usr/lib/llvm-18/lib
+ENV VIRTUAL_ENV=/opt/saber-py ROCM_PATH=/opt/rocm HIP_PATH=/opt/rocm HIP_PLATFORM=amd
+ENV PYTORCH_ROCM_ARCH=gfx1201 HIP_ARCHITECTURES=gfx1201 AMDGPU_TARGETS=gfx1201 GPU_ARCHS=gfx1201
+ENV TOKENIZERS_PARALLELISM=false PYTHONDONTWRITEBYTECODE=1 CUDA_VISIBLE_DEVICES=
+WORKDIR /work
+ENTRYPOINT ["/bin/bash"]

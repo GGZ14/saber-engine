@@ -1,0 +1,105 @@
+schema_version = 1
+plugin = "saber_ar_wht_wpar_chk"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/saber_ar_wht_wpar_chk.hip"
+source_sha256 = "23147dc85cb964bd0643f6087b6c7ff34195b1d24db3597d2360368b90cd7f7a"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "a6056b3029740ef5fefe2468190f35c3ac8c6455e4ef302255b94812042453f9"
+hsaco = "saber_ar_wht_wpar_chk.hsaco"
+hsaco_sha256 = "ec27135d57f26530143fd0ee441cdfd98f6fc91b06774b8a896faeba83ac12fb"
+
+[[kernel]]
+name = "saber_ar_wpar_2rank_wht6_bf16_chk"
+symbol = "saber_ar_wpar_2rank_wht6_bf16_chk.kd"
+kernarg_segment_size = 352
+kernarg_segment_align = 8
+group_segment_fixed_size = 12424
+private_segment_fixed_size = 0
+vgpr_count = 39
+sgpr_count = 56
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "in"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "peer_scratch"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "my_scratch"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "loc_pack"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "peer_flags"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "my_flags"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "seq_ctrs"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "n_groups"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "n_chunks"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "by_value"
+name = "slot_stride_bytes"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "scale_off_bytes"
+
+[[kernel.arg]]
+offset = 88
+size = 4
+value_kind = "by_value"
+name = "drain"
+
+[[kernel.arg]]
+offset = 92
+size = 4
+value_kind = "by_value"
+name = "acq"

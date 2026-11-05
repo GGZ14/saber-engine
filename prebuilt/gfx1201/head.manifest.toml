@@ -1,0 +1,345 @@
+schema_version = 1
+plugin = "head"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/head.hip"
+source_sha256 = "5dfd79c598c18e75683a08607047006e5f3b52ed1ca1132ef5dfb1bb5c7321dd"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "144ff1cae3c7af3f354839036bc2ed86e229b47d927d210a5d0f07111368e93e"
+hsaco = "head.hsaco"
+hsaco_sha256 = "f475bb3091346f19f5faffe1aecd7d28fce1ac5dd4242f8de7805279ef138d52"
+
+[[kernel]]
+name = "saber_add_rms_bf16"
+symbol = "saber_add_rms_bf16.kd"
+kernarg_segment_size = 304
+kernarg_segment_align = 8
+group_segment_fixed_size = 128
+private_segment_fixed_size = 0
+vgpr_count = 54
+sgpr_count = 23
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "y"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "res"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "res_out"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "saber_argmax_bf16"
+symbol = "saber_argmax_bf16.kd"
+kernarg_segment_size = 32
+kernarg_segment_align = 8
+group_segment_fixed_size = 2048
+private_segment_fixed_size = 0
+vgpr_count = 7
+sgpr_count = 12
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "logits"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "stride"
+
+[[kernel]]
+name = "saber_device_row_bf16"
+symbol = "saber_device_row_bf16.kd"
+kernarg_segment_size = 76
+kernarg_segment_align = 8
+group_segment_fixed_size = 9796
+private_segment_fixed_size = 0
+vgpr_count = 29
+sgpr_count = 36
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "logits"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "temps"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "pen_ids"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "top_values"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "top_ids"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "lse"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "pen_values"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "by_value"
+name = "stride"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "pen_max"
+
+[[kernel]]
+name = "saber_embed_bf16"
+symbol = "saber_embed_bf16.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 10
+sgpr_count = 18
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "table"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "ids"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "hidden"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "vocab_begin"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "vocab_end"
+
+[[kernel]]
+name = "saber_row_copy_bf16"
+symbol = "saber_row_copy_bf16.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 10
+sgpr_count = 22
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "src"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "src_stride"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "by_value"
+name = "dst_stride"
+
+[[kernel]]
+name = "saber_row_gather_bf16"
+symbol = "saber_row_gather_bf16.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 10
+sgpr_count = 20
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "src"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "idx"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "by_value"
+name = "src_stride"
+
+[[kernel]]
+name = "saber_widen_i32_i64"
+symbol = "saber_widen_i32_i64.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 7
+sgpr_count = 16
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "src"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "src_stride"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "by_value"
+name = "dst_stride"

@@ -1,0 +1,15 @@
+[package]
+name = "saber-hsa"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# FN63b: the copy lane registers saber-hip's allocations as its regions (typed handles, not raw
+# addresses from a caller). saber-hip links no ROCm (it dlopens), so the host still builds.
+saber-hip = { path = "../saber-hip" }
+libloading.workspace = true
+# FN71b: the P2PDMA pool's ioctls (GEM_CREATE, PRIME) and the pool file's mmap.
+libc.workspace = true
+thiserror.workspace = true

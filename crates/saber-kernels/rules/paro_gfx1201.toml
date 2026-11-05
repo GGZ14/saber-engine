@@ -1,0 +1,301 @@
+## Paro rotation-producer launch rules for gfx1201, as DATA. Third plugin.
+##
+## The PARO tier is prod's ROLLBACK unit (`ref-switch paromx`,
+## `ref/paro/qwen_prod_paro_mxfp4.service`, model Qwen3.8-27B-PARO-MXFP4-ft), so
+## these producers are a serve path. Every row below is a decision the reference launcher
+## (`ref/paro/ref_paro.hip`: `launch_add_rms_rot` :294,
+## `launch_ew_rot` :323, `launch_add_rms_rot_tok` :205, `launch_ew_rot_tok` :227) makes in C++
+## from a `getenv` or an `if` ladder.
+##
+## TWO PRODUCER FAMILIES, and which one runs is the TIER, not a shape:
+##   * per-GROUP (`add_rms_rot` / `ew_rot`), from `ref_paro.py` -- the int4 `paro`
+##     tier. `ROT` (the launcher's `fused`) is `M <= decode_max_m`: the decode band fuses the
+##     rotation and the per-group fp8 quant into the producer, the prefill band writes `hs` only.
+##   * per-TOKEN (`add_rms_rot_tok` / `ew_rot_tok`), from `ref_paro_mxfp4.py` -- the
+##     `paro_mxfp4` tier, which is what **paromx actually serves**. `TILED` is
+##     `M >= a_tiled_min_m`, which is NOT a row of this file: it is the MXFP4 rules' own knob,
+##     read through `saber_kernels::rules::a_tiled_min_m()`, because the producer writes the
+##     fragment layout the A-tiled GEMM reads and one number is the only way the two agree.
+##
+## Knob values are the paromx unit's: it sets no `SABER_PQ_*` at all, so everything is at the
+## compiled default, and `SABER_PQ_HIPCC_FLAGS` is empty so `PQ_HW_CVT=1` (the hardware e4m3
+## convert) is in. `SABER_PQ_I8` is 0 on this tier -- `run_paro.sh:200` turns it on only
+## for an int5 checkpoint, and the unit's cache suffix (`-rs-rs2-sl-sk`, no `-i8`) confirms it.
+
+schema_version = 1
+name = "paro-gfx1201-paromx"
+
+[knobs]
+group = 128                  # PQ_GROUP: K and N must be a multiple of it
+krot_max = 8                 # PQ_KROT_MAX
+rot_waves = 8                # PQ_ROT_WAVES
+rot_block = 256              # PQ_ROT_WAVES * 32
+# Both per-token launchers stage the whole rotated row in dynamic LDS (K*2 or N*2 bytes) and
+# refuse above this. 60 KiB, not 64: the reference leaves the rest for the static __shared__.
+lds_max_bytes = 61440
+# SABER_PQ_DECODE_MAX_M. `fused` in the launcher, ROT in the kernel: at and below it the
+# producer also rotates and per-group quantises; above it it writes hs only and the prefill path
+# quantises separately.
+decode_max_m = 64
+# NO `a_tiled_min_m` ROW. SABER_MXFP4_A_TILED_MIN_M is shared with the MXFP4 plugin ON PURPOSE
+# -- producer and consumer take the same layout decision from M -- and in prod they live in two
+# files and agree by convention. Writing it here too made THREE tables carry it plus a Rust const
+# in each of saber-model and saber-plan, each pinned to the first by a host test; P6 showed what
+# that costs (a "raise the knob" control that moved one copy and measured a different mismatch).
+# `saber_kernels::rules::a_tiled_min_m()` is the one reader, and `ParoRules::check` REFUSES this
+# table if the row comes back.
+# SABER_PQ_I8 on this tier. The int5 tier sets it and reaches the `_i81` symbols.
+i8 = false
+# PQ_HW_CVT: the `v_cvt` hardware e4m3 encode. Compiled in (no SABER_PQ_HIPCC_FLAGS in prod);
+# recorded because a `-DPQ_HW_CVT=0` build is a DIFFERENT blob and the build hash must say so.
+hw_cvt = true
+
+## `pq_rot_gpw(M)` (par_kernels.h:1026): groups per wave. 1 at single-stream M, where the cost is
+## the serial rotation chain per wave; 2 above, where the per-workgroup row re-read is the cost.
+[[rot_gpw]]
+m_max = 40
+gpw = 1
+
+[[rot_gpw]]
+gpw = 2
+
+## `pq_tok_waves(M, K)` (ref_paro.hip:105-118), first match wins. The small-M cost is the
+## serial rotation chain per wave (K=5120: 40 groups -> 5 chains at 8 waves, 2 at 32), so
+## single-stream M wants 32; at M >= 40 the 1024-thread blocks lose to 16. The K>=8192 row is the
+## tokqt gate: K=8704 wants 16 at M>=600. SABER_PQ_TOK_WAVES forces one value for A/Bs.
+[[tok_waves]]
+m_max = 16
+waves = 32
+
+[[tok_waves]]
+m_max = 64
+waves = 16
+
+[[tok_waves]]
+k_min = 8192
+waves = 16
+
+[[tok_waves]]
+waves = 8
+
+## ---- instantiations ------------------------------------------------------------------------
+## The per-group producer. ROT=false never carries I8: the launcher's ladder is `fused && i8` /
+## `fused` / else, so there is no row for it and asking for one is a refusal.
+
+[[add_rms_rot]]
+rot = true
+i8 = false
+symbol = "paro_add_rms_rot_rot1_i80"
+
+[[add_rms_rot]]
+rot = true
+i8 = true
+symbol = "paro_add_rms_rot_rot1_i81"
+
+[[add_rms_rot]]
+rot = false
+i8 = false
+symbol = "paro_add_rms_rot_rot0_i80"
+
+## mode 0 = silu-mul (x is gate_up [M, 2N]), 1 = attention gate (x * sigmoid(y), y row stride ys),
+## 2 = GDN gated rmsnorm (x, z = y with stride ys, w [128]).
+[[ew_rot]]
+mode = 0
+rot = true
+i8 = false
+symbol = "paro_ew_rot_m0_rot1_i80"
+
+[[ew_rot]]
+mode = 0
+rot = true
+i8 = true
+symbol = "paro_ew_rot_m0_rot1_i81"
+
+[[ew_rot]]
+mode = 0
+rot = false
+i8 = false
+symbol = "paro_ew_rot_m0_rot0_i80"
+
+[[ew_rot]]
+mode = 1
+rot = true
+i8 = false
+symbol = "paro_ew_rot_m1_rot1_i80"
+
+[[ew_rot]]
+mode = 1
+rot = true
+i8 = true
+symbol = "paro_ew_rot_m1_rot1_i81"
+
+[[ew_rot]]
+mode = 1
+rot = false
+i8 = false
+symbol = "paro_ew_rot_m1_rot0_i80"
+
+[[ew_rot]]
+mode = 2
+rot = true
+i8 = false
+symbol = "paro_ew_rot_m2_rot1_i80"
+
+[[ew_rot]]
+mode = 2
+rot = true
+i8 = true
+symbol = "paro_ew_rot_m2_rot1_i81"
+
+[[ew_rot]]
+mode = 2
+rot = false
+i8 = false
+symbol = "paro_ew_rot_m2_rot0_i80"
+
+## The per-token producer -- the paromx tier. IL (the interleaved variant) is a template parameter
+## the reference launchers never set, so there is no symbol for it.
+
+[[add_rms_rot_tok]]
+waves = 8
+tiled = false
+symbol = "paro_add_rms_rot_tok_w8_tiled0"
+
+[[add_rms_rot_tok]]
+waves = 8
+tiled = true
+symbol = "paro_add_rms_rot_tok_w8_tiled1"
+
+[[add_rms_rot_tok]]
+waves = 16
+tiled = false
+symbol = "paro_add_rms_rot_tok_w16_tiled0"
+
+[[add_rms_rot_tok]]
+waves = 16
+tiled = true
+symbol = "paro_add_rms_rot_tok_w16_tiled1"
+
+[[add_rms_rot_tok]]
+waves = 32
+tiled = false
+symbol = "paro_add_rms_rot_tok_w32_tiled0"
+
+[[add_rms_rot_tok]]
+waves = 32
+tiled = true
+symbol = "paro_add_rms_rot_tok_w32_tiled1"
+
+[[ew_rot_tok]]
+mode = 0
+waves = 8
+tiled = false
+symbol = "paro_ew_rot_tok_m0_w8_tiled0"
+
+[[ew_rot_tok]]
+mode = 0
+waves = 8
+tiled = true
+symbol = "paro_ew_rot_tok_m0_w8_tiled1"
+
+[[ew_rot_tok]]
+mode = 0
+waves = 16
+tiled = false
+symbol = "paro_ew_rot_tok_m0_w16_tiled0"
+
+[[ew_rot_tok]]
+mode = 0
+waves = 16
+tiled = true
+symbol = "paro_ew_rot_tok_m0_w16_tiled1"
+
+[[ew_rot_tok]]
+mode = 0
+waves = 32
+tiled = false
+symbol = "paro_ew_rot_tok_m0_w32_tiled0"
+
+[[ew_rot_tok]]
+mode = 0
+waves = 32
+tiled = true
+symbol = "paro_ew_rot_tok_m0_w32_tiled1"
+
+[[ew_rot_tok]]
+mode = 1
+waves = 8
+tiled = false
+symbol = "paro_ew_rot_tok_m1_w8_tiled0"
+
+[[ew_rot_tok]]
+mode = 1
+waves = 8
+tiled = true
+symbol = "paro_ew_rot_tok_m1_w8_tiled1"
+
+[[ew_rot_tok]]
+mode = 1
+waves = 16
+tiled = false
+symbol = "paro_ew_rot_tok_m1_w16_tiled0"
+
+[[ew_rot_tok]]
+mode = 1
+waves = 16
+tiled = true
+symbol = "paro_ew_rot_tok_m1_w16_tiled1"
+
+[[ew_rot_tok]]
+mode = 1
+waves = 32
+tiled = false
+symbol = "paro_ew_rot_tok_m1_w32_tiled0"
+
+[[ew_rot_tok]]
+mode = 1
+waves = 32
+tiled = true
+symbol = "paro_ew_rot_tok_m1_w32_tiled1"
+
+[[ew_rot_tok]]
+mode = 2
+waves = 8
+tiled = false
+symbol = "paro_ew_rot_tok_m2_w8_tiled0"
+
+[[ew_rot_tok]]
+mode = 2
+waves = 8
+tiled = true
+symbol = "paro_ew_rot_tok_m2_w8_tiled1"
+
+[[ew_rot_tok]]
+mode = 2
+waves = 16
+tiled = false
+symbol = "paro_ew_rot_tok_m2_w16_tiled0"
+
+[[ew_rot_tok]]
+mode = 2
+waves = 16
+tiled = true
+symbol = "paro_ew_rot_tok_m2_w16_tiled1"
+
+[[ew_rot_tok]]
+mode = 2
+waves = 32
+tiled = false
+symbol = "paro_ew_rot_tok_m2_w32_tiled0"
+
+[[ew_rot_tok]]
+mode = 2
+waves = 32
+tiled = true
+symbol = "paro_ew_rot_tok_m2_w32_tiled1"
+
+## ---- workspaces ------------------------------------------------------------------------------
+## NONE. Every buffer these producers touch is the layer's own tensor -- `hs`, `ro`, `a`, `asg`,
+## `rs`, and the rotation table `t` / channel scales `cs` that belong to the consumer linear.
+## Recorded as an empty section rather than omitted, because "this op needs no workspace" is a
+## claim the descriptor makes and the gate checks.

@@ -1,0 +1,321 @@
+schema_version = 1
+plugin = "flashnext_ar"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_ar.hip"
+source_sha256 = "1f61967e4737788f392bd4c513a4f8f804697f960b130d22a83ab2a33faa9f46"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "07f279d707a40a42bbec61f404d8c25dbba1ce141ff5a2b033971114e914f05a"
+hsaco = "flashnext_ar.hsaco"
+hsaco_sha256 = "f4d88dc2dc332310803c0b1b2091d40b17868178505d29a24c42fb6e6e53b213"
+
+[[kernel]]
+name = "fn_ar_ll_exact_bf16"
+symbol = "fn_ar_ll_exact_bf16.kd"
+kernarg_segment_size = 328
+kernarg_segment_align = 8
+group_segment_fixed_size = 4
+private_segment_fixed_size = 0
+vgpr_count = 29
+sgpr_count = 24
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "in"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "peer_scratch"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "my_scratch"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "peer_tail"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "my_tail"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "seq_ctrs"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "n16"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "slot_stride16"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "drain"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "acq"
+
+[[kernel]]
+name = "fn_ar_ll_exact_bf16_chk"
+symbol = "fn_ar_ll_exact_bf16_chk.kd"
+kernarg_segment_size = 328
+kernarg_segment_align = 8
+group_segment_fixed_size = 132
+private_segment_fixed_size = 0
+vgpr_count = 39
+sgpr_count = 38
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "in"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "peer_scratch"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "my_scratch"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "peer_tail"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "my_tail"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "seq_ctrs"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "n16"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "slot_stride16"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "drain"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "acq"
+
+[[kernel]]
+name = "fn_ar_ll_exact_bf16_chkctl"
+symbol = "fn_ar_ll_exact_bf16_chkctl.kd"
+kernarg_segment_size = 328
+kernarg_segment_align = 8
+group_segment_fixed_size = 132
+private_segment_fixed_size = 0
+vgpr_count = 50
+sgpr_count = 38
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "in"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "peer_scratch"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "my_scratch"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "peer_tail"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "my_tail"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "seq_ctrs"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "n16"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "slot_stride16"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "drain"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "acq"
+
+[[kernel]]
+name = "fn_ar_ll_exact_bf16_wt"
+symbol = "fn_ar_ll_exact_bf16_wt.kd"
+kernarg_segment_size = 328
+kernarg_segment_align = 8
+group_segment_fixed_size = 4
+private_segment_fixed_size = 0
+vgpr_count = 29
+sgpr_count = 24
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "in"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "peer_scratch"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "my_scratch"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "peer_tail"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "my_tail"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "seq_ctrs"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "n16"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "slot_stride16"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "drain"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "acq"

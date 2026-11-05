@@ -1,0 +1,297 @@
+schema_version = 1
+plugin = "p27_tree_attn"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/p27_tree_attn.hip"
+source_sha256 = "2d67ce33faa8558d41bdfa93a86e01811fa92625832fb446eac6126f688f832c"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "a2406e2d12e495bab3cc211c7303ebd59f2a4532419df21aae29133b0b140d2e"
+hsaco = "p27_tree_attn.hsaco"
+hsaco_sha256 = "6a6a85356cfd74b9750e0bd98a91607553bc9ca5f3d87df7a49335305dd41d31"
+
+[[kernel]]
+name = "p27_attn_decode_anc_h256_gqa6_bf16kv_nw1"
+symbol = "p27_attn_decode_anc_h256_gqa6_bf16kv_nw1.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 250
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"
+
+[[kernel]]
+name = "p27_attn_decode_anc_h256_gqa6_bf16kv_nw2"
+symbol = "p27_attn_decode_anc_h256_gqa6_bf16kv_nw2.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 255
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"
+
+[[kernel]]
+name = "p27_attn_decode_anc_h256_gqa6_bf16kv_nw3"
+symbol = "p27_attn_decode_anc_h256_gqa6_bf16kv_nw3.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 116
+vgpr_count = 256
+sgpr_count = 36
+wavefront_size = 32
+max_flat_workgroup_size = 96
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"
+
+[[kernel]]
+name = "p27_attn_decode_anc_h256_gqa6_bf16kv_nw4"
+symbol = "p27_attn_decode_anc_h256_gqa6_bf16kv_nw4.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 252
+sgpr_count = 33
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"
+
+[[kernel]]
+name = "p27_attn_decode_anc_h256_gqa6_fp8kv_nw1"
+symbol = "p27_attn_decode_anc_h256_gqa6_fp8kv_nw1.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 246
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"
+
+[[kernel]]
+name = "p27_attn_decode_anc_h256_gqa6_fp8kv_nw2"
+symbol = "p27_attn_decode_anc_h256_gqa6_fp8kv_nw2.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 250
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"
+
+[[kernel]]
+name = "p27_attn_decode_anc_h256_gqa6_fp8kv_nw3"
+symbol = "p27_attn_decode_anc_h256_gqa6_fp8kv_nw3.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 16
+vgpr_count = 256
+sgpr_count = 33
+wavefront_size = 32
+max_flat_workgroup_size = 96
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"
+
+[[kernel]]
+name = "p27_attn_decode_anc_h256_gqa6_fp8kv_nw4"
+symbol = "p27_attn_decode_anc_h256_gqa6_fp8kv_nw4.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 255
+sgpr_count = 40
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"

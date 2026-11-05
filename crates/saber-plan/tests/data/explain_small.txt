@@ -1,0 +1,46 @@
+saber plan
+  tier           tier:tiny-v1
+  drafter tier   (none bound)
+  model          tiny-2layer  tp=1
+  device         gfx1201  power cap 210 W
+  plan hash      c8870baa0e10a20215d04887e95d4b2386fcce93975bb10b464c6c938b99257c  (schema 1)
+  measured hash  ceff0de1ffe0b9e5f916268ed2356e4e467a924b74103715003cafab2c45b067  (the microseconds behind the bindings; NOT part of the plan hash)
+  input hash     aeabb99665c6639586e31961a98591ae5a55dadd19a7eb496c7ba1c7d50b86c2
+  digests        manifest=7070f815 device=214d00ab model=c215dabe registry=bb9b859f policy=(hand-built)
+  plugin         mxfp4 @ plugins/gfx1201/mxfp4.hsaco (build b7f3a1c0)
+  totals         1 bucket(s), 6 launches/step summed over buckets
+  decode         1 bucket(s), launches/step b2s2c4096=6
+
+bucket b2s2c4096  decode  batch 2  spec 2  ctx_band 4096  M=4  CAPTURED
+  launches       6 per step (declared statically, asserted at capture)
+  gdn state      4.00 MiB touched per layer = 6.2% of the 64.00 MiB Infinity Cache
+                 8.00 MiB resident (4 slot(s) x 1.00 MiB per layer)
+  workspace      scratch             64.00 KiB  [max over ops (aliasable within a bucket)] from 2 request(s)
+  workspace      persistent           8.00 KiB  [sum over ops (survives replay, zeroed once)] from 2 request(s)
+  ops            2 row(s), 3 call(s) per step, held as captured ops (every one carries a GraphSafe proof)
+    layer.mlp.down_proj  x2  gemm_w4a8  [a_dtype=int8 a_layout=row_major batch=2 k=512 m=4 n=256 spec_width=2 w_dtype=mxfp4]
+      impl       gemm_w4a8_mxfp4_decode (plugin mxfp4, wave32)
+      variant    variant 12 (split_k=4, tm=4)   31.20 us   margin +4.2% over the runner-up
+      state      default (who=maintainer when=2026-09-15 harness=bench_decode_ctx)
+      capture    graph_safe=yes may_sync=no   launches 2 each, 4 per step
+      workspace  scratch             16.00 KiB  "split-K partials"
+      workspace  persistent           4.00 KiB  "split-K block counter"
+      why        op `gemm_w4a8` at this geometry: 4 candidate(s)
+                   + gemm_w4a8_mxfp4_decode           ok
+                   + gemm_w4a8_mxfp4_wperm            ok
+                   + gemm_w4a8_mxfp4_folded           ok
+                   - gemm_w4a8_mxfp4_atiled           m=4, needs >= 2048
+                 3 candidates matched; the tie was broken by measurement, not by a cost model
+    lm_head  x1  gemm_w4a8  [a_dtype=int8 a_layout=row_major batch=2 k=256 m=4 n=1024 spec_width=2 w_dtype=mxfp4]
+      impl       gemm_w4a8_mxfp4_decode (plugin mxfp4, wave32)
+      variant    variant 12 (split_k=4, tm=4)   31.20 us   margin +4.2% over the runner-up
+      state      default (who=maintainer when=2026-09-15 harness=bench_decode_ctx)
+      capture    graph_safe=yes may_sync=no   launches 2 each, 2 per step
+      workspace  scratch             64.00 KiB  "split-K partials"
+      workspace  persistent           4.00 KiB  "split-K block counter"
+      why        op `gemm_w4a8` at this geometry: 4 candidate(s)
+                   + gemm_w4a8_mxfp4_decode           ok
+                   + gemm_w4a8_mxfp4_wperm            ok
+                   + gemm_w4a8_mxfp4_folded           ok
+                   - gemm_w4a8_mxfp4_atiled           m=4, needs >= 2048
+                 3 candidates matched; the tie was broken by measurement, not by a cost model

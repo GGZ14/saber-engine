@@ -1,0 +1,513 @@
+schema_version = 1
+plugin = "mxfp4_quant"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/mxfp4_quant.hip"
+source_sha256 = "142f95c9ba16eb0aba813a669f53cc6b54ff4d50b0fdafb569c1810ff6c1875a"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "cdf9c742a2db483f65bff30cd6ea0966090187b1a4ffcc6c8ab536d5ba27c593"
+hsaco = "mxfp4_quant.hsaco"
+hsaco_sha256 = "f1ff0987716324b770a9bbfbb5bfb25017cb048f79aac2fe73a8d8edfc690b5c"
+
+[[kernel]]
+name = "add_rms_quant_t256_tiled0"
+symbol = "add_rms_quant_t256_tiled0.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 66
+sgpr_count = 27
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "y"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "res"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "res_out"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "add_rms_quant_t256_tiled1"
+symbol = "add_rms_quant_t256_tiled1.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 67
+sgpr_count = 25
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "y"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "res"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "res_out"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "add_rms_quant_t512_tiled0"
+symbol = "add_rms_quant_t512_tiled0.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 64
+private_segment_fixed_size = 0
+vgpr_count = 66
+sgpr_count = 27
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "y"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "res"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "res_out"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "add_rms_quant_t512_tiled1"
+symbol = "add_rms_quant_t512_tiled1.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 64
+private_segment_fixed_size = 0
+vgpr_count = 67
+sgpr_count = 25
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "y"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "res"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "res_out"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "gdn_norm_quant_t256"
+symbol = "gdn_norm_quant_t256.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 89
+sgpr_count = 34
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "z"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "by_value"
+name = "zs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "gdn_norm_quant_t256_tiled1"
+symbol = "gdn_norm_quant_t256_tiled1.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 90
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "z"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "by_value"
+name = "zs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "silu_mul_quant_t256_tiled0"
+symbol = "silu_mul_quant_t256_tiled0.kd"
+kernarg_segment_size = 28
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 91
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "gu"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel]]
+name = "silu_mul_quant_t256_tiled1"
+symbol = "silu_mul_quant_t256_tiled1.kd"
+kernarg_segment_size = 28
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 92
+sgpr_count = 27
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "gu"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel]]
+name = "silu_mul_quant_t512_tiled0"
+symbol = "silu_mul_quant_t512_tiled0.kd"
+kernarg_segment_size = 28
+kernarg_segment_align = 8
+group_segment_fixed_size = 64
+private_segment_fixed_size = 0
+vgpr_count = 91
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "gu"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel]]
+name = "silu_mul_quant_t512_tiled1"
+symbol = "silu_mul_quant_t512_tiled1.kd"
+kernarg_segment_size = 28
+kernarg_segment_align = 8
+group_segment_fixed_size = 64
+private_segment_fixed_size = 0
+vgpr_count = 92
+sgpr_count = 27
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "gu"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "n"

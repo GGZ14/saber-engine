@@ -1,0 +1,63 @@
+schema_version = 1
+plugin = "p27_tree_flush"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/p27_tree_flush.hip"
+source_sha256 = "c69e03f596d4fc09e60507f2e4ab4c15042d4b8595f9007aa44bd8c192e547a5"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "927c1de8dc3716561791a706a8cb52ac5aadcafd78fdb4967c157fd39f72eac6"
+hsaco = "p27_tree_flush.hsaco"
+hsaco_sha256 = "2024ded69fd04043c1b5c8f70c12505924626b0c0ba4be05be3359a472f98be3"
+
+[[kernel]]
+name = "p27_tree_conv_commit"
+symbol = "p27_tree_conv_commit.kd"
+kernarg_segment_size = 52
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 5
+sgpr_count = 18
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "layer_base"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "moves"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "n_moves"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "seq_off"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "by_value"
+name = "cs_dim"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "cs_tok"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "dims"

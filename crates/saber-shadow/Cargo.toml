@@ -1,0 +1,36 @@
+[package]
+name = "saber-shadow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The shadow week's recording mirror, replay and daily reader (docs/SHADOW.md §1/§3)."
+
+# Host-only: an HTTP proxy, an HTTP client and a JSONL reader. Nothing here touches HIP, a pack
+# or the engine; the one Saber crate it knows is `saber-serve`, and only in its tests (the mock
+# endpoint the mirror is proven transparent against).
+
+[[bin]]
+name = "saber-shadow"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+hex = { workspace = true }
+axum = { version = "0.8", features = ["tokio", "http1"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# `stream`: the upstream body is read chunk by chunk and each chunk is forwarded the moment it
+# arrives — a proxy that buffered a stream would change exactly what BetterBench measures.
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+bytes = "1"
+
+[dev-dependencies]
+# Test scratch under target/, deleted on drop -- never /tmp (FN51h; structural.sh check 10).
+saber-test-scratch = { path = "../saber-test-scratch" }
+saber-serve = { path = "../saber-serve" }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json"] }

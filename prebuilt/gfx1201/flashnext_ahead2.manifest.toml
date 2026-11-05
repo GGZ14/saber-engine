@@ -1,0 +1,81 @@
+schema_version = 1
+plugin = "flashnext_ahead2"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_ahead2.hip"
+source_sha256 = "bd6bb160fd438adf35266f90dcec776252fa66d44ce9905e0513f2263cf7c107"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "fdb433e631e0387a96661899cc442a9f972d481040603be440eb68f20d226a13"
+hsaco = "flashnext_ahead2.hsaco"
+hsaco_sha256 = "82fd3462acc3819c0298dfa885fd1fe56c8aa0e88acf68bc1054b6bd8b2469a5"
+
+[[kernel]]
+name = "fn119b_compose"
+symbol = "fn119b_compose.kd"
+kernarg_segment_size = 36
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 7
+sgpr_count = 17
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "var"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "dst"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "runs"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "stride_words"
+
+[[kernel]]
+name = "fn119b_copy"
+symbol = "fn119b_copy.kd"
+kernarg_segment_size = 20
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 6
+sgpr_count = 6
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "src"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "dst"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "n16"

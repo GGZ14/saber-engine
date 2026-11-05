@@ -1,0 +1,441 @@
+schema_version = 1
+plugin = "flashnext_qsa128"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_qsa128.hip"
+source_sha256 = "b233daedaffdc99ee3c4b4fe19abe6ccda8bc7e20c524961df2157d58b03352f"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "9637273338822aa51145f043e1ccc3e96f5d2558f734ef7c1a3f5d9f1882715f"
+hsaco = "flashnext_qsa128.hsaco"
+hsaco_sha256 = "224d3ec2e37faaf04a654c88ae551f18dcf5b7d43de5b51396f6dcdf15e90fb8"
+
+[[kernel]]
+name = "fn128_qsa_score_s1"
+symbol = "fn128_qsa_score_s1.kd"
+kernarg_segment_size = 68
+kernarg_segment_align = 8
+group_segment_fixed_size = 8192
+private_segment_fixed_size = 0
+vgpr_count = 149
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "comp"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "bt"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "max_blocks"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "scores"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "by_value"
+name = "sstride"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "rows_per_seq"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "rt"
+
+[[kernel]]
+name = "fn128_qsa_topk512_k16"
+symbol = "fn128_qsa_topk512_k16.kd"
+kernarg_segment_size = 36
+kernarg_segment_align = 8
+group_segment_fixed_size = 4708
+private_segment_fixed_size = 0
+vgpr_count = 60
+sgpr_count = 60
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "scores"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "by_value"
+name = "sstride"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "sel"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel]]
+name = "fn128_qsa_topk512_k32"
+symbol = "fn128_qsa_topk512_k32.kd"
+kernarg_segment_size = 36
+kernarg_segment_align = 8
+group_segment_fixed_size = 4708
+private_segment_fixed_size = 0
+vgpr_count = 92
+sgpr_count = 107
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "scores"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "by_value"
+name = "sstride"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "sel"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel]]
+name = "fn128_qsa_topk512_k32_t1024"
+symbol = "fn128_qsa_topk512_k32_t1024.kd"
+kernarg_segment_size = 36
+kernarg_segment_align = 8
+group_segment_fixed_size = 5284
+private_segment_fixed_size = 0
+vgpr_count = 93
+sgpr_count = 106
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "scores"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "by_value"
+name = "sstride"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "sel"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel]]
+name = "fn128_qsa_topk512_k8"
+symbol = "fn128_qsa_topk512_k8.kd"
+kernarg_segment_size = 36
+kernarg_segment_align = 8
+group_segment_fixed_size = 4708
+private_segment_fixed_size = 0
+vgpr_count = 50
+sgpr_count = 38
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "scores"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "by_value"
+name = "sstride"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "sel"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel]]
+name = "fn128_qsa_union_s"
+symbol = "fn128_qsa_union_s.kd"
+kernarg_segment_size = 104
+kernarg_segment_align = 8
+group_segment_fixed_size = 53488
+private_segment_fixed_size = 0
+vgpr_count = 36
+sgpr_count = 48
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "sel"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 20
+size = 4
+value_kind = "by_value"
+name = "R"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "cps"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bt"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "max_blocks"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "who"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "by_value"
+name = "wstride"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "kslot"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "global_buffer"
+name = "kmask"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "global_buffer"
+name = "kbits"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "nkeys"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "by_value"
+name = "kstride"
+
+[[kernel]]
+name = "fn128_qsa_union_s1k"
+symbol = "fn128_qsa_union_s1k.kd"
+kernarg_segment_size = 104
+kernarg_segment_align = 8
+group_segment_fixed_size = 53488
+private_segment_fixed_size = 0
+vgpr_count = 36
+sgpr_count = 48
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "sel"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 20
+size = 4
+value_kind = "by_value"
+name = "R"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "cps"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bt"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "max_blocks"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "who"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "by_value"
+name = "wstride"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "kslot"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "global_buffer"
+name = "kmask"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "global_buffer"
+name = "kbits"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "nkeys"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "by_value"
+name = "kstride"

@@ -1,0 +1,435 @@
+schema_version = 1
+plugin = "dflash_ctx"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/dflash_ctx.hip"
+source_sha256 = "a14f8019ae330d7c21a1d49318e55ecaf984c78c3540d26f6f0b2ec241263e13"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "d299fc0d4a0b7eef9c00fa6c56693a637ee26f8c5b7193c6389a46195b6f8faa"
+hsaco = "dflash_ctx.hsaco"
+hsaco_sha256 = "37aea9a123d6228752cf42e16cd5e3d2f7f6b275a0071d33cd9c1eb5497eeae9"
+
+[[kernel]]
+name = "dflash_ctx_kv_layout"
+symbol = "dflash_ctx_kv_layout.kd"
+kernarg_segment_size = 288
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 11
+sgpr_count = 21
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "in"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "num_ctx"
+
+[[kernel.arg]]
+offset = 20
+size = 4
+value_kind = "by_value"
+name = "layers"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "nkv"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "hd"
+
+[[kernel]]
+name = "dflash_ctx_kv_layout_swapped"
+symbol = "dflash_ctx_kv_layout_swapped.kd"
+kernarg_segment_size = 288
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 11
+sgpr_count = 24
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "in"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "num_ctx"
+
+[[kernel.arg]]
+offset = 20
+size = 4
+value_kind = "by_value"
+name = "layers"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "nkv"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "hd"
+
+[[kernel]]
+name = "dflash_rms_norm_grouped_w1"
+symbol = "dflash_rms_norm_grouped_w1.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 132
+private_segment_fixed_size = 0
+vgpr_count = 15
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "weight"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "rows_per_group"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "dflash_rms_norm_grouped_w16"
+symbol = "dflash_rms_norm_grouped_w16.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 132
+private_segment_fixed_size = 0
+vgpr_count = 53
+sgpr_count = 29
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "weight"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "rows_per_group"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "dflash_rms_norm_grouped_w2"
+symbol = "dflash_rms_norm_grouped_w2.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 132
+private_segment_fixed_size = 0
+vgpr_count = 12
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "weight"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "rows_per_group"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "dflash_rms_norm_grouped_w4"
+symbol = "dflash_rms_norm_grouped_w4.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 132
+private_segment_fixed_size = 0
+vgpr_count = 20
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "weight"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "rows_per_group"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "dflash_rms_norm_grouped_w8"
+symbol = "dflash_rms_norm_grouped_w8.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 132
+private_segment_fixed_size = 0
+vgpr_count = 29
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "weight"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "rows_per_group"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "dflash_rope_neox_k_inplace"
+symbol = "dflash_rope_neox_k_inplace.kd"
+kernarg_segment_size = 304
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 17
+sgpr_count = 24
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "positions"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "cos_sin"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "heads"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "head_size"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "rot_dim"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "stride"

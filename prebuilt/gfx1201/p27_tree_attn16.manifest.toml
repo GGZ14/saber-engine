@@ -1,0 +1,81 @@
+schema_version = 1
+plugin = "p27_tree_attn16"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/p27_tree_attn16.hip"
+source_sha256 = "dddc3273ae76b5db200750b90a9f101874ac982d0d34526ed94151bf7c2043be"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "4a1f33753e2e1dd793267b07c3c09e1ab0c634b6400ea37b4503e2867df580cf"
+hsaco = "p27_tree_attn16.hsaco"
+hsaco_sha256 = "11366114035cc30aede864af320b4344687a02ca7aa15f96b811ce692db08f5d"
+
+[[kernel]]
+name = "p27_attn_decode_anc16_h256_gqa6_bf16kv_nw6"
+symbol = "p27_attn_decode_anc16_h256_gqa6_bf16kv_nw6.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 36
+vgpr_count = 256
+sgpr_count = 36
+wavefront_size = 32
+max_flat_workgroup_size = 192
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"
+
+[[kernel]]
+name = "p27_attn_decode_anc16_h256_gqa6_fp8kv_nw6"
+symbol = "p27_attn_decode_anc16_h256_gqa6_fp8kv_nw6.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 253
+sgpr_count = 42
+wavefront_size = 32
+max_flat_workgroup_size = 192
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "anc"

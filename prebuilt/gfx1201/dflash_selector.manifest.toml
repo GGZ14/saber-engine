@@ -1,0 +1,87 @@
+schema_version = 1
+plugin = "dflash_selector"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/dflash_selector.hip"
+source_sha256 = "343629d523491bd8de2c9deca6a8ca8ad4f17c0eeffb063a7077f0ae002e7c34"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "8d9deb70194c21e21d7c07407f998db21a9371de53b3dc5cb6a3515c8cc11e09"
+hsaco = "dflash_selector.hsaco"
+hsaco_sha256 = "551eb92ab1921c88118c76cf7044be8f467c03d7c8c601c391de743c2f6548a1"
+
+[[kernel]]
+name = "dflash_selector_score_r256_k16"
+symbol = "dflash_selector_score_r256_k16.kd"
+kernarg_segment_size = 72
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 195
+sgpr_count = 46
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "pred_cb"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "succ_cb"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "cand"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "anchor"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "unary"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "hidden"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "bl"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "l_len"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "r"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "k_top"

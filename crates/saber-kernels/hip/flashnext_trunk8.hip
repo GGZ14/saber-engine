@@ -1,0 +1,539 @@
+// FN61c: the fp8 W8 dense trunk's two OUTPUT-STRIDE (ldc) cells, its own code object so
+// `dflash_gemm` (the drafter's W8A8 GEMM, gated against the reference) and `flashnext_hc` (FN5's bf16
+// split-K band) keep their bytes:
+//
+//   fn_t8_a8w8_bs128_ldc   `dflash_gemm_a8w8_bs128_mtn128k128`'s body (the M-tiled instantiation:
+//                          16-row tiles on blockIdx.y; any M) with the store's row stride a
+//                          kernel argument. Used where the W8 rows are a PREFIX of a merged
+//                          projection the consumers read at the merged stride: GDN in_proj
+//                          (qkvz 8,192 of the 8,240-wide row) and the QSA projection (q|gate, k,
+//                          v = 6,656 of the 7,296-wide row).
+//   fn_t8_bgemm_m16_ldc    FN5's `fn_bgemm_sk_m16` body at ONE split (the band itself, no
+//                          partials) with the store's row stride a kernel argument: the bf16
+//                          SUFFIX of those merged rows (in_proj_ba N 48, the indexer N 640).
+//
+// The arithmetic is the parents' line for line (the only change is `ldc` in the store's address),
+// so each output element is computed in the same summation order as the parent at the same M.
+#include <hip/hip_runtime.h>
+#include <hip/hip_bf16.h>
+
+typedef float floatx8 __attribute__((ext_vector_type(8)));
+typedef unsigned int uint2_t __attribute__((ext_vector_type(2)));
+typedef unsigned int uint4_t __attribute__((ext_vector_type(4)));
+typedef __bf16 bf16x8 __attribute__((ext_vector_type(8)));
+
+// ============================================================ fp8 W8A8 block-scale (dflash_gemm)
+#define DG_BM 16
+#define DG_BN 128
+#define DG_BK 128
+#define DG_NW 4
+#define DG_NT (DG_NW * 32)
+
+__device__ __forceinline__ floatx8 dg_wmma(uint2_t a, uint2_t b, floatx8 c) {
+  return __builtin_amdgcn_wmma_f32_16x16x16_fp8_fp8_w32_gfx12(a, b, c);
+}
+__device__ __forceinline__ int dg_acc_row(int lane, int e) { return (lane >> 4) * 8 + e; }
+
+__device__ __forceinline__ void dg_store_acc(const floatx8 &acc, __bf16 *__restrict__ c,
+                                             int n0, int m0, int M, int N, long ldc, int lane) {
+  const int col = n0 + (lane & 15);
+  if (col >= N) return;
+#pragma unroll
+  for (int e = 0; e < 8; ++e) {
+    const int row = m0 + dg_acc_row(lane, e);
+    if (row < M) c[(long)row * ldc + col] = (__bf16)acc[e];
+  }
+}
+
+template <int BM, int BN, int BK, int NW>
+__device__ __forceinline__ void t8_gemm_a8w8_impl(
+    const unsigned char *__restrict__ A,   // [M, K] e4m3, row-major
+    const unsigned char *__restrict__ W,   // [N/16, K*16] e4m3, preshuffled
+    const float *__restrict__ As,          // [M, K/128] fp32 block scales
+    const float *__restrict__ Ws,          // [N/128, K/128] fp32 block scales
+    __bf16 *__restrict__ C,                // [M, ldc] bf16 (columns 0..N)
+    int M, int N, int K, long LDC) {
+  constexpr int NT = NW * 32;
+  constexpr int NFRAG = BN / 16;
+  constexpr int KSTEP = BK / 16;
+  constexpr int MYF = NFRAG / NW;
+  constexpr int ACH = BM * BK / 16 / NT;
+  constexpr int LDA = BK + 8;
+  __shared__ unsigned char sA[BM * LDA];
+  const int tid = threadIdx.x, lane = tid & 31, wave = tid >> 5;
+  const int n0 = blockIdx.x * BN;
+  const int m0 = (int)blockIdx.y * BM;
+  if (m0 >= M) return;
+  const int ktiles = K / BK;
+
+  floatx8 acc[MYF];
+#pragma unroll
+  for (int i = 0; i < MYF; ++i)
+#pragma unroll
+    for (int e = 0; e < 8; ++e) acc[i][e] = 0.f;
+
+  const unsigned char *bbase = W + ((long)(n0 / 16) + wave) * (long)K * 16
+                               + (long)(lane & 15) * 16 + (long)(lane >> 4) * 8;
+  typedef uint2_t bfrag_t[MYF][KSTEP];
+  bfrag_t b0, b1;
+  uint4_t abuf[ACH];
+  auto fetch_b = [&](bfrag_t &dst, int kt) {
+#pragma unroll
+    for (int i = 0; i < MYF; ++i)
+#pragma unroll
+      for (int ks = 0; ks < KSTEP; ++ks)
+        dst[i][ks] = *(const uint2_t *)(bbase + (long)i * NW * K * 16
+                                        + ((long)kt * KSTEP + ks) * 256);
+  };
+  auto fetch_a = [&](int kt) {
+#pragma unroll
+    for (int i = 0; i < ACH; ++i) {
+      const int off = (tid + i * NT) * 16;
+      const int r = off / BK, c = off % BK;
+      const int gr = m0 + r;
+      const int rc = gr < M ? gr : M - 1;
+      abuf[i] = *(const uint4_t *)(A + (long)rc * K + kt * BK + c);
+    }
+  };
+  auto step = [&](int kt, bfrag_t &cur, bfrag_t &nxt) {
+#pragma unroll
+    for (int i = 0; i < ACH; ++i) {
+      const int off = (tid + i * NT) * 16;
+      *(uint4_t *)(&sA[(off / BK) * LDA + off % BK]) = abuf[i];
+    }
+    __syncthreads();
+    if (kt + 1 < ktiles) {
+      fetch_b(nxt, kt + 1);
+      fetch_a(kt + 1);
+    }
+    floatx8 tile[MYF];
+#pragma unroll
+    for (int i = 0; i < MYF; ++i)
+#pragma unroll
+      for (int e = 0; e < 8; ++e) tile[i][e] = 0.f;
+#pragma unroll
+    for (int i = 0; i < MYF; ++i)
+#pragma unroll
+      for (int ks = 0; ks < KSTEP; ++ks) {
+        const uint2_t av =
+            *(const uint2_t *)(&sA[(lane & 15) * LDA + ks * 16 + (lane >> 4) * 8]);
+        tile[i] = dg_wmma(av, cur[i][ks], tile[i]);
+      }
+    __syncthreads();
+    const float bs = Ws[(long)(n0 / 128) * (K / 128) + kt];
+#pragma unroll
+    for (int i = 0; i < MYF; ++i)
+#pragma unroll
+      for (int e = 0; e < 8; ++e) {
+        const int row = m0 + dg_acc_row(lane, e);
+        const float as = row < M ? As[(long)row * (K / 128) + kt] : 0.f;
+        acc[i][e] += tile[i][e] * (as * bs);
+      }
+  };
+
+  fetch_b(b0, 0);
+  fetch_a(0);
+  int kt = 0;
+  for (; kt + 1 < ktiles; kt += 2) {
+    step(kt, b0, b1);
+    step(kt + 1, b1, b0);
+  }
+  if (kt < ktiles) step(kt, b0, b1);
+
+#pragma unroll
+  for (int i = 0; i < MYF; ++i)
+    dg_store_acc(acc[i], C, n0 + (wave + i * NW) * 16, m0, M, N, LDC, lane);
+}
+
+extern "C" __global__ __launch_bounds__(DG_NT) void fn_t8_a8w8_bs128_ldc(
+    const unsigned char *__restrict__ a, const unsigned char *__restrict__ w,
+    const float *__restrict__ as, const float *__restrict__ ws, __bf16 *__restrict__ c,
+    int m, int n, int k, int ldc) {
+  t8_gemm_a8w8_impl<DG_BM, DG_BN, DG_BK, DG_NW>(a, w, as, ws, c, m, n, k, (long)ldc);
+}
+
+// ============================================================ bf16, one split (flashnext_hc)
+__device__ __forceinline__ floatx8 vg_wmma(bf16x8 a, bf16x8 b, floatx8 c) {
+  return __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32_gfx12(a, b, c);
+}
+#define FB_NW 4
+#define FB_UNR 8
+extern "C" __global__ __launch_bounds__(FB_NW * 32) void fn_t8_bgemm_m16_ldc(
+    const __bf16 *__restrict__ a, const __bf16 *__restrict__ w, __bf16 *__restrict__ c, int m,
+    int n, int k, int ldc) {
+  constexpr int MF = 1;
+  const int tid = threadIdx.x, lane = tid & 31, wave = tid >> 5;
+  const int n0 = ((int)blockIdx.x * FB_NW + wave) * 16;
+  const int m0 = (int)blockIdx.y * 16;
+  const int row = lane & 15, kh = (lane >> 4) * 8;
+  const bool live = n0 < n;
+  const __bf16 *ap[MF];
+#pragma unroll
+  for (int mf = 0; mf < MF; ++mf) ap[mf] = a + (long)min(m0 + mf * 16 + row, m - 1) * k + kh;
+  const __bf16 *wp = w + (long)min(n0 + row, n - 1) * k + kh;
+  floatx8 acc[MF];
+#pragma unroll
+  for (int mf = 0; mf < MF; ++mf)
+#pragma unroll
+    for (int e = 0; e < 8; ++e) acc[mf][e] = 0.f;
+  const int ksteps = live ? k / 16 : 0;
+  int ks = 0;
+  for (; ks + FB_UNR <= ksteps; ks += FB_UNR) {
+    bf16x8 af[MF][FB_UNR], wf[FB_UNR];
+#pragma unroll
+    for (int u = 0; u < FB_UNR; ++u) {
+#pragma unroll
+      for (int mf = 0; mf < MF; ++mf) af[mf][u] = *(const bf16x8 *)(ap[mf] + (ks + u) * 16);
+      wf[u] = *(const bf16x8 *)(wp + (ks + u) * 16);
+    }
+#pragma unroll
+    for (int u = 0; u < FB_UNR; ++u)
+#pragma unroll
+      for (int mf = 0; mf < MF; ++mf) acc[mf] = vg_wmma(af[mf][u], wf[u], acc[mf]);
+  }
+  for (; ks < ksteps; ++ks) {
+    const bf16x8 wv = *(const bf16x8 *)(wp + ks * 16);
+#pragma unroll
+    for (int mf = 0; mf < MF; ++mf)
+      acc[mf] = vg_wmma(*(const bf16x8 *)(ap[mf] + ks * 16), wv, acc[mf]);
+  }
+  const int col = n0 + (lane & 15);
+  if (!live || col >= n) return;
+#pragma unroll
+  for (int mf = 0; mf < MF; ++mf)
+#pragma unroll
+    for (int e = 0; e < 8; ++e) {
+      const int r = m0 + mf * 16 + (lane >> 4) * 8 + e;
+      if (r < m) c[(long)r * ldc + col] = (__bf16)acc[mf][e];
+    }
+}
+
+// ============================================================ FN86b family 4: quant + bf16 suffix
+// `dflash_act_quant_g128` (dflash_mlp.hip's DQ_BODY: one wave per 128-group, 4 bf16 a lane, amax
+// by a max butterfly, sc = max(amax / 448, 1 / (448 x 512)) a REAL division, clamp, the same
+// convert) and `fn_t8_bgemm_m16_ldc` (above, line for line) as ONE launch over the SAME input `a`:
+// workgroups [0, nqb) are the quant's grid, [nqb, nqb + nbx x nby) the suffix GEMM's (x fastest).
+// Both parents run 128 threads and the default contraction (this file's flags = dflash_mlp's);
+// the two halves share nothing but the input, so each output is its parent's at the same M.
+// `_rc` = the GATE CONTROL (the quant scale as a reciprocal multiply): must differ.
+template <bool RC>
+__device__ __forceinline__ void fn86_q8_g128_part(const __bf16 *__restrict__ x,
+                                                  unsigned char *__restrict__ q,
+                                                  float *__restrict__ scales, int t_rows, int n,
+                                                  int bid) {
+  typedef __bf16 bf16x4 __attribute__((ext_vector_type(4)));
+  const int wave = (int)(bid * 4 + (threadIdx.x >> 5));
+  const int lane = threadIdx.x & 31;
+  const int ngq = n / 128;
+  const int t = wave / ngq, qg = wave - t * ngq;
+  if (t >= t_rows) return;
+  const int j = qg * 128 + lane * 4;
+  const bf16x4 xv = *(const bf16x4 *)(x + (long)t * n + j);
+  float ob[4];
+  float a = 0.f;
+#pragma unroll
+  for (int e = 0; e < 4; ++e) {
+    ob[e] = (float)xv[e];
+    a = fmaxf(a, fabsf(ob[e]));
+  }
+#pragma unroll
+  for (int d = 1; d < 32; d <<= 1) a = fmaxf(a, __shfl_xor(a, d, 32));
+  const float sc = fmaxf(RC ? a * (1.f / 448.f) : a / 448.f, 1.f / (448.f * 512.f));
+  if (lane == 0) scales[(long)t * ngq + qg] = sc;
+  unsigned int packed = 0;
+#pragma unroll
+  for (int e = 0; e < 4; e += 2) {
+    const float u = fminf(fmaxf(ob[e] / sc, -448.f), 448.f);
+    const float v = fminf(fmaxf(ob[e + 1] / sc, -448.f), 448.f);
+    packed |= (__builtin_amdgcn_cvt_pk_fp8_f32(u, v, 0u, false) & 0xffffu) << (e * 8);
+  }
+  *(unsigned int *)(q + (long)t * n + j) = packed;
+}
+
+__device__ __forceinline__ void fn86_bgemm_m16_ldc_part(const __bf16 *__restrict__ a,
+                                                        const __bf16 *__restrict__ w,
+                                                        __bf16 *__restrict__ c, int m, int n,
+                                                        int k, int ldc, int bx, int by) {
+  constexpr int MF = 1;
+  const int tid = threadIdx.x, lane = tid & 31, wave = tid >> 5;
+  const int n0 = (bx * FB_NW + wave) * 16;
+  const int m0 = by * 16;
+  const int row = lane & 15, kh = (lane >> 4) * 8;
+  const bool live = n0 < n;
+  const __bf16 *ap[MF];
+#pragma unroll
+  for (int mf = 0; mf < MF; ++mf) ap[mf] = a + (long)min(m0 + mf * 16 + row, m - 1) * k + kh;
+  const __bf16 *wp = w + (long)min(n0 + row, n - 1) * k + kh;
+  floatx8 acc[MF];
+#pragma unroll
+  for (int mf = 0; mf < MF; ++mf)
+#pragma unroll
+    for (int e = 0; e < 8; ++e) acc[mf][e] = 0.f;
+  const int ksteps = live ? k / 16 : 0;
+  int ks = 0;
+  for (; ks + FB_UNR <= ksteps; ks += FB_UNR) {
+    bf16x8 af[MF][FB_UNR], wf[FB_UNR];
+#pragma unroll
+    for (int u = 0; u < FB_UNR; ++u) {
+#pragma unroll
+      for (int mf = 0; mf < MF; ++mf) af[mf][u] = *(const bf16x8 *)(ap[mf] + (ks + u) * 16);
+      wf[u] = *(const bf16x8 *)(wp + (ks + u) * 16);
+    }
+#pragma unroll
+    for (int u = 0; u < FB_UNR; ++u)
+#pragma unroll
+      for (int mf = 0; mf < MF; ++mf) acc[mf] = vg_wmma(af[mf][u], wf[u], acc[mf]);
+  }
+  for (; ks < ksteps; ++ks) {
+    const bf16x8 wv = *(const bf16x8 *)(wp + ks * 16);
+#pragma unroll
+    for (int mf = 0; mf < MF; ++mf)
+      acc[mf] = vg_wmma(*(const bf16x8 *)(ap[mf] + ks * 16), wv, acc[mf]);
+  }
+  const int col = n0 + (lane & 15);
+  if (!live || col >= n) return;
+#pragma unroll
+  for (int mf = 0; mf < MF; ++mf)
+#pragma unroll
+    for (int e = 0; e < 8; ++e) {
+      const int r = m0 + mf * 16 + (lane >> 4) * 8 + e;
+      if (r < m) c[(long)r * ldc + col] = (__bf16)acc[mf][e];
+    }
+}
+
+template <bool RC>
+__device__ __forceinline__ void fn86_q8_bgemm_body(
+    const __bf16 *__restrict__ a, unsigned char *__restrict__ q, float *__restrict__ as, int m,
+    int k, int nqb, const __bf16 *__restrict__ w, __bf16 *__restrict__ c, int n, int ldc,
+    int nbx) {
+  const int b = (int)blockIdx.x;
+  if (b < nqb) {
+    fn86_q8_g128_part<RC>(a, q, as, m, k, b);
+    return;
+  }
+  const int bb = b - nqb;
+  fn86_bgemm_m16_ldc_part(a, w, c, m, n, k, ldc, bb % nbx, bb / nbx);
+}
+
+extern "C" __global__ __launch_bounds__(FB_NW * 32) void fn86_q8_bgemm_m16_ldc(
+    const __bf16 *__restrict__ a, unsigned char *__restrict__ q, float *__restrict__ as, int m,
+    int k, int nqb, const __bf16 *__restrict__ w, __bf16 *__restrict__ c, int n, int ldc,
+    int nbx) {
+  fn86_q8_bgemm_body<false>(a, q, as, m, k, nqb, w, c, n, ldc, nbx);
+}
+
+extern "C" __global__ __launch_bounds__(FB_NW * 32) void fn86_q8_bgemm_m16_ldc_rc(
+    const __bf16 *__restrict__ a, unsigned char *__restrict__ q, float *__restrict__ as, int m,
+    int k, int nqb, const __bf16 *__restrict__ w, __bf16 *__restrict__ c, int n, int ldc,
+    int nbx) {
+  fn86_q8_bgemm_body<true>(a, q, as, m, k, nqb, w, c, n, ldc, nbx);
+}
+
+// ============================================================ FN86c family 2: the act quant in the
+// W8 GEMM's A staging + family 4's bf16 suffix as extra workgroups (ONE launch for the merged
+// projection). The W8 half is `t8_gemm_a8w8_impl` (above) line for line, except that its A tile is
+// fetched as bf16 and quantized at staging: the quant group of `dflash_act_quant_g128` is one row's
+// 128 K elements = exactly ONE K tile of one row (BK 128), so each staging thread (16 elements of
+// row tid / 8) takes the group's amax over its 8-lane group by a max butterfly (exact: max is order
+// free), sc = max(amax / 448, 1 / (448 x 512)) a REAL division, q = clamp(x / sc, +-448) -> e4m3
+// by the same convert, packed in the same byte order; the scale is the epilogue's `as` (from LDS,
+// double-buffered by K tile) instead of the global read. Workgroups x >= nbx8 run
+// `fn86_bgemm_m16_ldc_part` (family 4's suffix, line for line) on the same bf16 input. Rows >= M
+// stage a clamped duplicate and take `as` 0, as the parent. `_rc` = the gate CONTROL (the scale as
+// a reciprocal multiply): must differ.
+template <bool RC>
+__device__ __forceinline__ uint4_t fn86_q8_stage16(const uint4_t lo, const uint4_t hi, float &sc) {
+  typedef __bf16 bf16x8v __attribute__((ext_vector_type(8)));
+  bf16x8v xa, xb;
+  __builtin_memcpy(&xa, &lo, 16);
+  __builtin_memcpy(&xb, &hi, 16);
+  float ob[16];
+  float a = 0.f;
+#pragma unroll
+  for (int e = 0; e < 8; ++e) {
+    ob[e] = (float)xa[e];
+    ob[8 + e] = (float)xb[e];
+  }
+#pragma unroll
+  for (int e = 0; e < 16; ++e) a = fmaxf(a, fabsf(ob[e]));
+#pragma unroll
+  for (int d = 1; d < 8; d <<= 1) a = fmaxf(a, __shfl_xor(a, d, 32));
+  sc = fmaxf(RC ? a * (1.f / 448.f) : a / 448.f, 1.f / (448.f * 512.f));
+  uint4_t out;
+#pragma unroll
+  for (int wd = 0; wd < 4; ++wd) {
+    unsigned int packed = 0;
+#pragma unroll
+    for (int e = 0; e < 4; e += 2) {
+      const float u = fminf(fmaxf(ob[wd * 4 + e] / sc, -448.f), 448.f);
+      const float v = fminf(fmaxf(ob[wd * 4 + e + 1] / sc, -448.f), 448.f);
+      packed |= (__builtin_amdgcn_cvt_pk_fp8_f32(u, v, 0u, false) & 0xffffu) << (e * 8);
+    }
+    out[wd] = packed;
+  }
+  return out;
+}
+
+template <int BM, int BN, int BK, int NW, bool RC>
+__device__ __forceinline__ void fn86_t8_q8gemm_impl(
+    const __bf16 *__restrict__ A,          // [M, K] bf16, row-major (the quant's input)
+    const unsigned char *__restrict__ W,   // [N/16, K*16] e4m3, preshuffled
+    const float *__restrict__ Ws,          // [N/128, K/128] fp32 block scales
+    __bf16 *__restrict__ C,                // [M, ldc] bf16 (columns 0..N)
+    int M, int N, int K, long LDC, int bx, int by) {
+  constexpr int NT = NW * 32;
+  constexpr int NFRAG = BN / 16;
+  constexpr int KSTEP = BK / 16;
+  constexpr int MYF = NFRAG / NW;
+  constexpr int ACH = BM * BK / 16 / NT;
+  constexpr int LDA = BK + 8;
+  static_assert(ACH == 1 && BK == 128 && NT == 128, "one 16-element chunk a thread, 8 a group");
+  __shared__ unsigned char sA[BM * LDA];
+  __shared__ float sAs[2][BM];
+  const int tid = threadIdx.x, lane = tid & 31, wave = tid >> 5;
+  const int n0 = bx * BN;
+  const int m0 = by * BM;
+  if (m0 >= M) return;
+  const int ktiles = K / BK;
+
+  floatx8 acc[MYF];
+#pragma unroll
+  for (int i = 0; i < MYF; ++i)
+#pragma unroll
+    for (int e = 0; e < 8; ++e) acc[i][e] = 0.f;
+
+  const unsigned char *bbase = W + ((long)(n0 / 16) + wave) * (long)K * 16
+                               + (long)(lane & 15) * 16 + (long)(lane >> 4) * 8;
+  typedef uint2_t bfrag_t[MYF][KSTEP];
+  bfrag_t b0, b1;
+  uint4_t alo, ahi;
+  auto fetch_b = [&](bfrag_t &dst, int kt) {
+#pragma unroll
+    for (int i = 0; i < MYF; ++i)
+#pragma unroll
+      for (int ks = 0; ks < KSTEP; ++ks)
+        dst[i][ks] = *(const uint2_t *)(bbase + (long)i * NW * K * 16
+                                        + ((long)kt * KSTEP + ks) * 256);
+  };
+  auto fetch_a = [&](int kt) {
+    const int off = tid * 16;
+    const int r = off / BK, c = off % BK;
+    const int gr = m0 + r;
+    const int rc = gr < M ? gr : M - 1;
+    const __bf16 *p = A + (long)rc * K + kt * BK + c;
+    alo = *(const uint4_t *)p;
+    ahi = *(const uint4_t *)(p + 8);
+  };
+  auto step = [&](int kt, bfrag_t &cur, bfrag_t &nxt) {
+    {
+      const int off = tid * 16;
+      float sc;
+      const uint4_t q = fn86_q8_stage16<RC>(alo, ahi, sc);
+      *(uint4_t *)(&sA[(off / BK) * LDA + off % BK]) = q;
+      if ((tid & 7) == 0) sAs[kt & 1][off / BK] = sc;
+    }
+    __syncthreads();
+    if (kt + 1 < ktiles) {
+      fetch_b(nxt, kt + 1);
+      fetch_a(kt + 1);
+    }
+    floatx8 tile[MYF];
+#pragma unroll
+    for (int i = 0; i < MYF; ++i)
+#pragma unroll
+      for (int e = 0; e < 8; ++e) tile[i][e] = 0.f;
+#pragma unroll
+    for (int i = 0; i < MYF; ++i)
+#pragma unroll
+      for (int ks = 0; ks < KSTEP; ++ks) {
+        const uint2_t av =
+            *(const uint2_t *)(&sA[(lane & 15) * LDA + ks * 16 + (lane >> 4) * 8]);
+        tile[i] = dg_wmma(av, cur[i][ks], tile[i]);
+      }
+    __syncthreads();
+    const float bs = Ws[(long)(n0 / 128) * (K / 128) + kt];
+#pragma unroll
+    for (int i = 0; i < MYF; ++i)
+#pragma unroll
+      for (int e = 0; e < 8; ++e) {
+        const int row = m0 + dg_acc_row(lane, e);
+        const float as = row < M ? sAs[kt & 1][dg_acc_row(lane, e)] : 0.f;
+        acc[i][e] += tile[i][e] * (as * bs);
+      }
+  };
+
+  fetch_b(b0, 0);
+  fetch_a(0);
+  int kt = 0;
+  for (; kt + 1 < ktiles; kt += 2) {
+    step(kt, b0, b1);
+    step(kt + 1, b1, b0);
+  }
+  if (kt < ktiles) step(kt, b0, b1);
+
+#pragma unroll
+  for (int i = 0; i < MYF; ++i)
+    dg_store_acc(acc[i], C, n0 + (wave + i * NW) * 16, m0, M, N, LDC, lane);
+}
+
+// grid (nbx8 + nbxs, ceil(M / 16)): x < nbx8 = the W8 prefix's 128-column tiles (C at column 0),
+// x >= nbx8 = the bf16 suffix's 64-column tiles (`cs` = C + the prefix's N, its own `ns` rows of
+// `ws16`). Both read the SAME bf16 input `a` [M, K].
+template <bool RC>
+__device__ __forceinline__ void fn86_q8w8_sfx_body(
+    const __bf16 *__restrict__ a, const unsigned char *__restrict__ w8, const float *__restrict__ ws8,
+    __bf16 *__restrict__ c, int m, int n8, int k, int ldc, int nbx8,
+    const __bf16 *__restrict__ w16, __bf16 *__restrict__ cs, int ns) {
+  const int bx = (int)blockIdx.x, by = (int)blockIdx.y;
+  if (bx < nbx8) {
+    fn86_t8_q8gemm_impl<DG_BM, DG_BN, DG_BK, DG_NW, RC>(a, w8, ws8, c, m, n8, k, (long)ldc, bx, by);
+    return;
+  }
+  fn86_bgemm_m16_ldc_part(a, w16, cs, m, ns, k, ldc, bx - nbx8, by);
+}
+
+extern "C" __global__ __launch_bounds__(DG_NT) void fn86_t8_q8w8_sfx_ldc(
+    const __bf16 *__restrict__ a, const unsigned char *__restrict__ w8,
+    const float *__restrict__ ws8, __bf16 *__restrict__ c, int m, int n8, int k, int ldc,
+    int nbx8, const __bf16 *__restrict__ w16, __bf16 *__restrict__ cs, int ns) {
+  fn86_q8w8_sfx_body<false>(a, w8, ws8, c, m, n8, k, ldc, nbx8, w16, cs, ns);
+}
+
+extern "C" __global__ __launch_bounds__(DG_NT) void fn86_t8_q8w8_sfx_ldc_rc(
+    const __bf16 *__restrict__ a, const unsigned char *__restrict__ w8,
+    const float *__restrict__ ws8, __bf16 *__restrict__ c, int m, int n8, int k, int ldc,
+    int nbx8, const __bf16 *__restrict__ w16, __bf16 *__restrict__ cs, int ns) {
+  fn86_q8w8_sfx_body<true>(a, w8, ws8, c, m, n8, k, ldc, nbx8, w16, cs, ns);
+}
+
+// ============================================================ FN111: the N re-tile at M <= 16
+// The served b1 verify's W8 GEMMs run 128-column tiles of 4 waves (2 fragments a wave): the
+// out / o projection (N 2,560) is 20 workgroups on 64 CUs and the merged in / QSA projection 65 / 62
+// (LEDGER FN111 census: 376 / 548 GB/s of 635). These are the SAME bodies at a 64-column tile (one
+// fragment a wave): each output element's arithmetic -- the K-tile loop in order, the 8-step WMMA
+// chain from zero, `acc += tile * (as * bs)` with bs from the element's own 128-column block, one
+// bf16 rounding at the store -- does not depend on how many fragments a wave holds, so the bytes are
+// the parents' (oracle-gated on card 1 vs the shipped symbols, `tools/gates/fn111_twin_hold.sh`).
+// Twice the workgroups stream the same bytes.
+//   fn111_t8_a8w8_n64_ldc      = fn_t8_a8w8_bs128_ldc / dflash_gemm_a8w8_bs128_m16n128k128 at BN 64
+//                                (grid N / 64 x ceil(M / 16); `ldc` = N for the out / o projection)
+//   fn111_t8_q8w8_sfx_n64_ldc  = fn86_t8_q8w8_sfx_ldc with the W8 prefix at BN 64 (nbx8 = N8 / 64);
+//                                the bf16 suffix workgroups unchanged (64-column, family 4's)
+extern "C" __global__ __launch_bounds__(DG_NT) void fn111_t8_a8w8_n64_ldc(
+    const unsigned char *__restrict__ a, const unsigned char *__restrict__ w,
+    const float *__restrict__ as, const float *__restrict__ ws, __bf16 *__restrict__ c,
+    int m, int n, int k, int ldc) {
+  t8_gemm_a8w8_impl<DG_BM, 64, DG_BK, DG_NW>(a, w, as, ws, c, m, n, k, (long)ldc);
+}
+
+extern "C" __global__ __launch_bounds__(DG_NT) void fn111_t8_q8w8_sfx_n64_ldc(
+    const __bf16 *__restrict__ a, const unsigned char *__restrict__ w8,
+    const float *__restrict__ ws8, __bf16 *__restrict__ c, int m, int n8, int k, int ldc,
+    int nbx8, const __bf16 *__restrict__ w16, __bf16 *__restrict__ cs, int ns) {
+  const int bx = (int)blockIdx.x, by = (int)blockIdx.y;
+  if (bx < nbx8) {
+    fn86_t8_q8gemm_impl<DG_BM, 64, DG_BK, DG_NW, false>(a, w8, ws8, c, m, n8, k, (long)ldc, bx, by);
+    return;
+  }
+  fn86_bgemm_m16_ldc_part(a, w16, cs, m, ns, k, ldc, bx - nbx8, by);
+}

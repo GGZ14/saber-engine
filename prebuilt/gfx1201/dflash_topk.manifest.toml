@@ -1,0 +1,255 @@
+schema_version = 1
+plugin = "dflash_topk"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/dflash_topk.hip"
+source_sha256 = "70f92b091b5fa2e5188d39f8629bdfff5db6732d6232c5b3207f9c4df1d87b32"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "d6eb6a7cfe117d2613d46b428fb8bad5f2c45b0b8cf43d11df44d595c1997ec5"
+hsaco = "dflash_topk.hsaco"
+hsaco_sha256 = "dec85cb48583ee0c9de6157d26bddc7b592c7ed2f9bd77ff573af27208b4aca5"
+
+[[kernel]]
+name = "dflash_topk_bf16_k16"
+symbol = "dflash_topk_bf16_k16.kd"
+kernarg_segment_size = 36
+kernarg_segment_align = 8
+group_segment_fixed_size = 34816
+private_segment_fixed_size = 0
+vgpr_count = 21
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "vals"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "idx"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel]]
+name = "dflash_topk_bf16_k16_hightie"
+symbol = "dflash_topk_bf16_k16_hightie.kd"
+kernarg_segment_size = 36
+kernarg_segment_align = 8
+group_segment_fixed_size = 34816
+private_segment_fixed_size = 0
+vgpr_count = 21
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "vals"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "idx"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel]]
+name = "dflash_topk_f32_gather_k80"
+symbol = "dflash_topk_f32_gather_k80.kd"
+kernarg_segment_size = 44
+kernarg_segment_align = 8
+group_segment_fixed_size = 648
+private_segment_fixed_size = 0
+vgpr_count = 20
+sgpr_count = 22
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "thresh"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "vals"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "idx"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel]]
+name = "dflash_topk_f32_gather_k80_notie"
+symbol = "dflash_topk_f32_gather_k80_notie.kd"
+kernarg_segment_size = 44
+kernarg_segment_align = 8
+group_segment_fixed_size = 648
+private_segment_fixed_size = 0
+vgpr_count = 21
+sgpr_count = 22
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "thresh"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "vals"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "idx"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel]]
+name = "dflash_topk_f32_thresh_k80"
+symbol = "dflash_topk_f32_thresh_k80.kd"
+kernarg_segment_size = 28
+kernarg_segment_align = 8
+group_segment_fixed_size = 2072
+private_segment_fixed_size = 0
+vgpr_count = 29
+sgpr_count = 40
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "thresh"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 20
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "k"

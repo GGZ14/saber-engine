@@ -1,0 +1,891 @@
+schema_version = 1
+plugin = "flashnext_t8far"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_t8far.hip"
+source_sha256 = "06a2b054875e8d3eca588710e005b9f693ee12f056e39c94dce818c4089cef12"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "0884f677af8c04210513747335de26208cdb87d7388ba9780d55e60e70d96be6"
+hsaco = "flashnext_t8far.hsaco"
+hsaco_sha256 = "ceb43471bf19dfbfa734e047c2bcd493a5206d799b3aee0ad5d1470ffb39fb3c"
+
+[[kernel]]
+name = "fn164_delay"
+symbol = "fn164_delay.kd"
+kernarg_segment_size = 8
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 0
+sgpr_count = 8
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "by_value"
+name = "ticks"
+
+[[kernel]]
+name = "fn164_far_fn111_t8_a8w8_n64_ldc"
+symbol = "fn164_far_fn111_t8_a8w8_n64_ldc.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 4228
+private_segment_fixed_size = 0
+vgpr_count = 115
+sgpr_count = 49
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn111_t8_a8w8_n64_ldc_chk"
+symbol = "fn164_far_fn111_t8_a8w8_n64_ldc_chk.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 4228
+private_segment_fixed_size = 0
+vgpr_count = 115
+sgpr_count = 49
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn111_t8_a8w8_n64_ldc_ctl"
+symbol = "fn164_far_fn111_t8_a8w8_n64_ldc_ctl.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 4228
+private_segment_fixed_size = 0
+vgpr_count = 115
+sgpr_count = 45
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn141_t8_a8w8_n64_pf4_ldc"
+symbol = "fn164_far_fn141_t8_a8w8_n64_pf4_ldc.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 4228
+private_segment_fixed_size = 0
+vgpr_count = 186
+sgpr_count = 44
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn141_t8_a8w8_n64_pf4_ldc_chk"
+symbol = "fn164_far_fn141_t8_a8w8_n64_pf4_ldc_chk.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 4228
+private_segment_fixed_size = 0
+vgpr_count = 186
+sgpr_count = 44
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn141_t8_a8w8_n64_pf4_ldc_ctl"
+symbol = "fn164_far_fn141_t8_a8w8_n64_pf4_ldc_ctl.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 4228
+private_segment_fixed_size = 0
+vgpr_count = 186
+sgpr_count = 40
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn_t8p_a8w8_d2w4_ldc"
+symbol = "fn164_far_fn_t8p_a8w8_d2w4_ldc.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 13060
+private_segment_fixed_size = 0
+vgpr_count = 168
+sgpr_count = 34
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn_t8p_a8w8_d2w4_ldc_chk"
+symbol = "fn164_far_fn_t8p_a8w8_d2w4_ldc_chk.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 13060
+private_segment_fixed_size = 0
+vgpr_count = 168
+sgpr_count = 34
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn_t8p_a8w8_d2w4_ldc_ctl"
+symbol = "fn164_far_fn_t8p_a8w8_d2w4_ldc_ctl.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 13060
+private_segment_fixed_size = 0
+vgpr_count = 168
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn_t8p_a8w8_d4w4_ldc"
+symbol = "fn164_far_fn_t8p_a8w8_d4w4_ldc.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 26116
+private_segment_fixed_size = 0
+vgpr_count = 253
+sgpr_count = 34
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn_t8p_a8w8_d4w4_ldc_chk"
+symbol = "fn164_far_fn_t8p_a8w8_d4w4_ldc_chk.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 26116
+private_segment_fixed_size = 0
+vgpr_count = 253
+sgpr_count = 34
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"
+
+[[kernel]]
+name = "fn164_far_fn_t8p_a8w8_d4w4_ldc_ctl"
+symbol = "fn164_far_fn_t8p_a8w8_d4w4_ldc_ctl.kd"
+kernarg_segment_size = 128
+kernarg_segment_align = 8
+group_segment_fixed_size = 26116
+private_segment_fixed_size = 0
+vgpr_count = 253
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "as"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 56
+size = 72
+value_kind = "by_value"
+name = "fa"

@@ -1,0 +1,489 @@
+# Flash-Next's attention launch rules for gfx1201 (workstream FN10), as DATA: the split-KV decode
+# law at GQA 12 / ONE kv head per rank (`flashnext_attn`, FN6's saber bodies over bf16 pages) and
+# the grouped MTP-expert GEMM's split rule (`flashnext_moe`). Read by `saber_kernels::fn6`
+# (`decode_route`, `decode_splits`, `mtp_expert_splits`); no engine binds them yet (F2). Keyed to
+# the `flashnext_attn` / `flashnext_moe` plugins only, so an edit re-keys no 27B route.
+schema_version = 1
+name = "flashnext-attn-gfx1201"
+
+# THE SPLIT LAW (the reference's `decode_splits`, saber_gfx1201.toml [decode_splits], the same four
+# constants): a fill target over (kv_heads x sequences) work units, snapped DOWN to a power of two
+# in floor..=ceiling, then halved until a segment holds >= min_tiles_per_segment 16-key tiles.
+# kv_heads is 1 per rank at TP=2 (upstream shards the 2 kv heads). The fill target is per ROW below.
+[decode_splits]
+kv_heads = 1
+ceiling = 128
+floor = 16
+min_tiles_per_segment = 2
+tile = 16
+
+# THE ROUTE TABLE: one row per (query rows per sequence 1..5 = the verify-width law, captured
+# decode batch 1/2/4/8 = the B1 bucket a step of N sequences replays, context band <= 2,048 /
+# <= 8,192 / above). The first row with rows == q_len, batch >= sequences, max_ctx >= the plan's
+# context wins. `fill_target` feeds the split law above; `form` = "declc" (decode + last-arriving
+# merge, ONE launch) or "pair" (decode + `fn_attn_splitkv_combine_h256_pf1`, TWO) -- byte-identical
+# at the same split count (FN6: 86/86), so the form is a pure time choice per cell. A fill target
+# that changes a cell's split count changes its segmentation and so its BYTES (a numerics change,
+# never a table edit alone). The context band above 8,192 was measured at 32,768.
+#
+# MEASURED (FN10 holds 1 + 2, card 1, 210 W, 2026-09-28, IC-cold 256 MiB scrub, 4 / 6 rounds x 7
+# reps alternating order, every sequence at the band's edge, us declc -> pair at the law's split
+# count; LEDGER FN10): the pair beats the declc by more than the cell's round-to-round spread in
+# BOTH holds in 57 of 60 cells -- b1 w5 2k 172.6 -> 27.5, 8k 308.6 -> 51.2, 32k 359.1 -> 109.0;
+# b8 w5 32k 572.3 -> 523.3 (0.74 -> 0.81 of the KV-byte roof). The declc's last-arriving workgroup
+# merges splits x rows partials alone, latency-bound (the 27B measured the same: H38 row 6,
+# +2.9 ms/step, never served). The three cells inside their floor in one hold (2,048 / b8 / w2;
+# 8,192 and 32,768 / b8 / w1: gains 1-15 %, never a loss) keep the declc row (one launch fewer).
+
+[[decode_route]]
+rows = 1
+batch = 1
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 1
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 1
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 1
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 1
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 2
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 2
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 2
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 2
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 2
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 4
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 4
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 4
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 4
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 4
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 8
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 8
+max_ctx = 2048
+fill_target = 192
+form = "declc"
+
+[[decode_route]]
+rows = 3
+batch = 8
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 8
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 8
+max_ctx = 2048
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 1
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 1
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 1
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 1
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 1
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 2
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 2
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 2
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 2
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 2
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 4
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 4
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 4
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 4
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 4
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 8
+max_ctx = 8192
+fill_target = 192
+form = "declc"
+
+[[decode_route]]
+rows = 2
+batch = 8
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 8
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 8
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 8
+max_ctx = 8192
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 1
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 1
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 1
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 1
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 1
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 2
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 2
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 2
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 2
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 2
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 4
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 2
+batch = 4
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 4
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 4
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 4
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 1
+batch = 8
+max_ctx = 4294967295
+fill_target = 192
+form = "declc"
+
+[[decode_route]]
+rows = 2
+batch = 8
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 3
+batch = 8
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 4
+batch = 8
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+[[decode_route]]
+rows = 5
+batch = 8
+max_ctx = 4294967295
+fill_target = 192
+form = "pair"
+
+# THE GROUPED MTP-EXPERT GEMM's K split. Per arm, the first row whose `max_tokens` holds T wins:
+# the K splits of gate_up (`_g1`, [1280, 2560]) and down (`_g0`, [2560, 640]). The W8A8 fp8 arm
+# (GATED) has no split parameter (one K walk). Every split is byte-oracled against the dense band
+# at the same split (FN6); a split is an arithmetic CLASS, so a row splits only where it won in
+# BOTH measurements. Card 1, 210 W, IC-cold, 7-rep medians, us gate_up ks1/ks2/ks4 | down ks1/ks2/ks4:
+#   FN6 hold 4 (6 / 11 / 18 / 36 / 59 / 134 experts)   FN10 hold 1 (4 / 7 / 23 / 34 / 58 / 147)
+#   T 1   119.5 / 105.0 / 139.1 |  61.6 / 60.1 / 58.6   81.7 / 78.3 / 96.5 |  42.4 / 46.6 / 46.9
+#   T 2   204.3 / 209.4 / 231.0 | 100.8 /101.5 / 98.8  129.6 /129.7 /169.0 |  65.8 / 68.7 / 69.1
+#   T 5   309.4 / 341.7 / 345.4 | 159.4 /154.5 /152.8  407.0 /397.7 /409.2 | 188.6 /192.4 /194.5
+#   T 8   585.9 / 595.2 / 584.3 | 268.3 /291.8 /296.2  565.6 /575.6 /557.8 | 252.3 /281.8 /310.0
+#   T 16  832.6 / 882.8 / 877.5 | 392.9 /464.2 /558.0  817.9 /869.9 /867.3 | 390.6 /455.3 /558.0
+#   T 64 1618.8 /1870.6 /1872.9 | 804.7 /991.8/1304.5 1758.1/2032.2/2042.9 | 881.9/1078.2/1416.0
+# gate_up ks2 wins T 1 in both (-12 percent, -4 percent); FN6's down ks4 (-2..-5 percent at T 1..5)
+# reversed in FN10 hold 1 (ks1 3..10 percent faster): inside the noise, so down stays one split
+# (one class) everywhere.
+[[mtp_expert_split]]
+arm = "bf16"
+max_tokens = 1
+gate_up = 2
+down = 1
+
+[[mtp_expert_split]]
+arm = "bf16"
+max_tokens = 4294967295
+gate_up = 1
+down = 1
+
+[[mtp_expert_split]]
+arm = "fp8"
+max_tokens = 4294967295
+gate_up = 1
+down = 1

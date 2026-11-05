@@ -1,0 +1,14 @@
+target/
+.cache/
+
+*.log
+*.hsaco
+!prebuilt/**/*.hsaco
+__pycache__/
+*.actual.txt
+
+# GPU core dumps (a fault writes one into the cwd; 20 GB each)
+gpucore*
+*.gpu
+core
+core.*

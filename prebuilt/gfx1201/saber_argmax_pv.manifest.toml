@@ -1,0 +1,45 @@
+schema_version = 1
+plugin = "saber_argmax_pv"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/saber_argmax_pv.hip"
+source_sha256 = "13e240c53444686e08c2e00fd49cb5148d4a587169dd8142610c9b6290bc435c"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "338754ccc46bc63e147bc99d0bab89b72a3679311d3db9befc3bbfeadd92ee30"
+hsaco = "saber_argmax_pv.hsaco"
+hsaco_sha256 = "c3744bafe0571c55c40e813c70381f07c115883c5c119d11ad676871960be5d3"
+
+[[kernel]]
+name = "saber_argmax_pv_bf16"
+symbol = "saber_argmax_pv_bf16.kd"
+kernarg_segment_size = 288
+kernarg_segment_align = 8
+group_segment_fixed_size = 2048
+private_segment_fixed_size = 0
+vgpr_count = 7
+sgpr_count = 18
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "logits"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "stride"

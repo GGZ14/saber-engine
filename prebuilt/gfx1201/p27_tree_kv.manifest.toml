@@ -1,0 +1,63 @@
+schema_version = 1
+plugin = "p27_tree_kv"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/p27_tree_kv.hip"
+source_sha256 = "77bf08505b6df95146b43d7f2a76a4cfc39339ea59faf87b9cebfcd2b052cbf0"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "f111f9c34711bde3ef2cf231431a9ce1bb8314cb954d49bd1740e31403507e48"
+hsaco = "p27_tree_kv.hsaco"
+hsaco_sha256 = "a730448486a1a5bd31b029ae959a8f19616bcbf49f7ee96ba3334c09f490a15d"
+
+[[kernel]]
+name = "p27_tree_kv_compact"
+symbol = "p27_tree_kv_compact.kd"
+kernarg_segment_size = 48
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 12
+sgpr_count = 27
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "layer_base"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "moves"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "n_moves"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "block_stride"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "by_value"
+name = "head_stride"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "row_bytes"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "block_size"

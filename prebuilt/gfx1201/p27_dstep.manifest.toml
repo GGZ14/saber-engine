@@ -1,0 +1,87 @@
+schema_version = 1
+plugin = "p27_dstep"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/p27_dstep.hip"
+source_sha256 = "8a3e356bda398bb16c270f99e1c0c2ee7d039f7fffaa838e24337fd1a60ab152"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "e7abec2ab365960086c40b2e56f34179a48b8d7a7e38eaa3c49809836c4c0540"
+hsaco = "p27_dstep.hsaco"
+hsaco_sha256 = "cd92541a28ac4b313582ad8d86468d58eb1cde586deb808e112dce51d2701661"
+
+[[kernel]]
+name = "p27d_cand_seam"
+symbol = "p27d_cand_seam.kd"
+kernarg_segment_size = 68
+kernarg_segment_align = 8
+group_segment_fixed_size = 392
+private_segment_fixed_size = 0
+vgpr_count = 21
+sgpr_count = 52
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "vals"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "ids"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "win_mine"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "win_peer"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "scratch"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "vocab_base"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "top_k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "rank"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "call"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "rows_max"

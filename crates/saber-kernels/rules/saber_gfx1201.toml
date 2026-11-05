@@ -1,0 +1,781 @@
+## saber launch rules for gfx1201, as DATA. Second plugin; see rules/mxfp4_gfx1201.toml for the
+## first and the kernel inventory doc for what prod actually launches.
+##
+## Provenance: ref/kernel-builds/b9e42ab-rx6 (the tree `REF_KERNELS_SO` points at on the running
+## qwen_prod_nvfp4 unit) for everything except the 4-bit all-reduce, which comes from
+## b9e42ab-rx8 -- the only build whose WHT kernel is templated on the symbol width.
+## Serve knobs from the unit's own environment (2026-09-18): SABER_ATTN_FP8=3,
+## SABER_GDN_FUSED_UPDATE=1, SABER_GDN_FUSED_MAX_ITEMS=32, SABER_GDN_LAZY=0,
+## SABER_AR_QBITS=6, SABER_AR_MAX_KB=86016, SABER_AR_QNB=96, SABER_AR_QNT=1024,
+## TP=2, --max-num-seqs 8, --kv-cache-dtype fp8, spec width up to 8.
+##
+## TWO LAYERS, deliberately, because the reference has two:
+##   [[registry]] is ref_registry.hip's SABERConstraint table, copied predicate for predicate. It
+##     answers "does a kernel EXIST for this geometry" -- a NECESSARY condition, never a
+##     sufficient one. Rows are in preference order within an op; the first match wins; the
+##     refusal text is reproduced byte for byte so a Saber refusal reads like the reference's.
+##   [[attn_prefill]] / [[attn_decode]] / ... are the instantiation tables. They are what the
+##     library's own C++ launcher decided from a template parameter, an `if (nw == 2)` ladder or
+##     a getenv, and here each one is a ROW naming a SYMBOL.
+
+schema_version = 1
+name = "saber-gfx1201-rx6"
+
+# ---------------------------------------------------------------------------- geometry constants
+# Compiled into the kernels; the entry points reject a mismatch rather than running.
+[knobs]
+# ref_attn_paged_h256_gqa6.hip:36-39
+attn_head_dim = 256
+attn_gqa = 6
+attn_block_size = 16
+attn_max_decode_rows = 64          # q_len * gqa a single decode workgroup can hold
+# prefill tile: NWARPS 24, TILE 48 (bf16 KV at TILE 64 needs 68096 B of LDS > 65536).
+prefill_nwarps = 24
+prefill_block = 768                # NWARPS * 32
+prefill_bq = 64                    # (NWARPS * 16) / GQA -- query rows per block
+# decode: TILE 16, one warp per 16 query rows, at most 4 warps.
+decode_tile = 16
+decode_rows_per_warp = 16
+decode_max_nw = 4
+# The split-KV combine: one block per (seq, token, q head), HEAD_DIM threads, `splits` floats of
+# dynamic LDS. D_OPT bit 32 is set, so the partials are f16 and PF16=1 is the live path.
+combine_block = 256
+combine_partial_f16 = true
+# f16 partials: rows * splits * (head_dim*2 + 8) bytes. The f32 form is (head_dim + 2) * 4.
+combine_partial_bytes_per_split = 520
+
+# The decode split law (ref_attn_paged_h256_gqa6.hip:121-140), as its four constants. It is
+# arithmetic, not a measured ladder: a machine-fill target divided by the grid units that are NOT
+# segments, snapped DOWN to an instantiated power of two, then clamped so a segment never gets
+# thinner than two tiles. The first version (16*cbrt(tiles/programs)) overshot to 256 where a
+# sweep put the argmin at 64 at EVERY depth, which is why there is no context term here.
+[decode_splits]
+fill_target = 192                  # CU-fill target over kv_heads * num_seqs
+ceiling = 128                      # 256 measured worse at head_dim 256
+floor = 16                         # the law never snaps below this
+min_tiles_per_segment = 2
+
+[gdn]
+head_k = 128
+head_v = 128
+conv_width = 4
+chunk = 64
+fused_block = 256
+# The fused kernel ends its conv phase at a DEVICE-WIDE barrier, so every workgroup in the grid
+# has to be resident at once or it deadlocks. The reference picks 32 and says why: "8-wave
+# workgroups, <= 1 per WGP, always resident".
+#
+# MEASURED, that is 3x conservative: `hipModuleOccupancyMaxActiveBlocksPerMultiprocessor` reports
+# **3 blocks per WGP** for both instantiations at 256 threads (VGPR 234, LDS 0 -> 6 waves per
+# SIMD32, 24 per WGP, 3 blocks of 8), and the part has 32 WGPs, so 96 are co-resident.
+#
+# IT STAYS AT 32 ANYWAY, and the reason is the measurement below rather than caution: the fused
+# route is only worth taking at batch 1, where `items` is 24 and this cap never binds. Raising it
+# to 96 changes nothing on the served path and would add a deadlock mode (an occupancy-sized grid
+# is only co-resident while nothing else is, and the reference does use a side stream). The number is
+# recorded because it was wrong, not because it is useful.
+fused_max_wg = 32
+# SABER_GDN_FUSED_MAX_ITEMS. Above this many (sequence, v-head) items the decode step takes the
+# conv+recurrent PAIR instead of the fused kernel. 32 = one sequence at H=24, i.e. batch 1.
+#
+# MEASURED and CONFIRMED (tools/capture/gate_gdn_fused.sh, dependent 48-node chains at spec 5):
+#   batch 1 (24 items): fused 19.34 us/node vs pair 19.99 -> the fusion WINS by 0.65
+#   batch 2 (48):       24.81 vs 24.59 -> loses by 0.22
+#   batch 4 (96):       39.84 vs 39.13 -> loses by 0.71   (grids EQUAL here: 96 vs 96)
+#   batch 8 (192):      69.33 vs 67.67 -> loses by 1.66
+# The reference's threshold is exactly right and for the right reason. At batch 4 the fused grid
+# equals the pair's and it still loses 0.71 us, so ~0.7 us is the device-wide barrier's own cost,
+# which is more than the deleted launch is worth; above that the residency cap starves it as well.
+fused_max_items = 32
+norm_channels = 128
+norm_rows_per_block = 8            # GN_NW
+norm_block = 256                   # GN_NW * 32
+# The channel grouping of the two conv kernels. The reference starts at 8 warps of channels per
+# block and halves it until it divides BOTH head counts; the DECODE entry then halves it further
+# until the grid covers the device, because a decode step is a handful of sequences and the
+# grouping is what decides whether 64 CUs see any work (`ref_gdn_conv_w4_h128_bf16.hip:428-431`).
+hpb_start = 8
+hpb_min_workgroups = 256
+conv_chunk = 64                    # CP_BT: the token block, = the scan's chunk
+# The recurrent update splits a head's v rows until the grid fills the machine, never past VSMAX.
+# The fused row norm needs the whole 128-wide row, so NORM=1 exists only at VS=1 (a static_assert
+# in the reference; here the rows for the other combinations simply do not exist).
+vs_fill_workgroups = 64
+vs_max = 4
+recurrent_row_threads = 256        # RU_V * 2, divided by VS
+kkt_block = 128                    # NW 4 x 32
+scan_block = 256                   # NW 8 x 32
+scan_bv = 64                       # V per workgroup; also halves the Q@K^T redundancy
+
+[ar]
+group = 64                         # elements per rotation + scaling group
+max_blocks = 512                   # SABER_AR_MAX_BLOCKS; the flag array is sized from it
+chunk_groups_even_bits = 32        # WhtCfg: a lane must emit whole uint4s
+chunk_groups_odd_bits = 64
+# ref_allreduce.py, after patch_ar_maxbytes / patch_ar_geometry, with the unit's env.
+max_bytes = 88080384               # SABER_AR_MAX_KB=86016 KiB, rounded down to 16 B
+## THE EXACT-VS-LOSSY RULE, as data. `ref_allreduce.py` applies it per call in two steps and
+## Saber applies exactly the same one in `saber::resolve` for `Op::AllReduce`:
+##
+##   should_custom_ar(inp):  dtype in {bf16, fp16, fp32}, nbytes != 0, nbytes % 16 == 0
+##                           (the push is uint4), nbytes <= max_bytes, contiguous
+##                           -- otherwise the message goes to RCCL, not to the reference kernel at all;
+##   _quant_ok(inp):         dtype in {bf16, fp16}, nbytes >= quant_min_bytes,
+##                           numel % ar.group == 0
+##                           -- true picks the rotated `bits`-per-symbol kernel, false the exact one.
+##
+## So the SIZE decides the `exact` key and the registry decides the kernel; the split stays where
+## the reference put it. 128 KiB is where compression starts to pay: below it the transfer is not
+## bandwidth-bound and the rotation, the amax reduction and the pack cost more than they save.
+## This matters on the serve path -- a batch-1 step at spec 8 is 8 x 5120 x bf16 = 80 KiB and
+## takes the EXACT kernel, while a conc-8 step at 64 tokens is 640 KiB and takes wht6.
+quant_min_bytes = 131072
+qbits = 6                          # SABER_AR_QBITS: the width `Op::AllReduce` asks for
+min_nb = 4
+max_nb = 96                        # SABER_AR_QNB (the 48/96/192/384 sweep: 1512/1467/1507/1618 us)
+# The EXACT path's own block cap: min(24, AR_MAX_BLOCKS). PCIe saturates with few blocks and extra
+# ones only help the reduce, so the quantised path's 96 is not shared.
+max_nb_exact = 24
+# The exact launcher clamps threads to [64, 1024] and does NOT round to a multiple of 64; the
+# quantised one does. Two kernels, two clamps, both reproduced.
+threads = 1024                     # SABER_AR_QNT
+words_per_block = 1400             # 16 B words per block, the block-count heuristic's target
+drain = 3                          # s_wait_storecnt drain, correct for uncached IPC scratch
+acq = 0                            # uncached reads are already fresh
+
+# ---------------------------------------------------------------------------- registry (saber)
+## ref_registry.hip, predicate for predicate. `op` is the key a caller selects on and is the one
+## field several rows share. Rows are in preference order; select() returns the first that matches.
+
+[[registry]]
+op = "attn_prefill_paged"
+entry = "attn_prefill_h256_gqa6_fp8kv"
+constraints = [
+  { key = "head_dim", op = "eq", ival = 256 },
+  { key = "gqa", op = "eq", ival = 6 },
+  { key = "block_size", op = "eq", ival = 16 },
+  { key = "causal", op = "eq", ival = 1 },
+  { key = "q_dtype", op = "in", sval = "bf16" },
+  { key = "kv_dtype", op = "in", sval = "fp8_e4m3" },
+]
+
+[[registry]]
+op = "attn_prefill_paged"
+entry = "attn_prefill_h256_gqa6_bf16kv"
+constraints = [
+  { key = "head_dim", op = "eq", ival = 256 },
+  { key = "gqa", op = "eq", ival = 6 },
+  { key = "block_size", op = "eq", ival = 16 },
+  { key = "causal", op = "eq", ival = 1 },
+  { key = "q_dtype", op = "in", sval = "bf16" },
+  { key = "kv_dtype", op = "in", sval = "bf16" },
+]
+
+## q_len <= 10 is the prose's q_len*gqa <= 64 at gqa 6.
+[[registry]]
+op = "attn_decode_paged"
+entry = "attn_decode_h256_gqa6_fp8kv"
+constraints = [
+  { key = "head_dim", op = "eq", ival = 256 },
+  { key = "gqa", op = "eq", ival = 6 },
+  { key = "block_size", op = "eq", ival = 16 },
+  { key = "causal", op = "eq", ival = 1 },
+  { key = "q_len", op = "le", ival = 10 },
+  { key = "q_dtype", op = "in", sval = "bf16" },
+  { key = "kv_dtype", op = "in", sval = "fp8_e4m3" },
+]
+
+[[registry]]
+op = "attn_decode_paged"
+entry = "attn_decode_h256_gqa6_bf16kv"
+constraints = [
+  { key = "head_dim", op = "eq", ival = 256 },
+  { key = "gqa", op = "eq", ival = 6 },
+  { key = "block_size", op = "eq", ival = 16 },
+  { key = "causal", op = "eq", ival = 1 },
+  { key = "q_len", op = "le", ival = 10 },
+  { key = "q_dtype", op = "in", sval = "bf16" },
+  { key = "kv_dtype", op = "in", sval = "bf16" },
+]
+
+[[registry]]
+op = "gdn_fused_update"
+entry = "gdn_fused_update_w4k128v128_bf16"
+constraints = [
+  { key = "conv_width", op = "eq", ival = 4 },
+  { key = "head_k", op = "eq", ival = 128 },
+  { key = "head_v", op = "eq", ival = 128 },
+]
+
+[[registry]]
+op = "gdn_conv_prep"
+entry = "gdn_conv_prep_w4_h128_bf16"
+constraints = [
+  { key = "conv_width", op = "eq", ival = 4 },
+  { key = "head_k", op = "eq", ival = 128 },
+  { key = "head_v", op = "eq", ival = 128 },
+  { key = "chunk", op = "eq", ival = 64 },
+]
+
+[[registry]]
+op = "gdn_conv_update"
+entry = "gdn_conv_update_w4_h128_bf16"
+constraints = [
+  { key = "conv_width", op = "eq", ival = 4 },
+  { key = "head_k", op = "eq", ival = 128 },
+  { key = "head_v", op = "eq", ival = 128 },
+]
+
+[[registry]]
+op = "gdn_recurrent_update"
+entry = "gdn_recurrent_update_k128_v128_bf16_fp32state"
+constraints = [
+  { key = "head_k", op = "eq", ival = 128 },
+  { key = "head_v", op = "eq", ival = 128 },
+]
+
+[[registry]]
+op = "gdn_kkt_solve"
+entry = "gdn_kkt_solve_k128_c64_bf16"
+constraints = [
+  { key = "head_k", op = "eq", ival = 128 },
+  { key = "chunk", op = "eq", ival = 64 },
+]
+
+[[registry]]
+op = "gdn_chunk_scan"
+entry = "gdn_chunk_scan_k128_v128_c64_bf16"
+constraints = [
+  { key = "head_k", op = "eq", ival = 128 },
+  { key = "head_v", op = "eq", ival = 128 },
+  { key = "chunk", op = "eq", ival = 64 },
+]
+
+## The f16 STORED-state entries (C1, `--gdn-state-dtype f16`): rx7's `_f16state` entry points,
+## one per state kernel. `state_dtype` is a key the graph's shape keys do not carry, so the planner
+## in `saber-plan` never picks these rows by geometry: the route is chosen by the engine's
+## `saber::resolve`, which reads the stored dtype off the op's own recurrent state and takes the
+## instantiation rows' `state_f16 = true` symbols. The rows exist so that every f16 symbol has a
+## registry row owning it in ONE plugin (`row_owner`).
+[[registry]]
+op = "gdn_fused_update"
+entry = "gdn_fused_update_w4k128v128_bf16_f16state"
+constraints = [
+  { key = "conv_width", op = "eq", ival = 4 },
+  { key = "head_k", op = "eq", ival = 128 },
+  { key = "head_v", op = "eq", ival = 128 },
+  { key = "state_dtype", op = "in", sval = "fp16" },
+]
+
+[[registry]]
+op = "gdn_recurrent_update"
+entry = "gdn_recurrent_update_k128_v128_bf16_f16state"
+constraints = [
+  { key = "head_k", op = "eq", ival = 128 },
+  { key = "head_v", op = "eq", ival = 128 },
+  { key = "state_dtype", op = "in", sval = "fp16" },
+]
+
+[[registry]]
+op = "gdn_chunk_scan"
+entry = "gdn_chunk_scan_k128_v128_c64_bf16_f16state"
+constraints = [
+  { key = "head_k", op = "eq", ival = 128 },
+  { key = "head_v", op = "eq", ival = 128 },
+  { key = "chunk", op = "eq", ival = 64 },
+  { key = "state_dtype", op = "in", sval = "fp16" },
+]
+
+[[registry]]
+op = "gdn_gated_rmsnorm"
+entry = "gdn_gated_rmsnorm_h128_bf16"
+constraints = [{ key = "channels", op = "eq", ival = 128 }]
+
+## `exact` separates the two all-reduce families, and a caller has to say which it wants: a request
+## that does not declare it will accept a lossy wire format gets no kernel rather than the
+## `exact` separates the two all-reduce families, and a caller has to say which it wants: a request
+## that does not declare it gets no kernel rather than the quantised one. The exact row comes
+## first, as it does in ref_registry.hip.
+[[registry]]
+op = "allreduce"
+entry = "ar_oneshot_2rank_exact"
+constraints = [
+  { key = "world_size", op = "eq", ival = 2 },
+  { key = "exact", op = "eq", ival = 1 },
+  { key = "dtype", op = "in", sval = "bf16 fp16 fp32" },
+]
+
+## the reference extras. The reference's own registry carries NO row for `_nq` -- it is reachable only by name
+## from the pybind surface -- so this row is Saber's, and it is the one place the two tables
+## deliberately differ in content rather than in strictness.
+[[registry]]
+op = "allreduce_nq"
+entry = "ar_oneshot_2rank_exact_nq"
+constraints = [
+  { key = "world_size", op = "eq", ival = 2 },
+  { key = "exact", op = "eq", ival = 1 },
+  { key = "dtype", op = "in", sval = "bf16" },
+]
+
+[[registry]]
+op = "allreduce"
+entry = "ar_oneshot_2rank_wht6"
+constraints = [
+  { key = "world_size", op = "eq", ival = 2 },
+  { key = "exact", op = "eq", ival = 0 },
+  { key = "bits", op = "eq", ival = 6 },
+  { key = "dtype", op = "in", sval = "bf16 fp16" },
+  { key = "numel", op = "divisible_by", ival = 64 },
+]
+
+## rx8's row. patch_ar_qbits.py asks with bits=N only when N != 6, so an rx6 reference (whose wht6
+## row carries no `bits` predicate) answers exactly as before; here every row states its width,
+## and a `bits` the build does not carry is a refusal rather than a silent 6.
+[[registry]]
+op = "allreduce"
+entry = "ar_oneshot_2rank_wht4"
+constraints = [
+  { key = "world_size", op = "eq", ival = 2 },
+  { key = "exact", op = "eq", ival = 0 },
+  { key = "bits", op = "eq", ival = 4 },
+  { key = "dtype", op = "in", sval = "bf16 fp16" },
+  { key = "numel", op = "divisible_by", ival = 64 },
+]
+
+# ---------------------------------------------------------------------------- instantiations
+## Attention prefill. `fp8_mode` is SABER_ATTN_FP8 (ref_attn_paged_h256_gqa6.hip:69-88), read once
+## from the environment there and a row here: 0 = the shipped f16 legs, 1 = O_QK8, 2 = O_PV8,
+## 3 = both. The 8-bit legs trade oracle accuracy (1.7e-3 -> 1.7e-2 / 2.6e-2 / 3.1e-2 row relRMSE)
+## for WMMA issue rate (+10% / +24% / +56% at a hot 8k chunk, +18% at a cold 40k chunk) and need
+## the fp8 KV cache: the bf16-KV kernel has a static_assert against them, so it has ONE row.
+[[attn_prefill]]
+entry = "attn_prefill_h256_gqa6_fp8kv"
+fp8_mode = 3
+symbol = "saber_attn_prefill_h256_gqa6_fp8kv_qk8pv8"
+
+[[attn_prefill]]
+entry = "attn_prefill_h256_gqa6_fp8kv"
+fp8_mode = 2
+symbol = "saber_attn_prefill_h256_gqa6_fp8kv_pv8"
+
+[[attn_prefill]]
+entry = "attn_prefill_h256_gqa6_fp8kv"
+fp8_mode = 1
+symbol = "saber_attn_prefill_h256_gqa6_fp8kv_qk8"
+
+[[attn_prefill]]
+entry = "attn_prefill_h256_gqa6_fp8kv"
+fp8_mode = 0
+symbol = "saber_attn_prefill_h256_gqa6_fp8kv"
+
+[[attn_prefill]]
+entry = "attn_prefill_h256_gqa6_bf16kv"
+fp8_mode = 0
+symbol = "saber_attn_prefill_h256_gqa6_bf16kv"
+
+## Attention decode. NW = ceil(q_len * gqa / 16), 1..4 -- the reference's if-ladder, one row per
+## arm. At gqa 6 that is q_len 1-2 -> 1, 3-5 -> 2, 6-8 -> 3, 9-10 -> 4.
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_fp8kv"
+nw = 1
+symbol = "saber_attn_decode_h256_gqa6_fp8kv_nw1"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_fp8kv"
+nw = 2
+symbol = "saber_attn_decode_h256_gqa6_fp8kv_nw2"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_fp8kv"
+nw = 3
+symbol = "saber_attn_decode_h256_gqa6_fp8kv_nw3"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_fp8kv"
+nw = 4
+symbol = "saber_attn_decode_h256_gqa6_fp8kv_nw4"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_bf16kv"
+nw = 1
+symbol = "saber_attn_decode_h256_gqa6_bf16kv_nw1"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_bf16kv"
+nw = 2
+symbol = "saber_attn_decode_h256_gqa6_bf16kv_nw2"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_bf16kv"
+nw = 3
+symbol = "saber_attn_decode_h256_gqa6_bf16kv_nw3"
+
+[[attn_decode]]
+entry = "attn_decode_h256_gqa6_bf16kv"
+nw = 4
+symbol = "saber_attn_decode_h256_gqa6_bf16kv_nw4"
+
+## The split-KV combine, launched by the same entry point as the decode kernel. It is the SECOND
+## launch of the decode op, which is why attn_decode declares n_launches = 2.
+[[attn_combine]]
+pf16 = true
+symbol = "saber_attn_splitkv_combine_h256_pf1"
+
+[[attn_combine]]
+pf16 = false
+symbol = "saber_attn_splitkv_combine_h256_pf0"
+
+## ws-h38 (fusion-map row 7's neighbour, row 6): the decode attention with its split-KV combine
+## done by the LAST-ARRIVING split block -- one dispatch where the pair above is two. DERIVED in
+## the retired source generator (`attn_declc`) from the verbatim decode impl; the merge is the pf1
+## combine's arithmetic in its own order, and the existing decode/combine symbols are unchanged.
+## A decode fusion (`PlanOptions::fuse_attn_combine`, in `with_decode_fusion`; OFF by default),
+## fp8 KV + f16 partials only (what prod runs), and only where the split law answers > 1 (one
+## split has nothing to merge -- the pair stays). `max_splits` is the merge's per-wave weight row;
+## `control` drops the last segment from the merge, the gate's decisive negative control
+## (`--fusion-control combine-drop`).
+[[attn_decode_declc]]
+entry = "attn_decode_h256_gqa6_fp8kv"
+nw = 1
+max_splits = 128
+symbol = "saber_attn_declc_h256_gqa6_fp8kv_nw1"
+control = "saber_attn_declc_h256_gqa6_fp8kv_nw1_drop1"
+
+[[attn_decode_declc]]
+entry = "attn_decode_h256_gqa6_fp8kv"
+nw = 2
+max_splits = 128
+symbol = "saber_attn_declc_h256_gqa6_fp8kv_nw2"
+control = "saber_attn_declc_h256_gqa6_fp8kv_nw2_drop1"
+
+[[attn_decode_declc]]
+entry = "attn_decode_h256_gqa6_fp8kv"
+nw = 3
+max_splits = 128
+symbol = "saber_attn_declc_h256_gqa6_fp8kv_nw3"
+control = "saber_attn_declc_h256_gqa6_fp8kv_nw3_drop1"
+
+[[attn_decode_declc]]
+entry = "attn_decode_h256_gqa6_fp8kv"
+nw = 4
+max_splits = 128
+symbol = "saber_attn_declc_h256_gqa6_fp8kv_nw4"
+control = "saber_attn_declc_h256_gqa6_fp8kv_nw4_drop1"
+
+## The GDN decode step. ABF16 is `a.dtype == torch.bfloat16` at the call site: the gate slices the
+## layer hands the kernel are bf16 in prod (SABER_GDN_STRIDED_GATES=0 keeps the reference server's contiguous
+## copy, but the dtype is the layer's).
+[[gdn_fused_update]]
+ab_bf16 = true
+symbol = "saber_gdn_fused_update_w4k128v128_ab1"
+
+[[gdn_fused_update]]
+ab_bf16 = false
+symbol = "saber_gdn_fused_update_w4k128v128_ab0"
+
+
+## The GDN prefill preamble. HPB is the channel grouping the reference's halving ladder lands on;
+## ABF16 is the (b, a) gate slices' dtype. Both are rows.
+[[gdn_conv_prep]]
+hpb = 8
+ab_bf16 = true
+symbol = "saber_gdn_conv_prep_w4_h128_hpb8_ab1"
+[[gdn_conv_prep]]
+hpb = 8
+ab_bf16 = false
+symbol = "saber_gdn_conv_prep_w4_h128_hpb8_ab0"
+[[gdn_conv_prep]]
+hpb = 4
+ab_bf16 = true
+symbol = "saber_gdn_conv_prep_w4_h128_hpb4_ab1"
+[[gdn_conv_prep]]
+hpb = 4
+ab_bf16 = false
+symbol = "saber_gdn_conv_prep_w4_h128_hpb4_ab0"
+[[gdn_conv_prep]]
+hpb = 2
+ab_bf16 = true
+symbol = "saber_gdn_conv_prep_w4_h128_hpb2_ab1"
+[[gdn_conv_prep]]
+hpb = 2
+ab_bf16 = false
+symbol = "saber_gdn_conv_prep_w4_h128_hpb2_ab0"
+[[gdn_conv_prep]]
+hpb = 1
+ab_bf16 = true
+symbol = "saber_gdn_conv_prep_w4_h128_hpb1_ab1"
+[[gdn_conv_prep]]
+hpb = 1
+ab_bf16 = false
+symbol = "saber_gdn_conv_prep_w4_h128_hpb1_ab0"
+
+## The decode conv. No ABF16: this kernel never touches the gates.
+[[gdn_conv_update]]
+hpb = 8
+symbol = "saber_gdn_conv_update_w4_h128_hpb8"
+[[gdn_conv_update]]
+hpb = 4
+symbol = "saber_gdn_conv_update_w4_h128_hpb4"
+[[gdn_conv_update]]
+hpb = 2
+symbol = "saber_gdn_conv_update_w4_h128_hpb2"
+[[gdn_conv_update]]
+hpb = 1
+symbol = "saber_gdn_conv_update_w4_h128_hpb1"
+
+## The decode recurrent update. `norm` folds the gated RMS norm into the epilogue and needs the
+## whole 128-wide row, so it exists at vs = 1 only. Prod passes no z gate and no norm weight, so
+## it runs norm = false.
+[[gdn_recurrent_update]]
+ab_bf16 = true
+norm = false
+vs = 1
+symbol = "saber_gdn_recurrent_update_k128_v128_ab1_norm0_vs1"
+[[gdn_recurrent_update]]
+ab_bf16 = true
+norm = false
+vs = 2
+symbol = "saber_gdn_recurrent_update_k128_v128_ab1_norm0_vs2"
+[[gdn_recurrent_update]]
+ab_bf16 = true
+norm = false
+vs = 4
+symbol = "saber_gdn_recurrent_update_k128_v128_ab1_norm0_vs4"
+[[gdn_recurrent_update]]
+ab_bf16 = true
+norm = true
+vs = 1
+symbol = "saber_gdn_recurrent_update_k128_v128_ab1_norm1_vs1"
+[[gdn_recurrent_update]]
+ab_bf16 = false
+norm = false
+vs = 1
+symbol = "saber_gdn_recurrent_update_k128_v128_ab0_norm0_vs1"
+[[gdn_recurrent_update]]
+ab_bf16 = false
+norm = false
+vs = 2
+symbol = "saber_gdn_recurrent_update_k128_v128_ab0_norm0_vs2"
+[[gdn_recurrent_update]]
+ab_bf16 = false
+norm = false
+vs = 4
+symbol = "saber_gdn_recurrent_update_k128_v128_ab0_norm0_vs4"
+[[gdn_recurrent_update]]
+ab_bf16 = false
+norm = true
+vs = 1
+symbol = "saber_gdn_recurrent_update_k128_v128_ab0_norm1_vs1"
+
+## The chunk preamble's triangular solve, templated on H / Hg. The reference's switch has exactly
+## these arms and returns -3 for anything else; at TP=2 this model is 24 / 8 = 3.
+[[gdn_kkt_solve]]
+ratio = 1
+symbol = "saber_gdn_kkt_solve_k128_c64_r1"
+[[gdn_kkt_solve]]
+ratio = 2
+symbol = "saber_gdn_kkt_solve_k128_c64_r2"
+[[gdn_kkt_solve]]
+ratio = 3
+symbol = "saber_gdn_kkt_solve_k128_c64_r3"
+[[gdn_kkt_solve]]
+ratio = 4
+symbol = "saber_gdn_kkt_solve_k128_c64_r4"
+[[gdn_kkt_solve]]
+ratio = 6
+symbol = "saber_gdn_kkt_solve_k128_c64_r6"
+[[gdn_kkt_solve]]
+ratio = 8
+symbol = "saber_gdn_kkt_solve_k128_c64_r8"
+
+## The chunked scan: one instantiation, no template parameter at all.
+
+[[gdn_chunk_scan]]
+symbol = "saber_gdn_chunk_scan_k128_v128_c64"
+
+## The f16 STORED-state rows (workstream C1, `--gdn-state-dtype f16`; LEDGER C1). rx7's
+## `SABER_ST_F16` instantiations of the decode updates and the scan with its h0/ht accesses narrowed
+## the same way (the retired source generator SCAN_F16_SUBS). The accumulator is fp32 in every one:
+## only what LANDS in the cache narrows (widen exact, narrow round-to-nearest-even). The fp32 rows
+## above omit the key, which reads as `state_f16 = false`.
+[[gdn_chunk_scan]]
+state_f16 = true
+symbol = "saber_gdn_chunk_scan_f16s_k128_v128_c64"
+
+[[gdn_fused_update]]
+ab_bf16 = true
+state_f16 = true
+symbol = "saber_gdn_fused_update_f16s_w4k128v128_ab1"
+[[gdn_fused_update]]
+ab_bf16 = false
+state_f16 = true
+symbol = "saber_gdn_fused_update_f16s_w4k128v128_ab0"
+[[gdn_recurrent_update]]
+ab_bf16 = true
+norm = false
+vs = 1
+state_f16 = true
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm0_vs1"
+[[gdn_recurrent_update]]
+ab_bf16 = true
+norm = false
+vs = 2
+state_f16 = true
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm0_vs2"
+[[gdn_recurrent_update]]
+ab_bf16 = true
+norm = false
+vs = 4
+state_f16 = true
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm0_vs4"
+[[gdn_recurrent_update]]
+ab_bf16 = true
+norm = true
+vs = 1
+state_f16 = true
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab1_norm1_vs1"
+[[gdn_recurrent_update]]
+ab_bf16 = false
+norm = false
+vs = 1
+state_f16 = true
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm0_vs1"
+[[gdn_recurrent_update]]
+ab_bf16 = false
+norm = false
+vs = 2
+state_f16 = true
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm0_vs2"
+[[gdn_recurrent_update]]
+ab_bf16 = false
+norm = false
+vs = 4
+state_f16 = true
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm0_vs4"
+[[gdn_recurrent_update]]
+ab_bf16 = false
+norm = true
+vs = 1
+state_f16 = true
+symbol = "saber_gdn_recurrent_update_f16s_k128_v128_ab0_norm1_vs1"
+
+## The gated RMS norm. act 0 = silu/swish (this model's `output_gate_type: swish`), 1 = sigmoid.
+[[gdn_norm]]
+act = 0
+symbol = "saber_gdn_gated_rmsnorm_h128_silu"
+
+[[gdn_norm]]
+act = 1
+symbol = "saber_gdn_gated_rmsnorm_h128_sigmoid"
+
+## The quantised all-reduce. dtype is a runtime `if` in the reference launcher and BITS is rx8's
+## template parameter; both are rows.
+## The exact reduce. `dtype` is the `L(T, LANES)` arm of the reference launcher: an int4 packs 8
+## bf16/fp16 or 4 fp32.
+[[ar_exact]]
+dtype = "bf16"
+lanes = 8
+symbol = "saber_ar_oneshot_2rank_exact_bf16"
+
+[[ar_exact]]
+dtype = "fp16"
+lanes = 8
+symbol = "saber_ar_oneshot_2rank_exact_fp16"
+
+[[ar_exact]]
+dtype = "fp32"
+lanes = 4
+symbol = "saber_ar_oneshot_2rank_exact_fp32"
+
+## The fused post-AR epilogue. One instantiation: bf16 only, no template parameter.
+## ws-h37: the `_ssqfma` derivation, not the saber-verbatim `_nq_bf16` (which stays in the code
+## object). The fusion REPLACES the composition `exact reduce -> add_rms_quant`, and `add_rms_quant`
+## is built with contraction on (prod's build line) while `saber_*` is `-ffp-contract=off`: the
+## verbatim epilogue rounds `v * v` before the sum of squares and the producer does not, which is
+## ws-h20's one e4m3 code in ~3.3M. `_ssqfma` writes that one line as an explicit fma (its ISA
+## carries the producer's 14 fmac + 4 fma) and is gated bit-exact against the composition.
+[[ar_exact_nq]]
+dtype = "bf16"
+symbol = "saber_ar_oneshot_2rank_exact_nq_ssqfma_bf16"
+
+[[ar_wht]]
+entry = "ar_oneshot_2rank_wht6"
+bits = 6
+dtype = "bf16"
+symbol = "saber_ar_oneshot_2rank_wht6_bf16"
+
+[[ar_wht]]
+entry = "ar_oneshot_2rank_wht6"
+bits = 6
+dtype = "fp16"
+symbol = "saber_ar_oneshot_2rank_wht6_fp16"
+
+[[ar_wht]]
+entry = "ar_oneshot_2rank_wht4"
+bits = 4
+dtype = "bf16"
+symbol = "saber_ar_oneshot_2rank_wht4_bf16"
+
+[[ar_wht]]
+entry = "ar_oneshot_2rank_wht4"
+bits = 4
+dtype = "fp16"
+symbol = "saber_ar_oneshot_2rank_wht4_fp16"
+
+# ---------------------------------------------------------------------------- workspaces
+## Kinds, not byte counts. `IpcPeerVisible` is the one that cannot be expressed as "N bytes": the
+## scratch and the flags are opened from the peer's IPC handle, and the per-block sequence counter
+## -- which is allocated LOCALLY -- is protocol state whose value must stay in lockstep with the
+## peer's, because slot = seq&1 chooses which half of the double-buffered scratch both ranks use.
+## A replay that re-zeroed it, or a second Saber process that allocated its own, would desynchronise
+## the two ranks and read the wrong slot. That is why it carries the peer-visible kind although
+## `hipIpcGetMemHandle` is never called on it.
+
+[workspace.attn_decode_scratch]
+kind = "scratch"
+# rows * splits * 520 B at the worst shape the engine can schedule; sized once at construction
+# because allocating during a graph capture is not allowed and the address must survive replay.
+# max_num_seqs 8 x q_len 10 x 12 q heads x 128 splits x 520 B.
+capacity_bytes = 63897600
+
+[workspace.attn_decode_counter]
+kind = "persistent"
+# ws-h38: one uint32 arrival counter per (sequence, kv head) item of the last-arriver decode
+# attention. The last block to arrive resets its item's counter in place, so it is zeroed once at
+# construction and graph replay needs no clearing pass (the decode GEMM's split-K `cnt` protocol).
+# A fixed capacity rather than a per-bucket size: the Persistent region is keyed per (plugin, op)
+# and must not change size between buckets. 256 items = max_num_seqs 64 x 4 kv heads (TP=1).
+capacity_bytes = 1024
+
+[workspace.gdn_fused_barrier]
+kind = "persistent"
+# ONE int32. The last workgroup to arrive resets it in place, so it is zeroed exactly once at
+# construction and graph replay needs no clearing pass -- and a kind of `scratch` would be wrong
+# even at four bytes, because an aliased buffer would hand the next launch someone else's count.
+capacity_bytes = 4
+
+[workspace.ar_scratch]
+kind = "ipc_peer_visible"
+# 2 slots x max_bytes, fine-grained (uncached) so a push posts straight to the fabric.
+capacity_bytes = 176160768
+
+[workspace.ar_flags]
+kind = "ipc_peer_visible"
+capacity_bytes = 2048              # max_blocks * 4
+
+[workspace.ar_seq]
+kind = "ipc_peer_visible"
+capacity_bytes = 2048              # max_blocks * 4, local allocation, cross-rank protocol state
+
+## The `_nq` epilogue's geometry: SABER_ARNQ_T threads, SABER_ARNQ_MAXG registers' worth of columns.
+[ar_nq]
+block = 256                        # SABER_ARNQ_T
+max_k = 10240                      # 8 * SABER_ARNQ_T * SABER_ARNQ_MAXG: the register budget
+k_multiple = 8                     # one int4 of bf16 per step
+
+[workspace.ar_loc_pack]
+kind = "scratch"
+# This rank's packed half plus its fp32 scales, split at the same scale_off_bytes as the peer
+# scratch: max_bytes/2 + max_bytes/32 + 4096. Local only -- but the reduce MUST fold exactly the
+# bytes this rank sent, so it cannot be recomputed and it cannot be dropped.
+capacity_bytes = 46903296

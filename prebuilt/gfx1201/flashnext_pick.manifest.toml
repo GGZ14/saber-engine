@@ -1,0 +1,57 @@
+schema_version = 1
+plugin = "flashnext_pick"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_pick.hip"
+source_sha256 = "f3c2bdb71539e2453969a5160d81c1396189053e56be36cf003548312ba2dedf"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "75a57f799118915e1f057ea8386948685c4a6db1e6016fc768a4f3c28aedb6cd"
+hsaco = "flashnext_pick.hsaco"
+hsaco_sha256 = "6eaf0dfa1dacac3b2a5a8fc0f4c21036a999ce26ae2f6d64ec5a5382a86a12c6"
+
+[[kernel]]
+name = "fn_pick_top64_bf16"
+symbol = "fn_pick_top64_bf16.kd"
+kernarg_segment_size = 32
+kernarg_segment_align = 8
+group_segment_fixed_size = 17972
+private_segment_fixed_size = 0
+vgpr_count = 36
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "lg"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 20
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "ld"
+
+[[kernel.arg]]
+offset = 28
+size = 4
+value_kind = "by_value"
+name = "base"

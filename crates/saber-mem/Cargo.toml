@@ -1,0 +1,32 @@
+[package]
+name = "saber-mem"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# The upload path (workstream K) is the one part of this crate that talks to the device. saber-hip
+# links no ROCm -- it dlopens at run time -- so depending on it keeps every host test in this crate
+# buildable and runnable on a machine with no /opt/rocm, which is this one.
+saber-hip = { path = "../saber-hip" }
+# FN63b: the expert mover's SDMA copy lane (`--xtier-mover hsa-lane`); dlopens ROCr at run time.
+saber-hsa = { path = "../saber-hsa" }
+libc.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+
+# Test-only, and deliberately not a real dependency: the reader parses the bytes by hand, and
+# tests/abi_layout.rs is what proves its hand-written offsets are the ones include/saber_abi.h
+# declares. Making saber-abi a build dependency would couple the load path to the ABI crate for
+# nothing; making it a dev-dependency makes the two descriptions check each other.
+[dev-dependencies]
+# Test scratch under target/, deleted on drop -- never /tmp (FN51h; structural.sh check 10).
+saber-test-scratch = { path = "../saber-test-scratch" }
+saber-abi = { path = "../saber-abi" }
+# The staging-ring tests build a PinnedBuf over leaked host memory so the pinned path runs on a
+# machine with no ROCm. Test-only: a real build of saber-hip never enables this feature.
+saber-hip = { path = "../saber-hip", features = ["test-util"] }

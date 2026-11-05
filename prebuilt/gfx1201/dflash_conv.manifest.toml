@@ -1,0 +1,147 @@
+schema_version = 1
+plugin = "dflash_conv"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/dflash_conv.hip"
+source_sha256 = "f0df206c40ce285e732363694c35f25bb6f8d32bdeb9f6c94703ad740ce512b0"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "178ebd8670c0d3191b067a82b6d98f54b115e46572314f70c182568e31bfad69"
+hsaco = "dflash_conv.hsaco"
+hsaco_sha256 = "2fe222454cbf0156eaf801479a8313f215aa87eb3bb15e57735be479721c9d3c"
+
+[[kernel]]
+name = "dflash_grouped_conv_quant_t2g16"
+symbol = "dflash_grouped_conv_quant_t2g16.kd"
+kernarg_segment_size = 60
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 30
+sgpr_count = 22
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "coeff"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "base"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "scales"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "t_rows"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "groups"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "block_size"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "side"
+
+[[kernel]]
+name = "dflash_grouped_conv_t2g16"
+symbol = "dflash_grouped_conv_t2g16.kd"
+kernarg_segment_size = 52
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 21
+sgpr_count = 17
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "coeff"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "base"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "t_rows"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "groups"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "block_size"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "side"

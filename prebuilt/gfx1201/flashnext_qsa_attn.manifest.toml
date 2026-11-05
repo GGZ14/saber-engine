@@ -1,0 +1,63 @@
+schema_version = 1
+plugin = "flashnext_qsa_attn"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_qsa_attn.hip"
+source_sha256 = "735dcc7448eda513cfbe6c0389f353553983ed79d3b31f32f88654d7e43e421d"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "e62beef1c0ee6a1a3a217d1fa7bc40ba9a6e8f418d2703ab2bc0aa1cc8cdf2e0"
+hsaco = "flashnext_qsa_attn.hsaco"
+hsaco_sha256 = "f76eebe63c71be23f6ece226df086dd9bc440734762db6e9c252d4ceed1c123f"
+
+[[kernel]]
+name = "fn_qsa_attn_decode_h256_gqa12_bf16kv_nw4"
+symbol = "fn_qsa_attn_decode_h256_gqa12_bf16kv_nw4.kd"
+kernarg_segment_size = 176
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 12
+vgpr_count = 256
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 32
+value_kind = "by_value"
+name = "qa"
+
+[[kernel]]
+name = "fn_qsa_attn_prefill_h256_gqa12_bf16kv"
+symbol = "fn_qsa_attn_prefill_h256_gqa12_bf16kv.kd"
+kernarg_segment_size = 424
+kernarg_segment_align = 8
+group_segment_fixed_size = 54016
+private_segment_fixed_size = 20
+vgpr_count = 240
+sgpr_count = 31
+wavefront_size = 32
+max_flat_workgroup_size = 768
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 32
+value_kind = "by_value"
+name = "qa"

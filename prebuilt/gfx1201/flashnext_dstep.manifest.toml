@@ -1,0 +1,93 @@
+schema_version = 1
+plugin = "flashnext_dstep"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_dstep.hip"
+source_sha256 = "6a73da690d23175e63be0596d0fb7a5ca1dba0185f24fd42905ce2cad49351dc"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "671c7d85856abae597163d6621d90e594856814becff132b1edfdf0f2eefaa40"
+hsaco = "flashnext_dstep.hsaco"
+hsaco_sha256 = "03e47138d5481540fb1c74fa7379d8cd13c13f0d0d0240268dc9c7517779b81b"
+
+[[kernel]]
+name = "fn119_draw_walk"
+symbol = "fn119_draw_walk.kd"
+kernarg_segment_size = 52
+kernarg_segment_align = 8
+group_segment_fixed_size = 10324
+private_segment_fixed_size = 0
+vgpr_count = 70
+sgpr_count = 41
+wavefront_size = 32
+max_flat_workgroup_size = 160
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "seam_a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "seam_b"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "rp"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "sq"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "rowout"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "nseq"
+
+[[kernel]]
+name = "fn119_expf_probe"
+symbol = "fn119_expf_probe.kd"
+kernarg_segment_size = 16
+kernarg_segment_align = 8
+group_segment_fixed_size = 2048
+private_segment_fixed_size = 0
+vgpr_count = 16
+sgpr_count = 35
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "base"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "per"

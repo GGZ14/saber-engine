@@ -1,0 +1,291 @@
+schema_version = 1
+plugin = "saber_gdn_fnq"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/saber_gdn_fnq.hip"
+source_sha256 = "ba62cc50ef8613fe64ede99a2ee1b56463b5f35443947bca84b671a3030b3fe8"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "ecbd1e5ed48d0beb06a7908fbed18abb67cfcd7c3dca59a545aa8e21aa9f86a5"
+hsaco = "saber_gdn_fnq.hsaco"
+hsaco_sha256 = "94d841c24da763799aa2c459f042065787a9b2a5f08dee0c7395c64b326c2293"
+
+[[kernel]]
+name = "saber_gdn_fnq_f16s_w4k128v128_ab1"
+symbol = "saber_gdn_fnq_f16s_w4k128v128_ab1.kd"
+kernarg_segment_size = 576
+kernarg_segment_align = 8
+group_segment_fixed_size = 36
+private_segment_fixed_size = 0
+vgpr_count = 221
+sgpr_count = 81
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "by_value"
+name = "xpitch"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "wgt"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "bias"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "cstate"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "by_value"
+name = "cs_seq"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "by_value"
+name = "cs_dim"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "by_value"
+name = "cs_tok"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "state_len_max"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "global_buffer"
+name = "cache_idx"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "ci_stride"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "naccept"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 104
+size = 4
+value_kind = "by_value"
+name = "n_seqs"
+
+[[kernel.arg]]
+offset = 108
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 112
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 116
+size = 4
+value_kind = "by_value"
+name = "maxq"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "av"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "bv"
+
+[[kernel.arg]]
+offset = 160
+size = 8
+value_kind = "by_value"
+name = "ab_stride"
+
+[[kernel.arg]]
+offset = 168
+size = 8
+value_kind = "global_buffer"
+name = "a_log"
+
+[[kernel.arg]]
+offset = 176
+size = 8
+value_kind = "global_buffer"
+name = "dt_bias"
+
+[[kernel.arg]]
+offset = 184
+size = 8
+value_kind = "global_buffer"
+name = "state"
+
+[[kernel.arg]]
+offset = 192
+size = 8
+value_kind = "by_value"
+name = "st_slot"
+
+[[kernel.arg]]
+offset = 200
+size = 8
+value_kind = "by_value"
+name = "st_head"
+
+[[kernel.arg]]
+offset = 208
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 216
+size = 8
+value_kind = "global_buffer"
+name = "sidx"
+
+[[kernel.arg]]
+offset = 224
+size = 8
+value_kind = "by_value"
+name = "sidx_stride"
+
+[[kernel.arg]]
+offset = 232
+size = 4
+value_kind = "by_value"
+name = "scale"
+
+[[kernel.arg]]
+offset = 236
+size = 4
+value_kind = "by_value"
+name = "sp_thr"
+
+[[kernel.arg]]
+offset = 240
+size = 8
+value_kind = "global_buffer"
+name = "bar"
+
+[[kernel.arg]]
+offset = 248
+size = 4
+value_kind = "by_value"
+name = "num_wg"
+
+[[kernel.arg]]
+offset = 252
+size = 4
+value_kind = "by_value"
+name = "o_rows"
+
+[[kernel.arg]]
+offset = 256
+size = 8
+value_kind = "global_buffer"
+name = "nq_z"
+
+[[kernel.arg]]
+offset = 264
+size = 8
+value_kind = "by_value"
+name = "nq_zs"
+
+[[kernel.arg]]
+offset = 272
+size = 8
+value_kind = "global_buffer"
+name = "nq_w"
+
+[[kernel.arg]]
+offset = 280
+size = 8
+value_kind = "global_buffer"
+name = "nq_q"
+
+[[kernel.arg]]
+offset = 288
+size = 8
+value_kind = "global_buffer"
+name = "nq_scale"
+
+[[kernel.arg]]
+offset = 296
+size = 4
+value_kind = "by_value"
+name = "nq_n"
+
+[[kernel.arg]]
+offset = 300
+size = 4
+value_kind = "by_value"
+name = "nq_eps"
+
+[[kernel.arg]]
+offset = 304
+size = 8
+value_kind = "global_buffer"
+name = "tiles"
+
+[[kernel.arg]]
+offset = 312
+size = 4
+value_kind = "by_value"
+name = "ep_rows"

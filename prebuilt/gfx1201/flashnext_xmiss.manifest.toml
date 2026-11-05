@@ -1,0 +1,87 @@
+schema_version = 1
+plugin = "flashnext_xmiss"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_xmiss.hip"
+source_sha256 = "9bb1c8de26f631cf3de4ade06bb0827a843fc08f6e1b632f1cdffdf88fda3072"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "f6068b9d636fb41a49d08415c69876f8266a31ad0eddf3095dc17ffb258f768a"
+hsaco = "flashnext_xmiss.hsaco"
+hsaco_sha256 = "f11be41ca7df565b61c14f3afd442e3891c26fa5f85a938d44bacf309cd18fb3"
+
+[[kernel]]
+name = "fn_gate98"
+symbol = "fn_gate98.kd"
+kernarg_segment_size = 12
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 2
+sgpr_count = 15
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "tab"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "idx"
+
+[[kernel]]
+name = "fn_xmiss_e256"
+symbol = "fn_xmiss_e256.kd"
+kernarg_segment_size = 312
+kernarg_segment_align = 8
+group_segment_fixed_size = 36
+private_segment_fixed_size = 0
+vgpr_count = 8
+sgpr_count = 24
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "ids"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "gu"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "dn"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "lo"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "mbox"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "layer"

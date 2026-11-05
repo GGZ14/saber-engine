@@ -1,0 +1,129 @@
+schema_version = 1
+plugin = "flashnext_glue_kv8"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_glue_kv8.hip"
+source_sha256 = "df168479335cafbb648650816520f324c8441545bbd353f86b6e452df1c27ed1"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "527d31f3a733330125c7adbf2144283f604a3343184e091e589c7c8c9b52d6c8"
+hsaco = "flashnext_glue_kv8.hsaco"
+hsaco_sha256 = "4babe7ff97aad0db8547242982ee32213a933702693f9333fb25124209cfe05a"
+
+[[kernel]]
+name = "fn_kv_append_ring_h256_fp8"
+symbol = "fn_kv_append_ring_h256_fp8.kd"
+kernarg_segment_size = 132
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 28
+sgpr_count = 48
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "key"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "by_value"
+name = "key_stride"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "value"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "value_stride"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "kv"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "slot"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "by_value"
+name = "block_stride"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "by_value"
+name = "page_stride"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "by_value"
+name = "head_stride"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "global_buffer"
+name = "ikey"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "by_value"
+name = "ikey_stride"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "ring"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "ring_pos"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "ring_slot"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 120
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 124
+size = 4
+value_kind = "by_value"
+name = "k_scale"
+
+[[kernel.arg]]
+offset = 128
+size = 4
+value_kind = "by_value"
+name = "v_scale"

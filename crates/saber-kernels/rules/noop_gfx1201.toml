@@ -1,0 +1,33 @@
+## The NULL plugin's launch rules for gfx1201, as DATA.
+##
+## This is an INSTRUMENT, not a serve path, and it is the only rules file in the repo that
+## describes no reference launcher: there is nothing in prod to port, because prod never launches
+## a kernel that does nothing. It exists so that `saber chain-bench` can name its cheapest
+## dispatch the same way it names every other one -- through `resolve`, from a table -- rather
+## than hand-building a `LaunchDescriptor` at the call site, which would be the one place in the
+## engine where a launch geometry is a literal.
+##
+## Both rows are grid 1 x block 1 ON PURPOSE. One workgroup of one thread is the smallest unit of
+## work the command processor can be asked to dispatch, so the wall time per node is the node's
+## cost and not an occupancy ramp. Widening either row would measure something else.
+##
+## `noop` takes no argument at all and touches no memory: a chain of them has zero drain, so its
+## per-node wall is the command processor's own per-dispatch work (plus, under a graph, the
+## node's share of replay). `noop_touch` takes one pointer and read-modify-writes ONE byte, so a
+## chain of them, all on the same byte, is a real RAW dependency of the smallest footprint a
+## dependency can have. The difference between the two chains is the drain at one byte.
+
+schema_version = 1
+name = "noop-gfx1201-instrument"
+
+[[kernel]]
+op = "noop"
+symbol = "saber_noop"
+grid = 1
+block = 1
+
+[[kernel]]
+op = "noop_touch"
+symbol = "saber_noop_touch"
+grid = 1
+block = 1

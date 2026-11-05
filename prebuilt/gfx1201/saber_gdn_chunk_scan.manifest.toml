@@ -1,0 +1,99 @@
+schema_version = 1
+plugin = "saber_gdn_chunk_scan"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/saber_gdn_chunk_scan.hip"
+source_sha256 = "bd23ed6476ad56c9b30638c0f8f1c17e54dda0c57777421f9fc21afa00f36807"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "c9bfdd10956b1b9ea6554716cf82374b95edce474a5974eb0ae0f02f4adac66f"
+hsaco = "saber_gdn_chunk_scan.hsaco"
+hsaco_sha256 = "e9fed8db2f9cadc0b3bbfd16dc226b50d8ee556ad7d8baabbe13c45bed0784bd"
+
+[[kernel]]
+name = "saber_gdn_chunk_scan_k128_v128_c64"
+symbol = "saber_gdn_chunk_scan_k128_v128_c64.kd"
+kernarg_segment_size = 92
+kernarg_segment_align = 8
+group_segment_fixed_size = 60928
+private_segment_fixed_size = 0
+vgpr_count = 244
+sgpr_count = 59
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "k"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "v"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "a_mat"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "gcs"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "beta"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "h0"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "ht"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "global_buffer"
+name = "cu"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 84
+size = 4
+value_kind = "by_value"
+name = "hg"
+
+[[kernel.arg]]
+offset = 88
+size = 4
+value_kind = "by_value"
+name = "scale"

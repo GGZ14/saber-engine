@@ -1,0 +1,673 @@
+## The DFlash2 drafter's launch rules for gfx1201, as DATA.
+##
+## The drafter is a five-layer block-diffusion model that runs ONE backbone pass per decode step
+## and proposes `num_speculative_tokens` tokens. The census (docs/LEDGER.md, workstream F,
+## 2026-09-19) traced one prod decode step and found its linear algebra is a single kernel shape
+## repeated 21 times -- the reference's fp8 W8A8 blockscale GEMM -- at 1567 us, 7.9% of the step.
+##
+## Every number below is read off the Triton specialisation names in that trace rather than
+## chosen here: Triton bakes its constexprs into the kernel name, so BLOCK_SIZE_M=16,
+## BLOCK_SIZE_N=128, BLOCK_SIZE_K=128, GROUP_N=GROUP_K=128 and NUM_KSPLIT=1 are prod's own
+## decisions, transcribed. What this file adds is the REFUSAL: a shape outside them does not get
+## a silently wrong launch.
+
+schema_version = 1
+name = "dflash-gfx1201"
+
+[knobs]
+## BLOCK_SIZE_M. The drafter decodes at M = 1 + num_speculative_tokens (8 at SPEC=7, batch 1) and
+## every M in 1..16 launches the same grid, which is why the trace shows one GRID_MN per shape.
+## A kernel-side clamp fills rows M..16 with row M-1 and their `a_scale` is forced to zero, so the
+## padding contributes nothing -- but only up to 16. Past it the tile is wrong, not slow.
+bm = 16
+## BLOCK_SIZE_N: one workgroup's slice of N, and the grid is exactly N / bn.
+bn = 128
+## BLOCK_SIZE_K: one k tile, and equal to the scale group below, which is what lets the whole
+## 128x128 B tile share ONE scalar b_scale (the `(a_scale * b_scale)[:, None]` arm).
+bk = 128
+## Threads per workgroup: 4 waves of 32, the same launch width as the Triton kernel's num_warps=4.
+## Load-bearing -- the wave index picks which n-fragments a wave owns.
+block = 128
+## The blockscale group, GROUP_N == GROUP_K. `a_scale` is [M, K/group], `b_scale` is
+## [N/group, K/group]. Prod quantises the drafter at 128 and the kernel is written for the arm
+## that choice selects; a different group is a different kernel, not a different argument.
+group = 128
+## The largest N a single launch will be asked for. Not a hardware limit: the drafter's widest
+## GEMM is gate_up at 17408, and a grid past this means the caller's shape is wrong.
+max_n = 65536
+## The largest M the **M-TILED** instantiation serves. `bm` above is the WMMA tile and the largest M
+## one workgroup covers; `dflash_gemm_a8w8_bs128_mtn128k128` puts `ceil(M / bm)` of those workgroups
+## on the grid's y axis, each doing to its own sixteen rows exactly what the m16 kernel does -- the
+## k loop, the eight n-fragments, the per-tile `acc += tile * (a_scale * b_scale)` and the single
+## round to bf16 are unchanged, so what moves is only how many rows one launch serves.
+##
+## 256 is `max_seqs` 32 x the DFlash2 block of 8, which is the widest batched proposal this engine
+## can plan; it is a refusal boundary and not a measurement. The m16 symbol still refuses anything
+## above `bm`, by name, and names this op.
+max_m = 256
+
+## The five shapes the census found, kept as data so `saber explain` can name them and so the
+## gate's case list and the rules agree by construction rather than by transcription.
+##   qkv 3072x5120, o_proj 5120x2048, gate_up 17408x5120, down_proj 5120x8704,
+##   aux_fc 5120x25600 (the aux-hidden-state projection over the five target layers).
+
+## The int2 draft head and its exact rerank, the census's item 2: 795.8 us and 22 us per decode
+## step. Every number is prod's, from `ref_drafthead.py` and from the traced launch
+## (grid 124160x1x1 at 64 threads = 1940 workgroups of 2 waves, and 2048x80x1 for the rerank).
+[head]
+## BLOCK_M. `_pow2_at_least` pads the draft rows to a power of two >= 16 and allocates y, bmax and
+## bidx at that padded height, so this is a tile height AND the row count of every buffer. The
+## M = 32 and M = 64 bands prod also carries are different instantiations (different num_warps),
+## which is why `resolve` refuses anything but this one rather than launching it wider.
+bm = 16
+## BLOCK_N: prod's do_bench optimum, and the width of one block-max entry. The grid is n / bn.
+bn = 64
+## The quantisation group along K, which is also the kernel's k tile. Group 128 rather than 64 is
+## what makes a 2-bit head pay at all -- the per-group accumulator work is the dominant non-memory
+## term, and halving the group count moved prod's kernel 781 -> 417 us.
+group = 128
+## Candidates emitted per block. KCAND is the recall lever, not RERANK: at KC = 1 a winner sharing
+## a block with a stronger token is never a candidate at any R. 2 bits needs 8.
+kcand = 8
+## Threads per workgroup: 2 waves, prod's num_warps at the M = 16 band, and load-bearing here --
+## the wave index picks which n-fragments a wave owns and the emit is written for two halves.
+block = 64
+## The rerank: one program per (draft row, candidate), BLOCK_K wide, 4 waves.
+rerank_block_k = 512
+rerank_block = 128
+## The largest candidate count a single rerank launch may be asked for. The prod unit runs
+## SABER_DRAFT_RERANK=80 (read off the traced grid, not off the module default of 32).
+max_r = 1024
+## THE SECOND BAND'S BLOCK_M, and the one number in this table that a MEASUREMENT put here.
+##
+## `dflash_draft_head_int2_mtn64g128` makes a batched shape legal by putting `M / bm` workgroups on
+## the grid's y axis, and F33 measured what that costs: **868.54 us at M = 32 against 743.20 for two
+## launches of the 16-row symbol**, because the two m tiles of one 64-column block are two different
+## workgroups and each reads the head's 159 MiB int2 weight in full. Prod's own BLOCK_M = 32 band is
+## 592.64 us -- 0.80x of two m16 launches -- because ONE workgroup holds a [32, 64] accumulator and
+## reads each weight byte once for thirty-two rows. `dflash_draft_head_int2_m32n64g128` is that
+## band: a second accumulator m-fragment against the same decoded weight, a [32, 64] LDS emit tile
+## at a 33-word column stride, and the same 16-rows-x-2-halves scan run by both waves.
+##
+## 32 and not 64: prod's 64-row band is a THIRD instantiation (num_warps 8) and the batched proposal
+## at `max_seqs` is 256 rows, which this band serves as eight y tiles. The band is compiled in, so a
+## different one is a different kernel and `validate` refuses any value but twice `bm`.
+bm2 = 32
+## The largest M the **M-TILED** head serves, and the one head knob that is about a BATCH rather
+## than about the reference. `bm` above is the WMMA tile and the row count of every buffer ONE
+## workgroup writes; `dflash_draft_head_int2_mtn64g128` puts `M / bm` of those on the grid's y axis.
+##
+## Prod's bands (M = 16 / 32 / 64, `_cfg_for`'s num_warps 2 / 4 / 8) are a LAUNCH CONFIG fact and
+## not an arithmetic one: per output element the reduction is the same ten groups of each of the
+## same four quarters in the same order whatever BLOCK_M is, and `tl.dot` inside a group is the same
+## eight ascending WMMA k-steps. So the row slice computes prod's own numbers at every padded M, and
+## the bound here is the plan's: 256 = `max_seqs` 32 x the block of 8, `_pow2_at_least`'s widest.
+## An M that is not a whole number of tiles is REFUSED rather than padded -- the emit writes all
+## sixteen rows of its tile and a partial one would run past the buffers prod allocates.
+max_m = 256
+## `bm.topk(RERANK)`'s k, and therefore the rerank width itself -- the SERVE's 80, not the module
+## default of 32. It is compiled into the gather pass (its LDS array is exactly k entries), so a
+## serve that changed SABER_DRAFT_RERANK would need a second instantiation and gets a refusal
+## by name instead of a selection that silently keeps the first 80 of what it found.
+topk_k = 80
+## Threads per workgroup in both passes of that selection; one workgroup owns one row. 1024, not
+## 256: sixteen rows is sixteen workgroups, so at 256 the select had 4,096 of the card's 65,536
+## threads and read its operand eight times at 9.3 GB/s. The histogram is 256 bins and its suffix
+## scan is written for 256 lanes, so this widens in whole multiples of 256 and the first 256
+## threads keep the scan (F30, 2026-09-21).
+topk_block = 1024
+## `xs`, the head's per-128-group fp32 column sum: waves per workgroup. ATen gives ONE wave the
+## whole group and never reduces across waves (`block_width = 32`, `block_height = 16`,
+## `values_per_thread() = 4` against a 256 `warp_split_threshold`), so the packing below changes
+## no rounding -- it is how many of those independent waves share a workgroup.
+group_sum_waves = 8
+## Threads per workgroup in `_pow2_at_least`'s row pad. A copy: occupancy and nothing else.
+pad_block = 256
+## ws-h43: 64-column blocks per workgroup of the traced head and its 32-row band. 2 = the `_lx`
+## instantiation: four waves over two adjacent blocks, each quarter's [rows, 128] slice of x staged
+## ONCE in LDS (the shipped band had every wave re-read it: ~620 MB of L2 traffic a launch against
+## 165 MB of weight). Per-column arithmetic unchanged, gated byte-identical to the band and to
+## prod's Triton (`h43_head_ab.py`); 376.6 vs 395.2 us at M = 16, 658 vs 810 at 32, 1361 vs 1676 at
+## 64 (TP=2), 0.88 / 0.82 / 0.81x at TP=1. `1` with the `_n64g128` symbols is the control.
+wg_blocks = 2
+
+[[kernel]]
+op = "gemm_a8w8_blockscale"
+plugin = "dflash_gemm"
+symbol = "dflash_gemm_a8w8_bs128_m16n128k128"
+
+## The same GEMM over MORE THAN SIXTEEN ROWS: one workgroup per 16-row tile on the grid's y axis,
+## the same k tiles and the same scale-then-accumulate inside each. TWENTY-ONE of the proposal's
+## launches are this kernel -- the aux projection and every layer's qkv / o_proj / gate_up / down --
+## so it is the largest of the three refusals a batched proposal was waiting on (LEDGER, S6).
+[[kernel]]
+op = "gemm_a8w8_blockscale_mt"
+plugin = "dflash_gemm"
+symbol = "dflash_gemm_a8w8_bs128_mtn128k128"
+
+[[kernel]]
+op = "draft_head_int2"
+plugin = "dflash_head"
+symbol = "dflash_draft_head_int2_m16n64x2g128_lx"
+
+## The same head over MORE THAN ONE TILE OF ROWS: one workgroup per 16 rows on the grid's y axis,
+## the same k order, the same two accumulator ops per group and the same emit inside each. The
+## batched proposal's head runs at `_pow2_at_least(reqs * (block - 1))` rows -- 32 at four requests
+## -- and the one above takes exactly 16, which is one of the three refusals S6's census named.
+[[kernel]]
+op = "draft_head_int2_mt"
+plugin = "dflash_head"
+symbol = "dflash_draft_head_int2_mtn64g128"
+
+## ... and the SAME head over a 32-ROW BAND, which is what the rules pick above the traced tile: one
+## workgroup per 32 rows, each weight byte read once for all of them. The row slice above stays as
+## the fallback for an M that is a whole number of 16-row tiles and not of 32 -- `_pow2_at_least`
+## never produces one, and a caller that hands over 48 rows gets that symbol rather than a refusal.
+[[kernel]]
+op = "draft_head_int2_m32"
+plugin = "dflash_head"
+symbol = "dflash_draft_head_int2_m32n64x2g128_lx"
+
+[[kernel]]
+op = "rerank_exact"
+plugin = "dflash_head"
+symbol = "dflash_rerank_exact_fp8_k512"
+
+[[kernel]]
+## `_rerank_exact`'s FP8=False arm, and the one the DFlash2 serve runs. Not a preference: the unit
+## sets SABER_NVFP4_LMHEAD=bf16 (which is also the module's own default), so
+## `ref_nvfp4.RefFp8ChannelToBf16` replaces the checkpoint's e4m3 `lm_head` with
+## `bf16(f32(w8) * f32(scale))` at load, `ref_drafthead._head_matrix` returns a bf16 matrix
+## with NO scale, and both the rerank and `_quantize_head_now` read those bytes. Measured
+## 2026-09-21 against prod's own captured `unary_logits`, on the host and with no card: the bf16
+## arm is IDENTICAL of 448 bytes on all three corpus prompts and the e4m3-times-scale arm differs
+## in 6 / 8 / 9 -- one bf16 ULP at the reranked columns, which is what a rounding that happens one
+## step earlier costs.
+op = "rerank_exact_bf16"
+plugin = "dflash_head"
+symbol = "dflash_rerank_exact_bf16_k512"
+
+[[kernel]]
+## The same FP8=False arithmetic over the checkpoint's OWN e4m3 head + per-row f32 scale (workstream
+## N6): `head.rerank.w8` / `head.rerank.ws` are the target's `lm_head.w8` / `lm_head.ws` bytes, so the
+## card holds ONE head record that both read, and the kernel expands each weight in register to
+## `bf16(f32(w8) * f32(scale))` -- the bf16 record's element bit for bit (the unit gate:
+## `tools/gates/n6_rerank_unit.sh`). The drafter pack's record kind selects it, not a flag.
+op = "rerank_exact_w8"
+plugin = "dflash_head"
+symbol = "dflash_rerank_exact_w8_k512"
+
+## The bf16 projections (`kernel_projection`, and the selector's `hidden_projection`). The
+## drafter's checkpoint lists both in `modules_to_not_convert`, so they stay bf16 while everything
+## around them is W8A8. Geometry is the REFERENCE's: the traced hipBLASLt launch is 32 threads per
+## workgroup on MT16x16 macro tiles, i.e. one wave per 16x16 output tile walking all of K, which is
+## also the only parallelism that can be bit-exact (splitting K re-associates the sum).
+[bgemm]
+## The WMMA M tile, and the largest M one launch serves. The drafter's token count is 8.
+m = 16
+## One wave's output columns.
+n = 16
+## Threads per workgroup: 4 waves, so a workgroup covers 4 tiles of N.
+block = 128
+## K must be a whole number of WMMA k-steps.
+k_multiple = 16
+## The largest N a single launch may be asked for. MEASURED, not chosen, and this is the one knob
+## in this file that a gate lowered rather than a source raised. The reference is `F.linear` --
+## hipBLASLt -- and hipBLASLt is not one kernel: it picks an algorithm per shape, and the algorithm
+## it picks at N = 5120 does not reduce K in the order this kernel does. Gated 2026-09-21 at
+## M = 8, K = 5120: N = 1280 and N = 2560 identical (10240 and 20480 of 20480), N = 5120 DIFFERS
+## in 19 of 40960 -- 0.046%, the shape of a one-ULP boundary and not of a wrong kernel, and the
+## paired time crosses 1.0 at the same point (0.639x, 0.658x, then 1.032x), which is what an
+## algorithm switch looks like from the outside.
+##
+## The envelope stopped where that evidence did until F26, which went and got the rest of it: the
+## context store's fused KV projection is N = L x 2 x kv_size, which is 5120 at TP=2 and **10240
+## at TP=1**, and it is the one launch of the proposal that the number above kept absent. A wider
+## launch was never the question -- every output column of this kernel is an independent dot
+## product over K, so N does not enter its arithmetic at all -- the question is which ORDER the
+## reference reduces K in at the N where it switches algorithm. `dflash_bgemm.hip` carries the
+## three associations as separate symbols (`acc2`, `acc4` beside the route) and the gate against
+## prod's own `all_kv_flat` is what picks; see the LEDGER entry for F26 for which arm answered and
+## at what residual. The route is unchanged either way -- this number only says which shapes
+## `resolve` will hand it.
+max_n = 10240
+## THE SECOND BAND'S ROWS PER WAVE, and it is a BANDWIDTH number rather than a tile preference.
+##
+## One wave owns one 16x16 output tile and walks all of K -- the reference's own parallelism, and
+## the only one that can be bit-exact -- so a launch reads N * K * 2 bytes of bf16 weight: at the
+## context store's N = 10240, K = 5120 that is **104.9 MB, whose floor is 165 us at the card's
+## measured 635 GB/s**. hipBLASLt is at that floor (184.56 us, 1.12x). F33 measured the y-axis row
+## slice at **334.38 us at M = 32** and read it as 1.81x the reference; it is not off its own
+## roofline at all -- a row slice reads the weight ONCE PER 16-ROW TILE, so its traffic at M = 32 is
+## 209.7 MB and its floor is 330 us. `dflash_bgemm_bf16_m32n16` puts the second m tile in the SAME
+## wave, against the same weight fragment, so the weight is read once for both and every output
+## element's k order is unchanged.
+m2 = 32
+## The largest M the **M-TILED** instantiation serves, and the one knob here that is about a
+## BATCH rather than about the reference. `m` above is the WMMA tile and the largest M one
+## workgroup covers; `dflash_bgemm_bf16_mtn16` puts `ceil(M / m)` of those workgroups on the grid's
+## y axis, each doing exactly what the m16 kernel does to its own sixteen rows -- so every output
+## row's arithmetic is unchanged and what moves is only how many rows one launch serves.
+##
+## 256 is `max_seqs` 32 x the DFlash2 block of 8, which is the widest batched proposal this engine
+## can plan; it is a refusal boundary and not a measurement. The m16 symbol still refuses anything
+## above `m`, by name, and names this op.
+max_m = 256
+## THE TARGET'S bf16 `lm_head` (workstream N2, `Graph::with_bf16_head`): the same three symbols at
+## the vocabulary's N -- 124,160 per rank at TP=2, 248,320 at TP=1. Its own envelope rather than
+## `max_n`, because `max_n` is where the bit-exactness gate against hipBLASLt stopped and the head
+## is NOT claimed bit-exact against prod's hipBLASLt `lm_head`: every output column is an
+## independent K-ascending fp32 dot product rounded once, which is the declared accumulation-order
+## class, and the arm it serves is a precision attribution (bf16 vs MXFP4 weights), not a port.
+head_max_n = 248320
+## THE fp8 HEAD'S WIDE BAND (workstream H33): rows per wave of the one-pass band `resolve_head_w8`
+## picks for m2 < M <= head_band. The 32-row band reads the head's 0.636 GB once per 32 rows, so the
+## served b7s5 / b8s5 (35 / 40 rows) read it twice. Card 1, 210 W, 2026-09-23, us per launch (rank
+## 0; rank 1 within 1 %), all three bit-identical to the 16-row symbol per 16-row slice:
+##            32-row band (passes)   48-row band        64-row band
+##   M = 35   2295.4 (2)             **1426.0 (0.62x)** 1516.8
+##   M = 40   2292.0 (2)             **1487.0 (0.65x)** 1503.0
+##   M = 48   2296.1 (2)             **1500.0**         1657.5
+##   M = 64   **2336.3 (2)**         2608.6 (2)         2168.6
+## The one-pass bands are not weight-bound: their time grows with the DISTINCT A rows (LEDGER H33),
+## so 64 rows in one pass read the weight at 293 GB/s. Above head_band the head keeps the 32-row
+## band; the 64-row band is compiled and gated, not routed (a 7 % saving at a shape the serving
+## profile does not plan). Compiled in: the `bgemm_w8_head_wide` symbol carries the row count.
+head_band = 48
+
+## The candidate selector's edge scoring. `selector_rank` and `selector_top_k` are the drafter's
+## own config values and the kernel is compiled for them: rank 256 is 16 WMMA k-steps and top_k 16
+## is exactly one 16x16 fragment, which is why one WAVE scores one block position.
+[selector]
+rank = 256
+top_k = 16
+block = 32
+
+## The grouped convolution, and the per-group fp8 quant fused into it. taps, group_size and the
+## quant group are the checkpoint's `conv_kernel_size`, `conv_group_size` and the blockscale GEMM's
+## `GroupShape(1, 128)`; the kernel is compiled for all three.
+[conv]
+taps = 2
+group_size = 16
+quant_group = 128
+## bf16 elements per thread: one 8-byte load, and 32 lanes cover exactly one quant group, which is
+## what makes the quant's amax a single cross-lane reduction with no LDS and no barrier.
+vec = 4
+block = 128
+
+[[kernel]]
+op = "bgemm_bf16"
+plugin = "dflash_bgemm"
+symbol = "dflash_bgemm_bf16_m16n16"
+
+## The same projection over MORE THAN SIXTEEN ROWS: one workgroup per 16-row tile on the grid's y
+## axis, the same tile and the same k order inside each. A batched proposal's context store runs at
+## `reqs * block` rows and the one above stops at 16, which is why one request at a time was a law
+## and not a choice (LEDGER, workstream S3).
+[[kernel]]
+op = "bgemm_bf16_mt"
+plugin = "dflash_bgemm"
+symbol = "dflash_bgemm_bf16_mtn16"
+
+## ... and the 32-ROW BAND, which is what the rules pick above the tile: two m-fragments per wave
+## against one weight fragment, so the weight stream is read once for both. The row slice above is
+## the fallback for an M that is a whole number of 16-row tiles and not of 32.
+[[kernel]]
+op = "bgemm_bf16_m32"
+plugin = "dflash_bgemm"
+symbol = "dflash_bgemm_bf16_m32n16"
+
+## THE TARGET'S fp8-WEIGHT `lm_head` (workstream N4, `Graph::with_fp8_head`): the checkpoint's own
+## e4m3 matrix + its per-channel f32 scale, expanded in register to the bf16 head's bytes and then
+## the two bands above, element for element. Only the head asks (`dflash::resolve_head_w8`), at
+## `[bgemm] head_max_n`. The code object carries four instantiations of each band (k-steps in flight
+## 8 or 16, the compiler's bf16 cast or the integer RNE -- one function for every finite product);
+## every one is gated bit-identical to the bf16 band and the rows below name the one the paired
+## per-launch time picked (docs/LEDGER.md, workstream N4; card 1, 210 W, 2026-09-22, rank 0, us,
+## bf16 band -> cast/u8, cast/u16, rne/u8, rne/u16):
+##   M = 1   2176.6 -> 1209.7 / 1225.2 / 1214.0 / **1087.6 (0.500x, 584 GB/s)**
+##   M = 8   2271.5 -> 1334.1 / 1214.0 / 1346.2 / **1131.0 (0.498x)**
+##   M = 32  2320.0 -> 1534.3 / 2308.7 / **1469.0 (0.633x)** / 2150.3
+##   M = 64  4528.2 -> 3095.0 / 4477.1 / **2615.9 (0.578x)** / 3936.2
+## The tile wants sixteen k-steps in flight (it holds one A fragment); the band holds two and at 16
+## k-steps its registers cost it the occupancy the weight stream needs, so it keeps eight.
+## H41: the three rows route the 16-BYTE WEIGHT LOAD (`db_mtile_w8_w128`, H40's lab arms moved
+## into the plugin): one 16-byte load per lane covers two k-steps and `v_permlanex16` swaps the
+## halves, so every WMMA sees the served fragment in the served k order -- 0 differing elements
+## against the 8-byte symbols above at every M on both ranks (LEDGER H41). The 8-byte symbols stay
+## compiled as the gate's reference and the pairing control. H40 lab, card 1, 210 W, rank 0, us:
+##   M = 1 1,088 -> 1,050 | M = 8 1,130 -> 1,080 | M = 16 1,153 -> 1,106 (m16, u16)
+##   M = 32 1,313 -> 1,109 (m32, u16, non-temporal) | M = 48 1,731 -> 1,200 (m48, u8)
+[[kernel]]
+op = "bgemm_w8_head"
+plugin = "dflash_bgemm"
+symbol = "dflash_bgemm_w8_m16n16_w128_u16"
+
+[[kernel]]
+op = "bgemm_w8_head_m32"
+plugin = "dflash_bgemm"
+symbol = "dflash_bgemm_w8_m32n16_w128_u16_nt"
+
+[[kernel]]
+op = "bgemm_w8_head_wide"
+plugin = "dflash_bgemm"
+symbol = "dflash_bgemm_w8_m48n16_w128_u8"
+
+[[kernel]]
+op = "selector_score"
+plugin = "dflash_selector"
+symbol = "dflash_selector_score_r256_k16"
+
+[[kernel]]
+op = "grouped_conv"
+plugin = "dflash_conv"
+symbol = "dflash_grouped_conv_t2g16"
+
+[[kernel]]
+op = "grouped_conv_quant"
+plugin = "dflash_conv"
+symbol = "dflash_grouped_conv_quant_t2g16"
+
+## The drafter's attention. Every constant is prod's, and two of them are the reason this is a port
+## rather than an instantiation of `saber_attn`: the window is SYMMETRIC (the drafter is non-causal)
+## and the cache is the reference server's FLASH layout, separate k and v tensors, which the reference's interleaved paged
+## cache cannot stand in for.
+[attn]
+## BLOCK_M and BLOCK_Q: `16 if num_queries_per_kv <= 16`, then BLOCK_M / num_queries_per_kv.
+bm = 16
+bq = 4
+## num_queries_per_kv at TP=2: 16 query heads over 4 kv heads.
+gqa = 4
+head = 128
+## THE 2D PATH READS `TILE_SIZE_PREFILL`, WHICH IS 32 AT BOTH KV WIDTHS, and this pair was derived
+## from the OTHER call. `unified_attention` computes both -- `_get_tile_size(head, window,
+## q.element_size(), is_prefill=True)` and `...=False)` -- and hands the 2D path (`max_seqlen_q >
+## 1`, which the drafter's 8 query rows always are) the PREFILL one. `_get_tile_size` returns 32
+## for `is_prefill=True` BEFORE it looks at `element_size` at all (triton_unified_attention.py
+## :796-799); the `16 if element_size >= 2 else 32` line is the decode arm, which only the 3D path
+## reads (:1077-1082) and the drafter never takes. So `tile_bf16` is 32 as well, and 16 was a
+## reading of the wrong branch. MEASURED 2026-09-21 (F24) against prod's own live call: the fp8
+## kernel at TILE 16 differs in 14,306 bytes of 983,040 and the reference forced to 16 in 14,295,
+## against 30 at TILE 32 -- so the tile is worth 477x the residual and this is not a free choice.
+## `validate` checks each attention row's SYMBOL against the tile below, so a route cannot bind a
+## `_t16` instantiation while this says 32; `dflash_attn_h128_gqa4_bf16kv_t16` stays compiled as
+## the control the fp8 number above was taken with, and nothing binds it (F25, 2026-09-21).
+tile_bf16 = 32
+tile_fp8 = 32
+## `1 + window_size[0]`, where the backend passes `(sliding_window - 1, 0)`.
+window = 2048
+## Threads per workgroup: 4 waves, and wave w owns kv head w -- so a workgroup covers all four kv
+## heads of one q block and the grid is the q-block count alone.
+block = 128
+## The KV cache's block size. Load-bearing: the kernel divides a key position by it to index the
+## block table.
+block_size = 16
+
+## The KV append and the selector's top-k.
+[kv]
+## `reshape_and_cache_flash` writes both caches in one launch; one workgroup per token row.
+block = 256
+## The selector's `torch.topk(logits, 16)` over the vocab shard: one workgroup per row, and the
+## per-thread capacity IS k, which is what makes a single pass exact.
+topk_block = 256
+topk_k = 16
+
+[[kernel]]
+op = "attn_bf16kv"
+plugin = "dflash_attn"
+symbol = "dflash_attn_h128_gqa4_bf16kv_t32"
+
+[[kernel]]
+op = "attn_fp8kv"
+plugin = "dflash_attn"
+symbol = "dflash_attn_h128_gqa4_fp8kv_t32"
+
+## THE BATCHED WALK (ws-s11). Same kernel, one more kernarg (`q_per_seq`) and one more grid
+## column: `num_seqs` sequences in ONE launch, where a batched proposal used to be `reqs` launches
+## of the row above at static per-request offsets (`5 * (reqs - 1)` captured nodes, ws-s10). The
+## one-request shape still binds the row above -- `DflashOp::attn_for` is the only chooser, and
+## the one-sequence symbols are the ones every gate in this tree byte-compared against prod's own
+## live call, so they are left alone. The tile is the same 2D `TILE_SIZE_PREFILL` and `validate`
+## checks these symbols against it too, with the `_ns` suffix allowed and nothing else.
+[[kernel]]
+op = "attn_bf16kv_ns"
+plugin = "dflash_attn"
+symbol = "dflash_attn_h128_gqa4_bf16kv_t32_ns"
+
+[[kernel]]
+op = "attn_fp8kv_ns"
+plugin = "dflash_attn"
+symbol = "dflash_attn_h128_gqa4_fp8kv_t32_ns"
+
+[[kernel]]
+op = "kv_append_bf16"
+plugin = "dflash_kv"
+symbol = "dflash_kv_append_flash_bf16"
+
+[[kernel]]
+op = "kv_append_fp8"
+plugin = "dflash_kv"
+symbol = "dflash_kv_append_flash_fp8"
+
+[[kernel]]
+op = "selector_topk"
+plugin = "dflash_topk"
+symbol = "dflash_topk_bf16_k16"
+
+## The producers the drafter's plan needed to become runnable. All are inductor-compiled Triton in
+## prod, and all are compiled here for the drafter's own geometry.
+[mlp]
+## The activation-quant group, the same GroupShape(1, 128) the convolution's variant uses.
+quant_group = 128
+## bf16 elements per thread in the quant; 32 lanes cover one group.
+vec = 4
+## Threads per workgroup in the quant: 4 waves, one group each.
+block = 128
+## Threads per workgroup in the fused conv + add + RMS: ONE workgroup owns a whole row, because the
+## variance is a reduction over the row and nothing smaller owns it.
+row_block = 256
+
+[[kernel]]
+op = "silu_quant"
+plugin = "dflash_mlp"
+symbol = "dflash_silu_quant_g128"
+
+[[kernel]]
+## The layer's two halves are two ROWS, because prod carries the residual between them as fp32
+## (`buf6 = empty_strided_cuda((s72, 5120), ..., torch.float32)`, handed to the second half as
+## `in_out_ptr0`) and rounds it to bf16 only at the region's edge, where the eager attention reads
+## it. `_open` takes bf16 in and writes fp32; `_close` takes fp32 in and writes bf16.
+op = "conv_add_rms_open"
+plugin = "dflash_mlp"
+symbol = "dflash_conv_add_rms_t2g16_open"
+
+[[kernel]]
+op = "conv_add_rms_close"
+plugin = "dflash_mlp"
+symbol = "dflash_conv_add_rms_t2g16_close"
+
+[[kernel]]
+## Layer 0's `input_layernorm` and nothing else: `qwen3_dflash2.py:164` takes the `residual is
+## None` branch once a step, so this row is selected once and the ten fused norms above never
+## reach it.
+op = "rms_norm"
+plugin = "dflash_mlp"
+symbol = "dflash_rms_norm"
+
+## The selector's path walk: one program per request, ONE WAVE, as the reference launches it
+## (`num_warps=1`). Seven sequential steps of an argmax over `selector_top_k` candidates, threading
+## the winner's index into the next step's score row.
+[walk]
+block = 32
+
+[[kernel]]
+op = "selector_walk"
+plugin = "dflash_walk"
+symbol = "dflash_selector_walk_greedy"
+
+## The CONTEXT-KV store, which is the one place on the drafter's path whose reference is a `upstream::`
+## C++ kernel rather than inductor's Triton: `precompute_and_store_context_kv`
+## (`qwen3_dflash.py:585`) calls `torch.ops._C.rms_norm` and `torch.ops._C.rotary_embedding`
+## directly and so bypasses the serve's `custom_ops: [..., "none"]` toggle. Different program,
+## different roundings, its own code object -- see `hip/dflash_ctx.hip`.
+[ctx]
+## `vectorize_read_with_alignment<W>`'s width in the norm prod launches. MEASURED: the reference's
+## code object instantiates W at 1, 2, 4, 8 and 16 and the host picks one; `dflash_ctx.hip`
+## compiles all five and only one reproduces prod's bytes, because W sets how many contiguous
+## elements one thread squares into its accumulator before the block tree sees the partial.
+vec = 8
+## THE BLOCK IS NOT `min(hidden_size, 1024)`, and the first pass of this round assumed it was.
+## A chrome trace of prod's own launches says the launcher narrows the block once there are enough
+## rows to fill the device -- the SAME kernel at the SAME hidden size took 640 threads over 8 rows
+## and 256 over 2048 -- so the block depends on the row count as well, and it had to be tabulated
+## rather than inferred. Probed at h = 5120 and h = 128 over rows 1..16384 (2026-09-21):
+##
+##   h = 5120 (640 vectors): rows 1..128 -> block 640;  rows 256..16384 -> block 256
+##   h = 128  (16 vectors):  every row count          -> block 16
+##
+## which is exactly `min(hidden/vec, rows < narrow_rows ? wide_block : narrow_block)`, with a clean
+## power-of-two step at 256 rows.
+##
+## It matters because it is arithmetic, not occupancy: while `block * vec >= hidden` each thread
+## owns ONE vector and the answer does not depend on the block at all (the gate shows the K norm
+## identical at every block from 32 to 1024). Below that line a thread CHAINS two or three vectors
+## into one accumulator, which is a different association of the same 5120 terms -- and 256 x 8 is
+## 2048, so prod's wide-row launch is in the chained regime and the narrow-row one is not.
+wide_block = 1024
+narrow_block = 256
+narrow_rows = 256
+## `dim3 block(std::min(num_heads * rot_dim / 2, 512))`; traced at 256 for the drafter's 4 kv
+## heads x 64 pairs, which is that expression exactly.
+rope_max_block = 512
+## `rms_norm_eps` from the drafter's config.json. ONE number for the model:
+## `_build_fused_kv_buffers` asserts every layer's `variance_epsilon` is equal before it fuses
+## them.
+eps = 1e-6
+## Threads per workgroup in the layout copy. It computes NOTHING -- it is
+## `permute(2, 1, 0, 3, 4).contiguous()` and nothing else -- so this is the one number in this
+## table that no rounding depends on, and it is occupancy alone. One workgroup copies one
+## `nkv * head_dim` run, which is 1024 bf16 at TP=1.
+layout_block = 256
+
+[[kernel]]
+## Both norms of the context store: the hidden norm over `[num_ctx, hidden]` at one group, and the
+## stacked K norm over `[L, num_ctx, nkv, head_dim]` against a `[L, head_dim]` weight at L groups.
+## ONE launch each -- the five per-layer K norms the plan used to declare are a single grouped
+## kernel, which is what `_normalize_context_k` exists to do.
+op = "ctx_rms_norm"
+plugin = "dflash_ctx"
+symbol = "dflash_rms_norm_grouped_w8"
+
+[[kernel]]
+## The batched rope: K only, IN PLACE, over `L * num_ctx` rows with the positions repeated per
+## layer, NEOX pairing. A second entry point and not an `attn_glue` band row, because
+## `qk_norm_rope` norms first and writes q and k to separate outputs -- and because `attn_glue` is
+## compiled `-ffp-contract=off` for its Triton reference while this one's reference contracts.
+op = "ctx_rope"
+plugin = "dflash_ctx"
+symbol = "dflash_rope_neox_k_inplace"
+
+[[kernel]]
+## The context store's LAYOUT copy. It was `Coverage::Absent` for three rounds with the note "a
+## fusion to take rather than a kernel to port", which is true of a Saber store that writes
+## layer-major from the projection and false of a CHAIN: while the projection is `bgemm_bf16`
+## writing `[num_ctx, L * 2 * kv_size]`, this copy is the only thing between it and the K norm,
+## and an absent op in a chain contributes zeros.
+op = "ctx_kv_layout"
+plugin = "dflash_ctx"
+symbol = "dflash_ctx_kv_layout"
+
+[[kernel]]
+## The int2 head's `xs`, the per-128-group fp32 column sum of its padded input. It is a KERNARG of
+## `dflash_draft_head_int2` and a launch prod makes, and the plan treated it as an input for six
+## rounds -- a chain is what asks for a producer. The reference is ATen's reduction and the ORDER
+## was read out of `ATen/native/hip/Reduce.cuh` in the serving image: one `float4` per lane summed
+## left to right, then `block_x_reduce`'s ROCm fold, which is ASCENDING (a balanced 32-lane tree)
+## and not the descending `row_shr` the rerank's own reduction needs.
+op = "head_group_sum"
+plugin = "dflash_head"
+symbol = "dflash_head_group_sum_g128"
+
+[[kernel]]
+## ... and `_pow2_at_least`'s row pad, `torch.cat([x, x.new_zeros(M - m, k)])`. Prod issues the
+## fill and the concatenation as two ATen launches; this kernel writes both halves, the same
+## absorption `dflash_draft_head_int2_m16n64g128_topk` already makes of prod's `y.fill_(-inf)`.
+op = "head_row_pad"
+plugin = "dflash_head"
+symbol = "dflash_head_row_pad_bf16"
+
+[[kernel]]
+## `x[idx]` over whole rows, at a width in BYTES: `last_hidden[sample_indices]` narrows the
+## drafter's 8 query rows to the 7 the head scores, and `input_ids[_anchor_indices]` takes the one
+## token per request the selector anchors on (`dflash2/speculator.py:196-206`). One kernel at two
+## shapes, the way `act_quant` is -- a gather has a row width and no dtype.
+op = "row_gather"
+plugin = "dflash_head"
+symbol = "dflash_row_gather"
+
+[[kernel]]
+## `bi.gather(1, bm.topk(RERANK).indices)`: the third launch of the head's selection, and the one a
+## STAGED replay cannot see because it seeds the rerank's `idx` from prod's own. The top-80's two
+## passes return POSITIONS in the block-maxima row; the exact rerank scores VOCABULARY COLUMNS, and
+## `bidx` is the map between them.
+op = "head_cand_gather"
+plugin = "dflash_head"
+symbol = "dflash_head_cand_gather"
+
+[[kernel]]
+## The int2 draft head's own selection, pass one: a radix select over the row's `(value, ~index)`
+## composites. The composite is what makes ATen's tie order a non-question here -- it is a TOTAL
+## order (value descending, index ascending, which is `sbtopk`'s own at this shape), so the
+## threshold is a single element and the gather needs no tie-break.
+op = "head_topk_thresh"
+plugin = "dflash_topk"
+symbol = "dflash_topk_f32_thresh_k80"
+
+[[kernel]]
+## ... and pass two, the gather and the rank. TWO launches, which is also ATen's own count for
+## this selection (`sbtopk::gatherTopK`, 2 launches, 98.1 us) and the count the plan declares.
+op = "head_topk_gather"
+plugin = "dflash_topk"
+symbol = "dflash_topk_f32_gather_k80"
+
+[[kernel]]
+## The blockscale GEMM's OWN activation quant, the last producer with no code object: `bf16 ->
+## e4m3` with per-128-group f32 scales, six launches a step at two shapes. The reference is
+## `QuantFP8.forward_native` -> `_quantize_group_native` (the reference server's inductor-piecewise compilation
+## leaves the custom ops OFF, so both the eager site and the compiled one take the native path),
+## which is the same function `silu_quant` above is written against -- so the same two roundings
+## apply, and `dflash_mlp.hip` carries each of them as a control.
+op = "act_quant"
+plugin = "dflash_mlp"
+symbol = "dflash_act_quant_g128"
+
+[[kernel]]
+## ... and the SAME source line reached the other way, which is a second op because `DflashRules`
+## binds one symbol per op. `aux_hidden_projection.quant` is EAGER (`combine_hidden_states` calls
+## `model.fc` outside the drafter's compiled region) and ATen's `div` by a python float is a real
+## `v_div`; `layer.{0..4}.attn.o_proj.quant` is INSIDE the region, where inductor strength-reduces
+## the constant divisor -- `tmp8 = tmp6 * 0.002232142857142857` in `_0` of prod's own generated
+## code. F26 measured the division against the EAGER `quant.*.q/s` and was right about what it
+## measured; F30 read the region and found the other half, and the two differ in 35 of 32,768
+## quantised bytes and 130 of 1,024 scales at the o_proj shape. The CHAIN gates this one: the
+## capture carries no compiled-region quant, so `compare_sites`' five o_proj rows are NOTES.
+op = "act_quant_recip"
+plugin = "dflash_mlp"
+symbol = "dflash_act_quant_g128_recip"
+
+[[kernel]]
+## The drafter's QUERY q/k norm + rope, one launch a layer. NOT an `attn_glue` band row, and the
+## reason is arithmetic: that plugin implements the TARGET's GemmaRMSNorm (`1 + w`) over ATen's
+## reduction with a rope that does not contract, and it is compiled `-ffp-contract=off` for that
+## reference. The drafter's `q_norm`/`k_norm` are the reference server's plain `RMSNorm`, its variance is Triton's
+## `tl.sum` (a 32-lane DPP ladder), its normed value is never rounded to bf16 before the rope
+## reads it, and its rope contracts. Read off prod's own `triton_per_fused_9` /
+## `triton_poi_fused_10`, which is what F28 traded a red `chain.attn.l0.q` for.
+##
+## The op id carries `_draft` because `attn_glue`'s row is called `qk_norm_rope` and the registry
+## keys implementations by OP: two rows with one id would make this kernel a candidate for the
+## TARGET's glue, which is a wrong kernel for a real shape rather than a missing one -- the same
+## failure the `QkBand` head_dim dimension was added to prevent.
+op = "qk_norm_rope_draft"
+plugin = "dflash_qk"
+symbol = "dflash_qk_norm_rope_h128"

@@ -1,0 +1,159 @@
+# The attention layer's glue: the three ops the P1 decoder block computed in torch or did not
+# model. Every value here is a config or band decision prod makes, restated as data.
+#
+# PROD'S IMPLEMENTATION OF EACH OP, which is what the gate compares against:
+#   qk_norm_rope     ATen GemmaRMSNorm (upstream.ir.ops.rms_norm NATIVE -- the compiled C++ kernel needs
+#                    weight.dtype == x.dtype and GemmaRMSNorm passes weight.float()+1) + the reference server's
+#                    `triton_mrope` Triton kernel. The reference server's own FUSED kernel for this exact fusion,
+#                    `fused_qk_rmsnorm_rope_gate`, is gated on `current_platform.is_cuda()` and so
+#                    never runs on this box.
+#   attn_gate_quant  `attn_output * torch.sigmoid(gate)` (ATen) + `scaled_fp8_quant(
+#                    use_per_token_if_dynamic=True)`, i.e. The reference server's dynamic_per_token_scaled_fp8_quant.
+#   kv_append        the reference server's `triton_reshape_and_cache_flash`, chosen by
+#                    `TritonAttentionImpl.do_kv_cache_update`, which SABERAttentionImpl inherits.
+schema_version = 1
+name = "attn_glue"
+
+# Qwen3.8-27B text_config, at TP=2 rank 0. head_dim and rotary_dim are COMPILED INTO the symbols
+# (the rope pairs and the LDS staging are sized by them), so a shape off these is a refusal, not
+# a slower path.
+[model]
+head_dim = 256
+# partial_rotary_factor 0.25 -> int(256 * 0.25). `get_rope` computes exactly this.
+rotary_dim = 64
+# rope_parameters.mrope_section, and mrope_interleaved = true. The sum must be rotary_dim / 2.
+mrope_section = [11, 11, 10]
+mrope_interleaved = true
+block_size = 16
+eps = 1e-6
+
+[qk_norm_rope]
+threads = 256
+# One launch against prod's five (two ATen norms, the cos_sin_cache[positions] gather, two chunks
+# and the Triton mrope), whichever decomposition the band below picks.
+n_launches = 1
+# The fp32 variance reduction ORDER, and it is a gated choice rather than an implementation
+# detail: torch's `mean(-1)` sums in an order of its own, and a port that sums differently agrees
+# to ~1e-7 relative -- which survives the bf16 round for almost every element, "almost" being a
+# few in 10^5. Six orders are compiled; this names the one that is bit-exact against ATen and the
+# other five stand as controls that prove the gate can tell them apart.
+#   0 serial 0..255, one accumulator     1 four accumulators striding 4, (a0+a1)+(a2+a3)
+#   2 descending pairwise tree over the head
+#   3 ATen's shape at 64 threads: one vec4 each, ((a0+a1)+a2)+a3, DESCENDING tree
+#   4 ATen's shape at 32 threads: two vec4s each, same combine and tree
+#   5 ATen's ACTUAL order: vec4, 32 threads, left-assoc combine, ADJACENT-pairing tree -- i.e. a
+#     plain 32-lane warp reduce, which needs neither LDS nor a barrier
+reduction = 5
+
+# The five losing reduction orders. They are in the code object, the metadata gate checks them,
+# and `gate_glue.sh --reduction-sweep` launches them; a map that left them out would make
+# `plugin_for` refuse a symbol the plugin demonstrably holds.
+controls = [
+  "qk_norm_rope_h256_rot64_mi1_red0", "qk_norm_rope_h256_rot64_mi0_red0",
+  "qk_norm_rope_h256_rot64_mi1_red1", "qk_norm_rope_h256_rot64_mi0_red1",
+  "qk_norm_rope_h256_rot64_mi1_red2", "qk_norm_rope_h256_rot64_mi0_red2",
+  "qk_norm_rope_h256_rot64_mi1_red3", "qk_norm_rope_h256_rot64_mi0_red3",
+  "qk_norm_rope_h256_rot64_mi1_red4", "qk_norm_rope_h256_rot64_mi0_red4",
+]
+
+# TWO DECOMPOSITIONS of the same op, bit-identical by construction (both run ATen's reduction in
+# the same 32 lanes in the same order), and which one runs is a MEASURED band on the number of
+# (token, head) pairs -- M x (nq + nkv), which is exactly how much parallelism the launch has.
+#
+#   kind = "head"  one 256-thread workgroup per pair. 32 of its 256 lanes do the reduction,
+#                  through LDS, behind three barriers. Grid [m, nq + nkv, 1].
+#   kind = "wave"  one WAVE per pair, eight per workgroup: all 256 lanes work, in eight
+#                  independent reductions, with no LDS and no barrier. Grid [ceil(pairs / 8)].
+#
+# Measured, GPU idle, medians of 30 (wave / head, so below 1.00 the wave kernel wins):
+#   pairs      14     70    112    224   1792   3584  28672  57344
+#   ratio   1.093  0.951  0.903  0.784  0.341  0.352  0.181  0.182
+# The wave kernel is 5.5x at M=2048 and starves only when there are too few pairs to fill the
+# machine: at 14 pairs it has TWO workgroups. The edge is put at 32 pairs, which keeps batch-1
+# decode -- the one case that measured faster on the per-head kernel -- where it was. Between 32
+# and ~256 pairs the two are inside the +-0.5 us absolute noise floor, so the exact edge there is
+# not load-bearing; the 2048 end is, and it is 5x.
+# `head_dim`, `rope` and `gated` are SELECTION keys, not documentation. A row is a candidate only
+# for a shape of exactly its head width, rope kind and projection layout, and the pairs ladder is
+# a ladder WITHIN one such group. Without them the ladder selected on the token count alone, so a
+# row compiled for another shape (the drafter's 128-wide plain-rope heads) would have become a
+# third rung the target could land on at a large token count -- every address still in range.
+[[qk_norm_rope.band]]
+head_dim = 256
+rope = "mrope"
+gated = true
+pairs_max = 32
+kind = "head"
+interleaved = "qk_norm_rope_h256_rot64_mi1_red5"
+chunked = "qk_norm_rope_h256_rot64_mi0_red5"
+
+[[qk_norm_rope.band]]
+head_dim = 256
+rope = "mrope"
+gated = true
+kind = "wave"
+interleaved = "qk_norm_rope_wg8_h256_rot64_mi1_red5"
+chunked = "qk_norm_rope_wg8_h256_rot64_mi0_red5"
+
+# The DRAFTER's rope, and the first row here that is not the target's. Read off
+# Qwen3.8-27B-DFlash2-FP8/config.json: head_dim 128 with no partial_rotary_factor, so rotary_dim ==
+# head_dim == 128; `rope_parameters.rope_type = "default"`, so PLAIN rather than mrope; no
+# `attn_output_gate`, so the qkv is a plain [q|k|v] and `gated = false`.
+#
+# `interleaved` and `chunked` name the SAME symbol on purpose. Those two are the mrope
+# section-layout split, and a plain rope has no sections to lay out -- every element takes position
+# row 0. Two rows pointing at one symbol would be the alternative and would imply a choice that
+# does not exist.
+[[qk_norm_rope.band]]
+head_dim = 128
+rope = "plain"
+gated = false
+kind = "head"
+interleaved = "qk_norm_rope_h128_rot128_mi0_red5"
+chunked = "qk_norm_rope_h128_rot128_mi0_red5"
+
+[attn_gate_quant]
+threads = 256
+n_launches = 1
+# NO `a_tiled_min_m` ROW, and its absence is load-bearing. This producer writes the A side the
+# A-tiled prefill GEMM reads, so one threshold or the consumer reads a layout the producer did not
+# write -- and it used to be stated here as a second copy of `rules/mxfp4_gfx1201.toml [knobs]
+# a_tiled_min_m`, pinned to it by a host test. A drift test is not a source of truth: L15 raised
+# the MXFP4 copy to 99999 to ask whether the A-tiled kernel was reached, this copy stayed at 513,
+# and the run measured a DIFFERENT layout mismatch (P6). `saber_kernels::rules::a_tiled_min_m()`
+# is the one reader now, and `GlueRules::check` REFUSES this table if the row comes back.
+tiled0 = "attn_gate_quant_t256_tiled0"
+tiled1 = "attn_gate_quant_t256_tiled1"
+
+[kv_append]
+# head_size/2 threads: each writes one packed e4m3 pair of K and one of V.
+threads = 128
+# ONE launch writes both K and V, as the reference kernel does.
+n_launches = 1
+kernel = "kv_append_h256_b16_fp8"
+# `--kv-cache-dtype fp8` in serve-mxfp4.sh:1057. The non-quantised cache would be a different
+# instantiation; there is none, so a caller asking for one is refused rather than served bf16.
+fp8 = true
+
+# ws-h38 (fusion-map row 7): `qk_norm_rope` + `kv_append` in ONE dispatch, a decode fusion
+# (`PlanOptions::fuse_rope_append`, in `with_decode_fusion`; OFF by default). One fused symbol
+# per rope decomposition and mrope layout: the rope's own impl, then the append of the SAME
+# workgroup's K rows (the grids are row-compatible -- see hip/attn_glue.hip section 4), gated
+# bit-exact against the two ops by `step-tp2 --fusion rope-append`. `kind` is the qk band row's:
+# the fused symbol follows whichever decomposition the band picks, so the fusion never moves the
+# rope onto another decomposition. `control` is the interleaved symbol with the V half never
+# written, the gate's decisive negative control (`--fusion-control rope-append-drop`).
+[[rope_append]]
+kind = "head"
+interleaved = "qk_rope_append_h256_rot64_mi1_red5_b16_fp8"
+chunked = "qk_rope_append_h256_rot64_mi0_red5_b16_fp8"
+control = "qk_rope_append_h256_rot64_mi1_red5_b16_fp8_dropv"
+
+[[rope_append]]
+kind = "wave"
+interleaved = "qk_rope_append_wg8_h256_rot64_mi1_red5_b16_fp8"
+chunked = "qk_rope_append_wg8_h256_rot64_mi0_red5_b16_fp8"
+control = "qk_rope_append_wg8_h256_rot64_mi1_red5_b16_fp8_dropv"
+
+# No workspaces: every buffer these three ops touch is caller-owned. The paged KV cache in
+# particular is the model's, not a scratch arena -- the same rule the GDN state follows.

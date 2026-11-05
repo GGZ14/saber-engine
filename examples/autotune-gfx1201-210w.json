@@ -1,0 +1,3371 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "key": {
+        "op": "kv_append",
+        "shape": {
+          "batch": 1,
+          "block_size": 16,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 8192,
+          "n": 12,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "kv_append",
+        "variant": {
+          "variant_id": 2117451008,
+          "params": {}
+        },
+        "measured_us": 150.1220017671585,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_decode_paged",
+        "shape": {
+          "batch": 2,
+          "block_size": 16,
+          "causal": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 10,
+          "max_ctx": 8192,
+          "n": 12,
+          "q_dtype": "bf16",
+          "q_len": 5,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "attn_decode_h256_gqa6_fp8kv",
+        "variant": {
+          "variant_id": 2571279920,
+          "params": {
+            "nw": 4,
+            "splits": 32
+          }
+        },
+        "measured_us": 58.40050056576729,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "attn_decode_h256_gqa6_fp8kv",
+          "variant_id": 2671945634,
+          "measured_us": 62.44000047445297
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 4,
+          "k": 5120,
+          "m": 20,
+          "n": 48,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 3890463871,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 2,
+            "wperm": 1
+          }
+        },
+        "measured_us": 19.739999435842037,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2194529650,
+          "measured_us": 23.04000034928322
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 2,
+          "k": 5120,
+          "m": 10,
+          "n": 17408,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 1624805305,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 1,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 96.12100198864937,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 3473348428,
+          "measured_us": 106.4009964466095
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_gate_quant",
+        "shape": {
+          "batch": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 8192,
+          "n": 12,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "attn_gate_quant",
+        "variant": {
+          "variant_id": 3216840982,
+          "params": {
+            "block": 256,
+            "tiled": 1
+          }
+        },
+        "measured_us": 567.4039721488953,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 2,
+          "k": 5120,
+          "m": 10,
+          "n": 124160,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 1624805305,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 1,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 634.1650187969208,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 3473348428,
+          "measured_us": 637.444019317627
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 8,
+          "k": 5120,
+          "m": 40,
+          "n": 8192,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2154028420,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 3,
+            "wperm": 1
+          }
+        },
+        "measured_us": 63.56000155210495,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 115.92049896717072
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "qk_norm_rope",
+        "shape": {
+          "batch": 8,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 40,
+          "max_ctx": 8192,
+          "n": 12,
+          "rotary_dim": 64,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "qk_norm_rope",
+        "variant": {
+          "variant_id": 1694804669,
+          "params": {}
+        },
+        "measured_us": 13.159999623894691,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "kv_append",
+        "shape": {
+          "batch": 1,
+          "block_size": 16,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 5,
+          "n": 12,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "kv_append",
+        "variant": {
+          "variant_id": 2117451008,
+          "params": {}
+        },
+        "measured_us": 9.08000022172928,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_conv_prep",
+        "shape": {
+          "batch": 1,
+          "chunk": 64,
+          "conv_width": 4,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 8192,
+          "n": 24,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_conv_prep_w4_h128_bf16",
+        "variant": {
+          "variant_id": 72789082,
+          "params": {
+            "hpb": 8
+          }
+        },
+        "measured_us": 435.602992773056,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gdn_conv_prep_w4_h128_bf16",
+          "variant_id": 2857499206,
+          "measured_us": 451.9229978322983
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 4,
+          "k": 8704,
+          "m": 20,
+          "n": 5120,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 3890463871,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 2,
+            "wperm": 1
+          }
+        },
+        "measured_us": 60.440998524427414,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2194529650,
+          "measured_us": 63.60100209712982
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 5120,
+          "m": 2048,
+          "n": 48,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 315066468,
+          "params": {
+            "lbk": 128,
+            "tn": 2,
+            "wperm": 1
+          }
+        },
+        "measured_us": 74.72000271081924,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 85.32099798321724
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 5120,
+          "m": 2048,
+          "n": 17408,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 1996.7359900474548,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 2132.296562194824
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_gate_quant",
+        "shape": {
+          "batch": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 2048,
+          "n": 12,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "attn_gate_quant",
+        "variant": {
+          "variant_id": 3216840982,
+          "params": {
+            "block": 256,
+            "tiled": 1
+          }
+        },
+        "measured_us": 161.92099452018738,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "kv_append",
+        "shape": {
+          "batch": 4,
+          "block_size": 16,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 20,
+          "n": 12,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "kv_append",
+        "variant": {
+          "variant_id": 2117451008,
+          "params": {}
+        },
+        "measured_us": 9.159999899566174,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "kv_append",
+        "shape": {
+          "batch": 1,
+          "block_size": 16,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 2048,
+          "n": 12,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "kv_append",
+        "variant": {
+          "variant_id": 2117451008,
+          "params": {}
+        },
+        "measured_us": 38.15999999642372,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_chunk_scan",
+        "shape": {
+          "batch": 1,
+          "chunk": 64,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 2048,
+          "n": 24,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_chunk_scan_k128_v128_c64_bf16",
+        "variant": {
+          "variant_id": 4181476546,
+          "params": {}
+        },
+        "measured_us": 159.88099575042725,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 1,
+          "k": 5120,
+          "m": 5,
+          "n": 48,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2886347448,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 16.660500317811966,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2364875477,
+          "measured_us": 20.400000736117363
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 4,
+          "k": 5120,
+          "m": 20,
+          "n": 17408,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2735883750,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 1,
+            "tm": 2,
+            "wperm": 1
+          }
+        },
+        "measured_us": 99.30099919438362,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 231749891,
+          "measured_us": 111.6809993982315
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 5120,
+          "m": 8192,
+          "n": 7168,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 3247.765064239502,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 3422.626495361328
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_kkt_solve",
+        "shape": {
+          "batch": 1,
+          "chunk": 64,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 8192,
+          "n": 24,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_kkt_solve_k128_c64_bf16",
+        "variant": {
+          "variant_id": 2349448659,
+          "params": {}
+        },
+        "measured_us": 208.20200443267825,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_gate_quant",
+        "shape": {
+          "batch": 8,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 40,
+          "n": 12,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "attn_gate_quant",
+        "variant": {
+          "variant_id": 3233618601,
+          "params": {
+            "block": 256,
+            "tiled": 0
+          }
+        },
+        "measured_us": 13.801000081002712,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 2,
+          "k": 5120,
+          "m": 10,
+          "n": 7168,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 1096161186,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 47.47999832034111,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 103.94099727272987
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 8,
+          "k": 5120,
+          "m": 40,
+          "n": 124160,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2910690767,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 1,
+            "tm": 3,
+            "wperm": 1
+          }
+        },
+        "measured_us": 667.805016040802,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2113056362,
+          "measured_us": 676.0450005531311
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_conv_update",
+        "shape": {
+          "batch": 4,
+          "conv_width": 4,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 20,
+          "n": 24,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_conv_update_w4_h128_bf16",
+        "variant": {
+          "variant_id": 1525912698,
+          "params": {
+            "hpb": 1,
+            "vs": 1
+          }
+        },
+        "measured_us": 87.48099952936172,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gdn_conv_update_w4_h128_bf16",
+          "variant_id": 1509135079,
+          "measured_us": 87.60100230574608
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 8,
+          "k": 3072,
+          "m": 40,
+          "n": 5120,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2154028420,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 3,
+            "wperm": 1
+          }
+        },
+        "measured_us": 35.440001636743546,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 61.5410003811121
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "qk_norm_rope",
+        "shape": {
+          "batch": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 8192,
+          "max_ctx": 8192,
+          "n": 12,
+          "rotary_dim": 64,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "qk_norm_rope",
+        "variant": {
+          "variant_id": 1694804669,
+          "params": {}
+        },
+        "measured_us": 399.8430073261261,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_prefill_paged",
+        "shape": {
+          "batch": 1,
+          "block_size": 16,
+          "causal": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 2048,
+          "max_ctx": 8192,
+          "n": 12,
+          "q_dtype": "bf16",
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "attn_prefill_h256_gqa6_fp8kv",
+        "variant": {
+          "variant_id": 350940227,
+          "params": {
+            "fp8_mode": 3
+          }
+        },
+        "measured_us": 292.5629913806915,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "attn_prefill_h256_gqa6_fp8kv",
+          "variant_id": 974912537,
+          "measured_us": 368.0429905653
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_gated_rmsnorm",
+        "shape": {
+          "batch": 1,
+          "channels": 128,
+          "k": 128,
+          "m": 2048,
+          "n": 24,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_gated_rmsnorm_h128_bf16",
+        "variant": {
+          "variant_id": 1429071594,
+          "params": {
+            "act": 0
+          }
+        },
+        "measured_us": 112.00100183486938,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 5120,
+          "m": 8192,
+          "n": 48,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 315066468,
+          "params": {
+            "lbk": 128,
+            "tn": 2,
+            "wperm": 1
+          }
+        },
+        "measured_us": 165.16199707984924,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2155877831,
+          "measured_us": 177.74099856615067
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 4,
+          "k": 5120,
+          "m": 20,
+          "n": 124160,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2735883750,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 1,
+            "tm": 2,
+            "wperm": 1
+          }
+        },
+        "measured_us": 638.8449966907501,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 231749891,
+          "measured_us": 649.9649882316589
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 8,
+          "k": 8704,
+          "m": 40,
+          "n": 5120,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2154028420,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 3,
+            "wperm": 1
+          }
+        },
+        "measured_us": 66.12099707126617,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 148.72099459171295
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_conv_update",
+        "shape": {
+          "batch": 8,
+          "conv_width": 4,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 40,
+          "n": 24,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_conv_update_w4_h128_bf16",
+        "variant": {
+          "variant_id": 1525912698,
+          "params": {
+            "hpb": 1,
+            "vs": 1
+          }
+        },
+        "measured_us": 157.3210060596466,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gdn_conv_update_w4_h128_bf16",
+          "variant_id": 1266343789,
+          "measured_us": 157.82099962234497
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_decode_paged",
+        "shape": {
+          "batch": 4,
+          "block_size": 16,
+          "causal": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 20,
+          "max_ctx": 8192,
+          "n": 12,
+          "q_dtype": "bf16",
+          "q_len": 5,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "attn_decode_h256_gqa6_fp8kv",
+        "variant": {
+          "variant_id": 2671945634,
+          "params": {
+            "nw": 2,
+            "splits": 16
+          }
+        },
+        "measured_us": 75.03999769687653,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "attn_decode_h256_gqa6_fp8kv",
+          "variant_id": 2571279920,
+          "measured_us": 74.22100007534027
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 5120,
+          "m": 2048,
+          "n": 8192,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 934.7670078277588,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 994.0474927425385
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "kv_append",
+        "shape": {
+          "batch": 2,
+          "block_size": 16,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 10,
+          "n": 12,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "kv_append",
+        "variant": {
+          "variant_id": 2117451008,
+          "params": {}
+        },
+        "measured_us": 9.159999899566174,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 8704,
+          "m": 8192,
+          "n": 5120,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 3920.7500219345093,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 4100.612163543701
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 4,
+          "k": 5120,
+          "m": 20,
+          "n": 7168,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2135705157,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 2,
+            "wperm": 1
+          }
+        },
+        "measured_us": 51.32000148296356,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 108.88100042939186
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_gate_quant",
+        "shape": {
+          "batch": 4,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 20,
+          "n": 12,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "attn_gate_quant",
+        "variant": {
+          "variant_id": 3233618601,
+          "params": {
+            "block": 256,
+            "tiled": 0
+          }
+        },
+        "measured_us": 11.839999817311764,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 3072,
+          "m": 2048,
+          "n": 5120,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 273.72249960899353,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 277.2424966096878
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_gate_quant",
+        "shape": {
+          "batch": 2,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 10,
+          "n": 12,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "attn_gate_quant",
+        "variant": {
+          "variant_id": 3233618601,
+          "params": {
+            "block": 256,
+            "tiled": 0
+          }
+        },
+        "measured_us": 10.879999957978724,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_chunk_scan",
+        "shape": {
+          "batch": 1,
+          "chunk": 64,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 8192,
+          "n": 24,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_chunk_scan_k128_v128_c64_bf16",
+        "variant": {
+          "variant_id": 4181476546,
+          "params": {}
+        },
+        "measured_us": 528.2840132713318,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "allreduce",
+        "shape": {
+          "batch": 2,
+          "dtype": "bf16",
+          "exact": 1,
+          "k": 5120,
+          "m": 10,
+          "n": 5120,
+          "numel": 5120,
+          "spec_width": 5,
+          "world_size": 2
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "ar_oneshot_2rank_exact",
+        "variant": {
+          "variant_id": 3930946817,
+          "params": {
+            "n_launches": 1
+          }
+        },
+        "measured_us": 10.11,
+        "samples_kept": 20,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber tune via ar-gate (2 ranks) (12 warm-up + 20 timed round(s), 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_conv_prep",
+        "shape": {
+          "batch": 1,
+          "chunk": 64,
+          "conv_width": 4,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 2048,
+          "n": 24,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_conv_prep_w4_h128_bf16",
+        "variant": {
+          "variant_id": 72789082,
+          "params": {
+            "hpb": 8
+          }
+        },
+        "measured_us": 140.82149416208267,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gdn_conv_prep_w4_h128_bf16",
+          "variant_id": 2857499206,
+          "measured_us": 143.3809995651245
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 3072,
+          "m": 8192,
+          "n": 5120,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 1241.4094805717468,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 1306.1699867248535
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 1,
+          "k": 5120,
+          "m": 5,
+          "n": 8192,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 1096161186,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 51.32000148296356,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 115.18099904060364
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "allreduce",
+        "shape": {
+          "batch": 1,
+          "dtype": "bf16",
+          "exact": 1,
+          "k": 5120,
+          "m": 5,
+          "n": 5120,
+          "numel": 5120,
+          "spec_width": 5,
+          "world_size": 2
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "ar_oneshot_2rank_exact",
+        "variant": {
+          "variant_id": 3930946817,
+          "params": {
+            "n_launches": 1
+          }
+        },
+        "measured_us": 7.842,
+        "samples_kept": 20,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber tune via ar-gate (2 ranks) (12 warm-up + 20 timed round(s), 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "qk_norm_rope",
+        "shape": {
+          "batch": 4,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 20,
+          "max_ctx": 8192,
+          "n": 12,
+          "rotary_dim": 64,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "qk_norm_rope",
+        "variant": {
+          "variant_id": 1694804669,
+          "params": {}
+        },
+        "measured_us": 11.799999512732027,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 2,
+          "k": 3072,
+          "m": 10,
+          "n": 5120,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2886347448,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 27.619999833405018,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2364875477,
+          "measured_us": 30.880000442266464
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 4,
+          "k": 5120,
+          "m": 20,
+          "n": 8192,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2135705157,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 2,
+            "wperm": 1
+          }
+        },
+        "measured_us": 56.040000170469284,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 112.28099837899208
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_decode_paged",
+        "shape": {
+          "batch": 1,
+          "block_size": 16,
+          "causal": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 5,
+          "max_ctx": 8192,
+          "n": 12,
+          "q_dtype": "bf16",
+          "q_len": 5,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "attn_decode_h256_gqa6_fp8kv",
+        "variant": {
+          "variant_id": 2571279920,
+          "params": {
+            "nw": 4,
+            "splits": 64
+          }
+        },
+        "measured_us": 56.46049976348877,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "attn_decode_h256_gqa6_fp8kv",
+          "variant_id": 2671945634,
+          "measured_us": 61.8010014295578
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "qk_norm_rope",
+        "shape": {
+          "batch": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 5,
+          "max_ctx": 8192,
+          "n": 12,
+          "rotary_dim": 64,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "qk_norm_rope",
+        "variant": {
+          "variant_id": 1694804669,
+          "params": {}
+        },
+        "measured_us": 10.639999993145466,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 1,
+          "k": 5120,
+          "m": 5,
+          "n": 124160,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 1624805305,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 1,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 630.2245259284973,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 3473348428,
+          "measured_us": 632.6050162315369
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "qk_norm_rope",
+        "shape": {
+          "batch": 2,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 10,
+          "max_ctx": 8192,
+          "n": 12,
+          "rotary_dim": 64,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "qk_norm_rope",
+        "variant": {
+          "variant_id": 1694804669,
+          "params": {}
+        },
+        "measured_us": 10.759999975562096,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_conv_update",
+        "shape": {
+          "batch": 2,
+          "conv_width": 4,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 10,
+          "n": 24,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_conv_update_w4_h128_bf16",
+        "variant": {
+          "variant_id": 1509135079,
+          "params": {
+            "hpb": 1,
+            "vs": 2
+          }
+        },
+        "measured_us": 54.02099899947643,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gdn_conv_update_w4_h128_bf16",
+          "variant_id": 1525912698,
+          "measured_us": 53.961001336574554
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 5120,
+          "m": 8192,
+          "n": 17408,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 7855.940103530884,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 8523.285388946533
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_prefill_paged",
+        "shape": {
+          "batch": 1,
+          "block_size": 16,
+          "causal": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 8192,
+          "max_ctx": 8192,
+          "n": 12,
+          "q_dtype": "bf16",
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "attn_prefill_h256_gqa6_fp8kv",
+        "variant": {
+          "variant_id": 350940227,
+          "params": {
+            "fp8_mode": 3
+          }
+        },
+        "measured_us": 3035.0825786590576,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "attn_prefill_h256_gqa6_fp8kv",
+          "variant_id": 974912537,
+          "measured_us": 3939.329504966736
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 1,
+          "k": 5120,
+          "m": 5,
+          "n": 17408,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 1624805305,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 1,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 95.74100002646446,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 3473348428,
+          "measured_us": 106.24100267887115
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 8704,
+          "m": 2048,
+          "n": 5120,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 950.4870176315308,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 1021.0274457931519
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 2,
+          "k": 5120,
+          "m": 10,
+          "n": 48,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2886347448,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 17.319999635219574,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2364875477,
+          "measured_us": 21.12000063061714
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 5120,
+          "m": 8192,
+          "n": 8192,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 3736.450433731079,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 3941.0539865493774
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 1,
+          "k": 3072,
+          "m": 5,
+          "n": 5120,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2886347448,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 26.119999587535858,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2364875477,
+          "measured_us": 29.680000618100166
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 1,
+          "k": 5120,
+          "m": 1,
+          "n": 124160,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 1624805305,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 1,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 623.9655017852783,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 3473348428,
+          "measured_us": 628.5250186920166
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))",
+          "tie_broken_by": "reference_launcher"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "kv_append",
+        "shape": {
+          "batch": 8,
+          "block_size": 16,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 40,
+          "n": 12,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "kv_append",
+        "variant": {
+          "variant_id": 2117451008,
+          "params": {}
+        },
+        "measured_us": 9.359999559819698,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_kkt_solve",
+        "shape": {
+          "batch": 1,
+          "chunk": 64,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 2048,
+          "n": 24,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_kkt_solve_k128_c64_bf16",
+        "variant": {
+          "variant_id": 2349448659,
+          "params": {}
+        },
+        "measured_us": 43.12000051140785,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_fused_update",
+        "shape": {
+          "batch": 1,
+          "conv_width": 4,
+          "head_k": 128,
+          "head_v": 128,
+          "k": 128,
+          "m": 5,
+          "n": 24,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_fused_update_w4k128v128_bf16",
+        "variant": {
+          "variant_id": 2536592675,
+          "params": {}
+        },
+        "measured_us": 38.15999999642372,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 8,
+          "k": 5120,
+          "m": 40,
+          "n": 7168,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2154028420,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 3,
+            "wperm": 1
+          }
+        },
+        "measured_us": 58.60000103712082,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 112.9009984433651
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "allreduce",
+        "shape": {
+          "batch": 8,
+          "bits": 6,
+          "dtype": "bf16",
+          "exact": 0,
+          "k": 5120,
+          "m": 40,
+          "n": 5120,
+          "numel": 5120,
+          "spec_width": 5,
+          "world_size": 2
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "ar_oneshot_2rank_wht6",
+        "variant": {
+          "variant_id": 116391,
+          "params": {
+            "n_launches": 1
+          }
+        },
+        "measured_us": 23.772,
+        "samples_kept": 20,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber tune via ar-gate (2 ranks) (12 warm-up + 20 timed round(s), 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 1,
+          "k": 5120,
+          "m": 5,
+          "n": 7168,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 1096161186,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 46.76000028848648,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 113.50049823522568
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "qk_norm_rope",
+        "shape": {
+          "batch": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 2048,
+          "max_ctx": 8192,
+          "n": 12,
+          "rotary_dim": 64,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "qk_norm_rope",
+        "variant": {
+          "variant_id": 1694804669,
+          "params": {}
+        },
+        "measured_us": 126.64100527763368,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 1,
+          "k": 8704,
+          "m": 5,
+          "n": 5120,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2886347448,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 54.58049848675728,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2364875477,
+          "measured_us": 58.32099914550781
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "allreduce",
+        "shape": {
+          "batch": 1,
+          "bits": 6,
+          "dtype": "bf16",
+          "exact": 0,
+          "k": 5120,
+          "m": 8192,
+          "n": 5120,
+          "numel": 5120,
+          "spec_width": 0,
+          "world_size": 2
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "ar_oneshot_2rank_wht6",
+        "variant": {
+          "variant_id": 116391,
+          "params": {
+            "n_launches": 1
+          }
+        },
+        "measured_us": 1391.418,
+        "samples_kept": 20,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber tune via ar-gate (2 ranks) (12 warm-up + 20 timed round(s), 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "a_tiled",
+          "batch": 1,
+          "k": 5120,
+          "m": 2048,
+          "n": 7168,
+          "spec_width": 0,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_atiled",
+        "variant": {
+          "variant_id": 2155877831,
+          "params": {
+            "lbk": 64,
+            "saddr": 1,
+            "tn": 4,
+            "wm": 8,
+            "wperm": 1,
+            "wpipe": 1
+          }
+        },
+        "measured_us": 810.2664947509766,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_atiled",
+          "variant_id": 2545187843,
+          "measured_us": 860.4264855384827
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_decode_paged",
+        "shape": {
+          "batch": 8,
+          "block_size": 16,
+          "causal": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "kv_dtype": "fp8_e4m3",
+          "m": 40,
+          "max_ctx": 8192,
+          "n": 12,
+          "q_dtype": "bf16",
+          "q_len": 5,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "attn_decode_h256_gqa6_fp8kv",
+        "variant": {
+          "variant_id": 2671945634,
+          "params": {
+            "nw": 2,
+            "splits": 16
+          }
+        },
+        "measured_us": 90.43999761343002,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "attn_decode_h256_gqa6_fp8kv",
+          "variant_id": 2571279920,
+          "measured_us": 124.62100014090538
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "allreduce",
+        "shape": {
+          "batch": 4,
+          "bits": 6,
+          "dtype": "bf16",
+          "exact": 0,
+          "k": 5120,
+          "m": 20,
+          "n": 5120,
+          "numel": 5120,
+          "spec_width": 5,
+          "world_size": 2
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "ar_oneshot_2rank_wht6",
+        "variant": {
+          "variant_id": 116391,
+          "params": {
+            "n_launches": 1
+          }
+        },
+        "measured_us": 25.5,
+        "samples_kept": 20,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber tune via ar-gate (2 ranks) (12 warm-up + 20 timed round(s), 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 2,
+          "k": 8704,
+          "m": 10,
+          "n": 5120,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2886347448,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 55.80099858343601,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2364875477,
+          "measured_us": 59.44100022315979
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 8,
+          "k": 5120,
+          "m": 40,
+          "n": 17408,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2910690767,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 1,
+            "tm": 3,
+            "wperm": 1
+          }
+        },
+        "measured_us": 103.32049801945686,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2113056362,
+          "measured_us": 114.80099707841873
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "attn_gate_quant",
+        "shape": {
+          "batch": 1,
+          "gqa": 6,
+          "head_dim": 256,
+          "k": 256,
+          "m": 5,
+          "n": 12,
+          "spec_width": 5
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "d96203965bdbcdb878c7c1e9bc5cec9da024927074e504defc7453c6bdd61125"
+      },
+      "record": {
+        "impl_name": "attn_gate_quant",
+        "variant": {
+          "variant_id": 3233618601,
+          "params": {
+            "block": 256,
+            "tiled": 0
+          }
+        },
+        "measured_us": 10.56000031530857,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 2,
+          "k": 5120,
+          "m": 10,
+          "n": 8192,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 1096161186,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 2,
+            "tm": 1,
+            "wperm": 1
+          }
+        },
+        "measured_us": 52.20000073313713,
+        "samples_kept": 19,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_folded",
+          "variant_id": 1704097558,
+          "measured_us": 106.02100193500519
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 4,
+          "k": 3072,
+          "m": 20,
+          "n": 5120,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 3890463871,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 2,
+            "wperm": 1
+          }
+        },
+        "measured_us": 32.07999840378761,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 2194529650,
+          "measured_us": 33.92000123858452
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gdn_gated_rmsnorm",
+        "shape": {
+          "batch": 1,
+          "channels": 128,
+          "k": 128,
+          "m": 8192,
+          "n": 24,
+          "spec_width": 0
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "gdn_gated_rmsnorm_h128_bf16",
+        "variant": {
+          "variant_id": 1429071594,
+          "params": {
+            "act": 0
+          }
+        },
+        "measured_us": 355.68198561668396,
+        "samples_kept": 19,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "allreduce",
+        "shape": {
+          "batch": 1,
+          "bits": 6,
+          "dtype": "bf16",
+          "exact": 0,
+          "k": 5120,
+          "m": 2048,
+          "n": 5120,
+          "numel": 5120,
+          "spec_width": 0,
+          "world_size": 2
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "67167d34317fed9c5a18aae187679174ef7cb13c4df1a6247975051718b292d6"
+      },
+      "record": {
+        "impl_name": "ar_oneshot_2rank_wht6",
+        "variant": {
+          "variant_id": 116391,
+          "params": {
+            "n_launches": 1
+          }
+        },
+        "measured_us": 398.087,
+        "samples_kept": 20,
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber tune via ar-gate (2 ranks) (12 warm-up + 20 timed round(s), 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    },
+    {
+      "key": {
+        "op": "gemm_w4a8",
+        "shape": {
+          "a_dtype": "int8",
+          "a_layout": "row_major",
+          "batch": 8,
+          "k": 5120,
+          "m": 40,
+          "n": 48,
+          "spec_width": 5,
+          "w_dtype": "mxfp4"
+        },
+        "power_cap_w": 210,
+        "plan_hash": "1a18ef4b74e656f29dfe705521d9fd90627d0db43342ff712f1cb6db9fe8b5fb",
+        "plugin_build_hash": "e1ea326eb56c5e439ca98ba641ee65aeb6fbc363931377dd360218ccb86e94c3",
+        "policy_digest": "3419480fb3d5e3b0156be39dc74e38924a79c9a685602eea9a7565b0363e643a"
+      },
+      "record": {
+        "impl_name": "gemm_w4a8_mxfp4_decode",
+        "variant": {
+          "variant_id": 2315161622,
+          "params": {
+            "bk": 128,
+            "nt": 1,
+            "split_k": 4,
+            "tm": 3,
+            "wperm": 1
+          }
+        },
+        "measured_us": 24.22000002115965,
+        "samples_kept": 20,
+        "runner_up": {
+          "impl_name": "gemm_w4a8_mxfp4_decode",
+          "variant_id": 359803851,
+          "measured_us": 26.599999517202377
+        },
+        "provenance": {
+          "who": "saber tune",
+          "when": "2026-09-24",
+          "harness": "saber-tune v0 interleaved hipEvent (5 warm-up + 20 interleaved samples, IC-cold, 210 W, GPU state NOT CHECKED (--no-prod-check))"
+        }
+      }
+    }
+  ]
+}

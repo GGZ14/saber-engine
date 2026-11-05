@@ -1,0 +1,321 @@
+schema_version = 1
+plugin = "saber_attn_ragged"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/saber_attn_ragged.hip"
+source_sha256 = "c73e7574d1ccde8dca76f9c911b1d1b3138706c26d84b90a3a2f2015e35d7d26"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "ddd01cb16eb2a69f937cb4aa99d6ff7568d5aa5f7832358355a3142454a49941"
+hsaco = "saber_attn_ragged.hsaco"
+hsaco_sha256 = "138a49d887476ac459ae12023ce8f95568e19ac5f7757dda991d2a342de086a4"
+
+[[kernel]]
+name = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw1"
+symbol = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw1.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 250
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel]]
+name = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw2"
+symbol = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw2.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 255
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel]]
+name = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw3"
+symbol = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw3.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 116
+vgpr_count = 256
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 96
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel]]
+name = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw4"
+symbol = "saber_attn_decode_ragged_h256_gqa6_bf16kv_nw4.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 252
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel]]
+name = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw1"
+symbol = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw1.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 246
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel]]
+name = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw2"
+symbol = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw2.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 250
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel]]
+name = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw3"
+symbol = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw3.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 16
+vgpr_count = 256
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 96
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel]]
+name = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw4"
+symbol = "saber_attn_decode_ragged_h256_gqa6_fp8kv_nw4.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 255
+sgpr_count = 38
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel]]
+name = "saber_attn_splitkv_combine_ragged_h256_pf0"
+symbol = "saber_attn_splitkv_combine_ragged_h256_pf0.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 1024
+private_segment_fixed_size = 0
+vgpr_count = 41
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 140
+size = 4
+value_kind = "by_value"
+name = "tile"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"
+
+[[kernel]]
+name = "saber_attn_splitkv_combine_ragged_h256_pf1"
+symbol = "saber_attn_splitkv_combine_ragged_h256_pf1.kd"
+kernarg_segment_size = 152
+kernarg_segment_align = 8
+group_segment_fixed_size = 1024
+private_segment_fixed_size = 0
+vgpr_count = 26
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 140
+size = 4
+value_kind = "by_value"
+name = "tile"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "cu_q"

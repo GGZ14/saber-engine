@@ -1,0 +1,21 @@
+[package]
+name = "saber-hip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+libloading.workspace = true
+thiserror.workspace = true
+libc.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+saber-test-scratch = { path = "../saber-test-scratch" }
+
+[features]
+# Lets a downstream crate's tests build a `PinnedBuf` over leaked host memory, so the staging-ring
+# code paths run on a machine with no ROCm -- which is this host. Never enabled for a real build:
+# the buffer it produces is not page-locked and is not registered with any HIP runtime.
+test-util = []

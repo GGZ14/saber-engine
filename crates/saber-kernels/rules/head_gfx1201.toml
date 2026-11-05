@@ -1,0 +1,77 @@
+## The head plugin's launch rules for gfx1201, as DATA.
+##
+## Three kernels at the ends of a forward pass: the vocab-parallel embedding lookup, the row
+## selection before `lm_head`, and greedy sampling. Prod has none of them AS KERNELS -- they are
+## `index_select`, `index_select` and `torch.argmax` inside the reference server -- so there is no reference
+## launcher to port and no tile ladder to copy. What there IS to state as data, and what is here,
+## is the geometry: one workgroup per output row, and the width of that workgroup.
+##
+## `block` is 256 for all three and that number is load-bearing in exactly one of them: the argmax
+## reduces in LDS over `ARGMAX_T` entries and the kernel is compiled for 256, so a rules file that
+## said anything else would launch a kernel whose shared arrays are the wrong size. `head::resolve`
+## refuses the mismatch rather than trusting this file.
+
+schema_version = 1
+name = "head-gfx1201"
+
+[knobs]
+## One workgroup per output row, this wide. The argmax kernel's LDS arrays are compiled for it.
+block = 256
+## Elements per 16-byte group in the two copy kernels. A width that is not a multiple of this
+## still runs (the kernels carry a scalar tail) -- what `resolve` refuses is a width of zero.
+vector = 8
+## The largest row count a single launch will be asked for. Not a hardware limit: a grid larger
+## than this means the caller's shape is wrong (the model's longest prefill chunk is 8192 rows),
+## and a silent 2-billion-workgroup launch is not a diagnosis.
+max_rows = 65536
+## The sampler's seam (`saber_device_row_bf16`), which has its own width because its LDS is its
+## own: eight per-wave 256-bin histograms and a 256-entry reduction array.
+device_row_block = 256
+## Candidates the seam carries per row. `DeviceRow` on the host reads exactly this many, and
+## `saber_serve::sampler` REFUSES a row whose truncation is not narrower than it rather than
+## sampling from a distribution the device did not send.
+device_row_k = 64
+## The longest penalty-id list one row may gather. Prod's defaults carry no penalties at all, so
+## this binds only on a request that sends one; a longer list is refused by name and the row is
+## read densely instead.
+device_row_penalty_max = 256
+
+[[kernel]]
+op = "embedding"
+symbol = "saber_embed_bf16"
+
+[[kernel]]
+op = "row_gather"
+symbol = "saber_row_gather_bf16"
+
+[[kernel]]
+op = "argmax"
+symbol = "saber_argmax_bf16"
+
+[[kernel]]
+op = "device_row"
+symbol = "saber_device_row_bf16"
+
+## The DFlash2 aux tap: `rows x hidden` bf16 into a column block of a `rows x 5 x hidden`
+## concatenation. Same geometry as `row_gather` and a DIFFERENT destination law -- the gather packs
+## selected rows together, this writes row `r` at `r * dst_stride` -- so it is its own op and its
+## own symbol rather than a flag on that one.
+[[kernel]]
+op = "row_copy"
+symbol = "saber_row_copy_bf16"
+
+## The one launch of the drafter's captured proposal that prod does not make: the selector's
+## candidate ids widened from the i32 `dflash_topk_bf16_k16` writes to the i64 `selector_score` and
+## `selector_walk` read. Declared and counted here rather than hidden inside another op, because it
+## goes away the day the selection writes i64.
+[[kernel]]
+op = "widen_i64"
+symbol = "saber_widen_i32_i64"
+
+## The bf16 head's final norm (workstream N2): `model.norm` when `lm_head` is a bf16 GEMM and not a
+## W4A8 one -- the residual add and Gemma RMS norm of `add_rms_quant`, with the bf16 row as the
+## output instead of an e4m3 quant of it. Only the bf16-head graph (`Graph::with_bf16_head`) plans
+## it; the default MXFP4 head never asks.
+[[kernel]]
+op = "add_rms_bf16"
+symbol = "saber_add_rms_bf16"

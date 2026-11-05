@@ -1,0 +1,123 @@
+schema_version = 1
+plugin = "flashnext_attn_kv8"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_attn_kv8.hip"
+source_sha256 = "745899f278b311c4100f7e4610dfb88e83351a5aa01eeaa147c6e73aa113a259"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "7133c5b372051d8b070c709076c7245fe48327f9b84025174ee6747d6aadfa2b"
+hsaco = "flashnext_attn_kv8.hsaco"
+hsaco_sha256 = "32f0425c96d8fd834f1ca7aabea2830f2666d5164d06d2d7888ba04f659d5561"
+
+[[kernel]]
+name = "fn_attn_decode_h256_gqa12_fp8kv_nw1"
+symbol = "fn_attn_decode_h256_gqa12_fp8kv_nw1.kd"
+kernarg_segment_size = 140
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 246
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel]]
+name = "fn_attn_decode_h256_gqa12_fp8kv_nw2"
+symbol = "fn_attn_decode_h256_gqa12_fp8kv_nw2.kd"
+kernarg_segment_size = 140
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 250
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel]]
+name = "fn_attn_decode_h256_gqa12_fp8kv_nw3"
+symbol = "fn_attn_decode_h256_gqa12_fp8kv_nw3.kd"
+kernarg_segment_size = 140
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 16
+vgpr_count = 256
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 96
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel]]
+name = "fn_attn_decode_h256_gqa12_fp8kv_nw4"
+symbol = "fn_attn_decode_h256_gqa12_fp8kv_nw4.kd"
+kernarg_segment_size = 140
+kernarg_segment_align = 8
+group_segment_fixed_size = 12288
+private_segment_fixed_size = 0
+vgpr_count = 255
+sgpr_count = 38
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel]]
+name = "fn_attn_prefill_h256_gqa12_fp8kv"
+symbol = "fn_attn_prefill_h256_gqa12_fp8kv.kd"
+kernarg_segment_size = 136
+kernarg_segment_align = 8
+group_segment_fixed_size = 54016
+private_segment_fixed_size = 0
+vgpr_count = 238
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 768
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"

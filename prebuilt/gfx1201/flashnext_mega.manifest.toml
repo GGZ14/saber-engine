@@ -1,0 +1,363 @@
+schema_version = 1
+plugin = "flashnext_mega"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_mega.hip"
+source_sha256 = "3a89080b5859a44bc099c026e707a11f2007490f4f9be5cca5c7b1d35b3e85e1"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "37dc618142586e1bd9b1148b675bb13b18bd3c36718ac84ce3232797c3686adc"
+hsaco = "flashnext_mega.hsaco"
+hsaco_sha256 = "1eed278975d302b02edc0c40624c7d01fa35420498a415e2b387c2cc20bd8e4f"
+
+[[kernel]]
+name = "fn23_mega_a_b1"
+symbol = "fn23_mega_a_b1.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 36992
+private_segment_fixed_size = 640
+vgpr_count = 256
+sgpr_count = 73
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "s0"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "s1"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "gbar"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ts"
+
+[[kernel]]
+name = "fn23_mega_a_b1_inl"
+symbol = "fn23_mega_a_b1_inl.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 36972
+private_segment_fixed_size = 304
+vgpr_count = 256
+sgpr_count = 107
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "s0"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "s1"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "gbar"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ts"
+
+[[kernel]]
+name = "fn23_mega_a_b8"
+symbol = "fn23_mega_a_b8.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 57472
+private_segment_fixed_size = 464
+vgpr_count = 256
+sgpr_count = 73
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "s0"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "s1"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "gbar"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ts"
+
+[[kernel]]
+name = "fn23_mega_b_b1"
+symbol = "fn23_mega_b_b1.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 39488
+private_segment_fixed_size = 0
+vgpr_count = 180
+sgpr_count = 63
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "s0"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "s1"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "gbar"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ts"
+
+[[kernel]]
+name = "fn23_mega_b_b1_inl"
+symbol = "fn23_mega_b_b1_inl.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 39468
+private_segment_fixed_size = 0
+vgpr_count = 154
+sgpr_count = 66
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "s0"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "s1"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "gbar"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ts"
+
+[[kernel]]
+name = "fn23_mega_b_b8"
+symbol = "fn23_mega_b_b8.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 39488
+private_segment_fixed_size = 0
+vgpr_count = 164
+sgpr_count = 63
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "s0"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "s1"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "gbar"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ts"
+
+[[kernel]]
+name = "fn23_mega_b_b8_inl"
+symbol = "fn23_mega_b_b8_inl.kd"
+kernarg_segment_size = 296
+kernarg_segment_align = 8
+group_segment_fixed_size = 39468
+private_segment_fixed_size = 0
+vgpr_count = 156
+sgpr_count = 66
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "s0"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "s1"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "gbar"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ts"
+
+[[kernel]]
+name = "fn23_offsets"
+symbol = "fn23_offsets.kd"
+kernarg_segment_size = 8
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 83
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "out"

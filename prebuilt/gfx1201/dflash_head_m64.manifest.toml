@@ -1,0 +1,111 @@
+schema_version = 1
+plugin = "dflash_head_m64"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/dflash_head_m64.hip"
+source_sha256 = "769f72ba49c4c48ff61dbf84bbefa5cf71580b489048a16002547704207aec73"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "a99fe76cde39b81e435bca91298ca304bfed54f32f368d48c1f13f973647d60e"
+hsaco = "dflash_head_m64.hsaco"
+hsaco_sha256 = "5c15805d055396f2608d6a96030330bac636f25aee03ee5c500b5c778266a053"
+
+[[kernel]]
+name = "dflash_draft_head_int2_m64n64x2g128_lx"
+symbol = "dflash_draft_head_int2_m64n64x2g128_lx.kd"
+kernarg_segment_size = 92
+kernarg_segment_align = 8
+group_segment_fixed_size = 18432
+private_segment_fixed_size = 0
+vgpr_count = 241
+sgpr_count = 44
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "xs"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "wq"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "s"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "zs"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "y"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "bmax"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "bidx"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "stride_wq"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "stride_s"
+
+[[kernel.arg]]
+offset = 84
+size = 4
+value_kind = "by_value"
+name = "stride_xs"
+
+[[kernel.arg]]
+offset = 88
+size = 4
+value_kind = "by_value"
+name = "nblk"

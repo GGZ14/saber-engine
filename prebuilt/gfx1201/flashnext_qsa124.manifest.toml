@@ -1,0 +1,93 @@
+schema_version = 1
+plugin = "flashnext_qsa124"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_qsa124.hip"
+source_sha256 = "a2aebfe2778c36576503b1c301d8e29353a49c0ed40d7eb8e064b3d35c6c04f0"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "26ca5bb41698f67b09173391fd69a1d05323d3d9df8797c45ca2aa72a308a2ec"
+hsaco = "flashnext_qsa124.hsaco"
+hsaco_sha256 = "95662ca2b46b823a837ac7fc5e962d39db05e4ff197115bcfbb45cfafee60351"
+
+[[kernel]]
+name = "fn124_cmp_u32"
+symbol = "fn124_cmp_u32.kd"
+kernarg_segment_size = 288
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 10
+sgpr_count = 15
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "b"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel]]
+name = "fn124_qsa_attn_prefill_h256_gqa12_fp8kv_skip"
+symbol = "fn124_qsa_attn_prefill_h256_gqa12_fp8kv_skip.kd"
+kernarg_segment_size = 424
+kernarg_segment_align = 8
+group_segment_fixed_size = 54016
+private_segment_fixed_size = 16
+vgpr_count = 240
+sgpr_count = 31
+wavefront_size = 32
+max_flat_workgroup_size = 768
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 32
+value_kind = "by_value"
+name = "qa"
+
+[[kernel]]
+name = "fn124_qsa_attn_prefill_h256_gqa12_fp8kv_skipctl"
+symbol = "fn124_qsa_attn_prefill_h256_gqa12_fp8kv_skipctl.kd"
+kernarg_segment_size = 424
+kernarg_segment_align = 8
+group_segment_fixed_size = 54016
+private_segment_fixed_size = 16
+vgpr_count = 240
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 768
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "args"
+
+[[kernel.arg]]
+offset = 136
+size = 32
+value_kind = "by_value"
+name = "qa"

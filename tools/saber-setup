@@ -1,0 +1,625 @@
+#!/usr/bin/env python3
+"""Guided setup for Saber: check the machine, pick a model, toggle the common options, then install
+the missing pieces and launch the server.
+
+    tools/saber-setup                 # the terminal UI
+    tools/saber-setup --print         # no UI: print the plan for the saved (or default) settings
+    tools/saber-setup --model flashnext --print
+
+Python 3 standard library only (curses). The UI never decides anything the launchers do not: every
+option maps to an environment variable or a flag that tools/serve_27b.sh / tools/serve_flashnext.sh
+already take (README "Flags and options"). Settings are saved to ~/.config/saber/setup.json and a
+re-runnable ~/.config/saber/launch-<model>.sh.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONF_DIR = os.environ.get("SABER_SETUP_DIR", os.path.expanduser("~/.config/saber"))
+CONF = os.path.join(CONF_DIR, "setup.json")
+
+GIB = 1024**3
+
+# name, launcher, container name, packs the launcher needs (under SABER_PACKS), download size (GB), model id
+MODELS = {
+    "27b": dict(
+        title="Qwen3.8-27B (dense, DFlash2 drafter)",
+        launcher="tools/serve_27b.sh",
+        container="saber-27b-serve",
+        packs=["qwen38-27b-nvfp4-devfinal-fp8head", "qwen38-dflash2-drafter-fp8head"],
+        extra_files=[".cache/template_corpus.tokenizer.json", ".cache/template_corpus.jinja"],
+        download_gb=26,
+        note="about 26 GB of packs",
+    ),
+    "flashnext": dict(
+        title="Qwen3.8 Flash-Next (MoE)",
+        launcher="tools/serve_flashnext.sh",
+        container="saber-flashnext-serve",
+        packs=["qwen38-flashnext-quark-trunk8"],
+        extra_files=[],
+        download_gb=240,
+        note="about 70 GB of packs plus the 170 GB original checkpoint it reads in place",
+    ),
+}
+
+# --------------------------------------------------------------------------------------------
+# Options. kind: choice | toggle | text.  `default` is Saber's recommended setting; the UI starts
+# there and `d` puts every row back.  `emit(value, cfg)` returns (env dict, flag list).
+# --------------------------------------------------------------------------------------------
+
+
+def _none(_v, _c):
+    return {}, []
+
+
+def opt(key, label, kind, default, help, emit=_none, choices=None, models=("27b", "flashnext")):
+    return dict(key=key, label=label, kind=kind, default=default, help=help, emit=emit,
+                choices=choices or [], models=models)
+
+
+def _ctx_flag_27b(v, c):
+    return {"MAX_CTX": str(v)}, []
+
+
+def _ctx_flag_fn(v, c):
+    return ({}, [] if str(v) == "262144" else ["--fn-max-ctx", str(v)])
+
+
+OPTIONS = [
+    opt("gpus", "GPU pair (HIP devices)", "choice", "0,1",
+        "Which two GPUs serve. Saber runs tensor-parallel over exactly two cards (TP=2).",
+        emit=lambda v, c: ({"HIP_DEVICES": str(v)}, []), choices=["0,1"]),
+    # 27B
+    opt("prefix", "Prefix caching", "toggle", True,
+        "Cache finished prompts so a returning conversation only prefills its new tail.",
+        emit=lambda v, c: ({}, ["--enable-prefix-caching", "on"] if v else []), models=("27b",)),
+    opt("vision27", "Images (vision)", "choice", "off",
+        "off = text only. lazy = the vision tower streams from host RAM per image (+~30 ms an image, "
+        "full context kept). on = tower resident in VRAM (~1.9 GiB a card; needs context <= 131072).",
+        emit=lambda v, c: ({}, [] if v == "off" else ["--vision", v]), choices=["off", "lazy", "on"],
+        models=("27b",)),
+    opt("ctx27", "Max context (tokens)", "choice", "262144",
+        "Longest conversation a sequence may hold. Lower it for more concurrent sessions.",
+        emit=_ctx_flag_27b, choices=["262144", "131072", "65536", "32768"], models=("27b",)),
+    opt("seqs", "Concurrent sequences", "choice", "8",
+        "How many requests are served at once.",
+        emit=lambda v, c: ({"MAX_SEQS": str(v)}, []), choices=["8", "6", "4", "2", "1"], models=("27b",)),
+    # Flash-Next
+    opt("visionfn", "Images (vision)", "choice", "lazy",
+        "lazy = load the tower on the first image request, unload after 300 s idle. on = keep it "
+        "resident. off = text only.",
+        emit=lambda v, c: ({}, [] if v == "lazy" else ["--fn-vision", v]),
+        choices=["lazy", "on", "off"], models=("flashnext",)),
+    opt("thinking", "Thinking by default", "toggle", True,
+        "Models reason before answering unless a request turns it off.",
+        emit=lambda v, c: ({}, [] if v else ["--fn-thinking", "off"]), models=("flashnext",)),
+    opt("ptree", "Prefix tree cache", "toggle", True,
+        "Tiered prefix cache: faster time-to-first-token on repeated prompts.",
+        emit=lambda v, c: ({}, [] if v else ["--fn-prefix-tree", "off"]), models=("flashnext",)),
+    opt("routes", "Record expert routes", "toggle", False,
+        "Log which experts your traffic uses, to rebuild expert placement later (writes to saber-kv/).",
+        emit=lambda v, c: ({}, ["--record-routes"] if v else []), models=("flashnext",)),
+    opt("ctxfn", "Max context (tokens)", "choice", "262144",
+        "Longest conversation a sequence may hold.", emit=_ctx_flag_fn,
+        choices=["262144", "131072", "65536", "32768", "10240"], models=("flashnext",)),
+    # shared
+    opt("port", "Server port", "text", "8080", "The OpenAI-compatible API listens here.",
+        emit=lambda v, c: ({"PORT": str(v)}, [])),
+    opt("packs", "Packs directory", "text", "/mnt/nvme/saber-packs",
+        "Where the weight packs live (SABER_PACKS). Put it on a fast NVMe.",
+        emit=lambda v, c: ({"SABER_PACKS": str(v)}, []), models=("27b",)),
+]
+
+FN_NVME = "/mnt/nvme"  # Flash-Next: the pack's manifest names the checkpoint under /mnt/nvme/models
+
+
+def packs_dir(cfg):
+    return cfg["packs"] if cfg["model"] == "27b" else FN_NVME + "/saber-packs"
+
+# TP choices shown for information; only TP=2 is wired. (label, enabled, why)
+TP_ROWS = [
+    ("TP=2   two GPUs   (the default)", True, ""),
+    ("TP=1   one GPU", False, "needs single-card packs and single-card tuning that the launchers do not wire; not offered yet"),
+    ("TP=3 / TP=4", False, "not implemented: the engine drives exactly two ranks (one peer device)"),
+]
+
+
+def options_for(model):
+    return [o for o in OPTIONS if model in o["models"]]
+
+
+def default_cfg(model="27b"):
+    cfg = {"model": model}
+    for o in OPTIONS:
+        cfg[o["key"]] = o["default"]
+    return cfg
+
+
+def load_cfg():
+    cfg = default_cfg()
+    try:
+        with open(CONF) as f:
+            saved = json.load(f)
+        for k, v in saved.items():
+            if (k == "model" and v in MODELS) or (k != "model" and k in cfg):
+                cfg[k] = v
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+def save_cfg(cfg):
+    os.makedirs(CONF_DIR, exist_ok=True)
+    with open(CONF, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
+# --------------------------------------------------------------------------------------------
+# Detection (read-only)
+# --------------------------------------------------------------------------------------------
+
+
+def detect_gpus(kfd_root="/sys/class/kfd/kfd/topology/nodes"):
+    """GPUs from the KFD topology (no ROCm tools needed): [(gfx name, supported)]."""
+    out = []
+    try:
+        names = sorted(os.listdir(kfd_root), key=lambda s: int(s) if s.isdigit() else 0)
+    except OSError:
+        return out
+    for n in names:
+        try:
+            props = dict(
+                ln.split(None, 1) for ln in open(os.path.join(kfd_root, n, "properties")).read().splitlines() if " " in ln
+            )
+            v = int(props.get("gfx_target_version", "0").strip())
+        except (OSError, ValueError):
+            continue
+        if v == 0:
+            continue  # a CPU node
+        major, minor, step = v // 10000, (v // 100) % 100, v % 100
+        out.append((f"gfx{major}{minor:x}{step:x}", major == 12))
+    return out
+
+
+def container_runtime():
+    forced = os.environ.get("SABER_CONTAINER")
+    for c in ([forced] if forced else []) + ["podman", "docker"]:
+        if c and shutil.which(c):
+            return c
+    return None
+
+
+def run_quiet(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def detect_system(cfg):
+    ctr = container_runtime()
+    gpus = detect_gpus()
+    supported = [g for g in gpus if g[1]]
+    pdir = packs_dir(cfg)
+    probe = pdir
+    while probe and not os.path.exists(probe):
+        probe = os.path.dirname(probe)
+    free = shutil.disk_usage(probe or "/").free if probe else 0
+    image = False
+    running = []
+    if ctr:
+        r = run_quiet([ctr, "image", "exists", "localhost/saber-dev:latest"]) if ctr == "podman" else \
+            run_quiet([ctr, "image", "inspect", "localhost/saber-dev:latest"])
+        image = bool(r and r.returncode == 0)
+        r = run_quiet([ctr, "ps", "--format", "{{.Names}}"])
+        if r and r.returncode == 0:
+            running = [n for n in r.stdout.split() if n.startswith("saber")]
+    return dict(
+        container=ctr,
+        gpus=gpus,
+        supported_gpus=len(supported),
+        kfd=os.path.exists("/dev/kfd"),
+        hf=shutil.which("hf") or shutil.which("huggingface-cli"),
+        free_gb=free / GIB,
+        image=image,
+        running=running,
+        packs_dir=pdir,
+    )
+
+
+def pack_status(cfg):
+    m = MODELS[cfg["model"]]
+    have = []
+    legacy = {"qwen38-flashnext-quark-trunk8": "qwen38-flashnext-quark-ep2-trunk8"}  # the maintainers' local name
+    for p in m["packs"]:
+        d = packs_dir(cfg)
+        have.append((p, os.path.isdir(os.path.join(d, p)) or os.path.isdir(os.path.join(d, legacy.get(p, p)))))
+    for f in m["extra_files"]:
+        have.append((f, os.path.isfile(os.path.join(REPO, f))))
+    if cfg["model"] == "flashnext":
+        ck = "/mnt/nvme/models/Qwen3.8-Flash-Next-Quark-MXFP4"
+        have.append((ck, os.path.isfile(os.path.join(ck, "model-00131-of-00131.safetensors"))))
+    return have
+
+
+# --------------------------------------------------------------------------------------------
+# The plan: pure functions, tested without a terminal
+# --------------------------------------------------------------------------------------------
+
+
+def effective_cfg(cfg):
+    """Resolve option interactions; returns (cfg copy, [notes])."""
+    c = dict(cfg)
+    notes = []
+    if c["model"] == "27b" and c["vision27"] == "on" and int(c["ctx27"]) > 131072:
+        c["ctx27"] = "131072"
+        notes.append("Vision 'on' keeps the tower in VRAM, so max context is lowered to 131072.")
+    return c, notes
+
+
+def build_launch(cfg):
+    """(env dict, argv list) for the launcher; only non-default settings produce flags."""
+    c, _ = effective_cfg(cfg)
+    env, flags = {}, []
+    for o in options_for(c["model"]):
+        e, f = o["emit"](c[o["key"]], c)
+        env.update(e)
+        flags += f
+    # Environment that equals the launcher's own default is left out, so the command stays short.
+    defaults = {"PORT": "8080", "MAX_SEQS": "8", "MAX_CTX": "262144", "HIP_DEVICES": "0,1",
+                "SABER_PACKS": "/mnt/nvme/saber-packs"}
+    env = {k: v for k, v in env.items() if defaults.get(k) != v}
+    return env, [MODELS[c["model"]]["launcher"]] + flags
+
+
+def shell_line(cfg):
+    env, argv = build_launch(cfg)
+    return " ".join([f"{k}={shlex.quote(v)}" for k, v in sorted(env.items())] + [shlex.quote(a) for a in argv])
+
+
+def install_steps(cfg, sysinfo):
+    """[(label, command or None, already_done)] in order."""
+    m = MODELS[cfg["model"]]
+    steps = []
+    steps.append(("Build the dev image (one time, needs network)", ["tools/build-image.sh"], sysinfo["image"]))
+    missing = [n for n, ok in pack_status(cfg) if not ok]
+    env = {"SABER_PACKS": packs_dir(cfg)} if packs_dir(cfg) != "/mnt/nvme/saber-packs" else {}
+    steps.append((f"Download weights: {m['note']}",
+                  ["tools/fetch_packs.sh", cfg["model"]], not missing))
+    return steps, env
+
+
+def launch_script(cfg):
+    name = cfg["model"]
+    return "#!/usr/bin/env bash\n# Written by tools/saber-setup. Re-run to start the server with these settings.\n" \
+           f"cd {shlex.quote(REPO)} && exec {shell_line(cfg)} \"$@\"\n"
+
+
+def write_launch_script(cfg):
+    os.makedirs(CONF_DIR, exist_ok=True)
+    p = os.path.join(CONF_DIR, f"launch-{cfg['model']}.sh")
+    with open(p, "w") as f:
+        f.write(launch_script(cfg))
+    os.chmod(p, 0o755)
+    return p
+
+
+def plan_text(cfg, sysinfo=None):
+    m = MODELS[cfg["model"]]
+    _, notes = effective_cfg(cfg)
+    lines = [f"Model        {m['title']}", "Parallelism  TP=2 on HIP devices " + cfg["gpus"]]
+    for o in options_for(cfg["model"]):
+        if o["key"] in ("gpus",):
+            continue
+        v = cfg[o["key"]]
+        v = ("on" if v else "off") if o["kind"] == "toggle" else v
+        lines.append(f"{o['label']:<22}{v}")
+    if cfg["model"] == "flashnext":
+        lines.append("Locations    packs in /mnt/nvme/saber-packs, checkpoint in /mnt/nvme/models (fixed)")
+    lines += [""] + [f"note: {n}" for n in notes]
+    lines += ["", "Launch command:", "  " + shell_line(cfg)]
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------------------------
+# Running things (outside curses, so the output is visible)
+# --------------------------------------------------------------------------------------------
+
+
+def run_step(cmd, env_extra=None):
+    env = dict(os.environ)
+    env.update(env_extra or {})
+    print(f"\n$ {' '.join(shlex.quote(c) for c in cmd)}\n", flush=True)
+    return subprocess.call(cmd, cwd=REPO, env=env)
+
+
+def do_install(cfg, sysinfo):
+    steps, env = install_steps(cfg, sysinfo)
+    todo = [s for s in steps if not s[2]]
+    if not todo:
+        print("Everything is already installed.")
+        return True
+    need = MODELS[cfg["model"]]["download_gb"]
+    print(f"Free space at {sysinfo['packs_dir']}: {sysinfo['free_gb']:.0f} GB; the download needs about {need} GB.")
+    if sysinfo["free_gb"] < need:
+        print("Not enough free space. Free some up or change the packs directory.")
+        return False
+    if not sysinfo["hf"] and any("fetch_packs" in " ".join(s[1]) for s in todo):
+        print("The Hugging Face CLI is missing: pip install -U 'huggingface_hub[cli]'")
+        return False
+    for label, cmd, _ in todo:
+        ans = input(f"\n{label}\nRun it now? [y/N] ").strip().lower()
+        if ans != "y":
+            print("Skipped.")
+            continue
+        if run_step(cmd, env) != 0:
+            print("That step failed; stopping.")
+            return False
+    return True
+
+
+def do_launch(cfg):
+    env, argv = build_launch(cfg)
+    print("Starting the server (the first run builds the binary; this takes a few minutes).")
+    return run_step(argv, env) == 0
+
+
+def do_stop(cfg):
+    return run_step([MODELS[cfg["model"]]["launcher"], "stop"]) == 0
+
+
+# --------------------------------------------------------------------------------------------
+# The terminal UI
+# --------------------------------------------------------------------------------------------
+
+PAGES = ["System", "Configure", "Review & run"]
+
+
+def ui(stdscr, cfg):
+    import curses
+
+    curses.curs_set(0)
+    curses.use_default_colors()
+    try:
+        curses.init_pair(1, curses.COLOR_GREEN, -1)
+        curses.init_pair(2, curses.COLOR_RED, -1)
+        curses.init_pair(3, curses.COLOR_YELLOW, -1)
+        curses.init_pair(4, curses.COLOR_CYAN, -1)
+    except curses.error:
+        pass
+    GREEN, RED, YELLOW, CYAN = (curses.color_pair(i) for i in (1, 2, 3, 4))
+    page, sel, msg = 0, 0, ""
+    sysinfo = detect_system(cfg)
+    action = None
+
+    def put(y, x, s, attr=0):
+        h, w = stdscr.getmaxyx()
+        if 0 <= y < h - 1 and x < w:
+            try:
+                stdscr.addstr(y, x, s[: max(0, w - x - 1)], attr)
+            except curses.error:
+                pass
+
+    def rows():
+        """The Configure page: [(kind, payload)]; kinds: model, tp, opt, head."""
+        r = [("head", "Model"), ("model", None), ("head", "Parallelism")]
+        r += [("tp", t) for t in TP_ROWS]
+        r += [("head", "Options (recommended defaults are preselected)")]
+        r += [("opt", o) for o in options_for(cfg["model"])]
+        return r
+
+    def selectable(r):
+        return [i for i, (k, p) in enumerate(r) if k in ("model", "opt") or (k == "tp")]
+
+    def gpu_pairs():
+        n = max(sysinfo["supported_gpus"], 2)
+        return [f"{a},{b}" for a in range(n) for b in range(a + 1, n)]
+
+    while True:
+        stdscr.erase()
+        h, w = stdscr.getmaxyx()
+        put(0, 1, "Saber setup", curses.A_BOLD)
+        tabs = "  ".join((f"[{n}]" if i == page else f" {n} ") for i, n in enumerate(PAGES))
+        put(1, 1, tabs, CYAN)
+        y = 3
+        r = rows() if page == 1 else []
+        if page == 0:
+            s = sysinfo
+            ok = lambda b: ("OK ", GREEN) if b else ("-- ", RED)
+            gp = ", ".join(f"{g[0]}{'' if g[1] else ' (unsupported)'}" for g in s["gpus"]) or "none found"
+            lines = [
+                (s["kfd"], f"GPU driver (/dev/kfd)"),
+                (s["supported_gpus"] >= 2, f"GPUs: {gp}   (Saber needs two supported gfx12 cards)"),
+                (bool(s["container"]), f"Container runtime: {s['container'] or 'podman or docker not found'}"),
+                (s["image"], "Dev image localhost/saber-dev:latest (built by tools/build-image.sh)"),
+                (bool(s["hf"]), "Hugging Face CLI (for downloading weights)" if s["hf"] else
+                 "Hugging Face CLI missing:  pip install -U 'huggingface_hub[cli]'"),
+                (s["free_gb"] >= 30, f"Free space for packs at {s['packs_dir']}: {s['free_gb']:.0f} GB"),
+            ]
+            for good, text in lines:
+                tag, col = ok(good)
+                put(y, 2, tag, col | curses.A_BOLD)
+                put(y, 6, text)
+                y += 1
+            y += 1
+            if s["running"]:
+                put(y, 2, "A Saber server is running: " + ", ".join(s["running"]) + "  (they share the GPUs)", YELLOW)
+                y += 1
+            put(y + 1, 2, "Next: Tab or → to configure.   r rescan   q quit")
+        elif page == 1:
+            idx = selectable(r)
+            sel = min(sel, len(idx) - 1)
+            cur = idx[sel] if idx else -1
+            for i, (k, p) in enumerate(r):
+                on = i == cur
+                a = curses.A_REVERSE if on else 0
+                if k == "head":
+                    y += 1 if i else 0
+                    put(y, 1, p, curses.A_BOLD | CYAN)
+                elif k == "model":
+                    seg = "   ".join(("(*) " if m == cfg["model"] else "( ) ") + MODELS[m]["title"] for m in MODELS)
+                    put(y, 3, seg, a)
+                elif k == "tp":
+                    label, enabled, why = p
+                    mark = "(*)" if enabled else "( )"
+                    put(y, 3, f"{mark} {label}", a if enabled else curses.A_DIM)
+                else:
+                    o = p
+                    v = cfg[o["key"]]
+                    if o["kind"] == "toggle":
+                        val = "[x]" if v else "[ ]"
+                        put(y, 3, f"{val} {o['label']}", a)
+                    elif o["kind"] == "choice":
+                        ch = gpu_pairs() if o["key"] == "gpus" else o["choices"]
+                        put(y, 3, f"{o['label']:<24}< {v} >" + ("   (default)" if v == o["default"] else ""), a)
+                    else:
+                        put(y, 3, f"{o['label']:<24}[{v}]" + ("   (default)" if v == o["default"] else ""), a)
+                y += 1
+            if idx:
+                k, p = r[cur]
+                if k == "opt":
+                    help_ = p["help"]
+                elif k == "tp":
+                    help_ = p[2] or "Both cards, tensor-parallel: the supported and tuned setup."
+                else:
+                    help_ = "Switch between the two supported models (←/→)."
+                put(h - 5, 1, help_[: w - 3], YELLOW)
+            put(h - 3, 1, "↑/↓ move   Space/Enter change   ←/→ cycle   d reset to defaults   Tab next page   q quit")
+        else:
+            c, notes = effective_cfg(cfg)
+            for ln in plan_text(cfg).splitlines():
+                put(y, 2, ln, 0)
+                y += 1
+            y += 1
+            put(y, 2, "Install status", curses.A_BOLD | CYAN)
+            y += 1
+            for name, ok in pack_status(cfg):
+                put(y, 4, ("OK  " if ok else "MISSING  ") + name, GREEN if ok else RED)
+                y += 1
+            put(h - 4, 1, "i install missing   l launch server   x stop server   s save launch script   ← back   q quit",
+                curses.A_BOLD)
+        if msg:
+            put(h - 2, 1, msg, YELLOW)
+        stdscr.refresh()
+
+        ch = stdscr.getch()
+        msg = ""
+        if ch == ord("q"):
+            action = ("quit",)
+            break
+        if ch in (9, curses.KEY_BTAB):
+            page = (page + (-1 if ch == curses.KEY_BTAB else 1)) % len(PAGES)
+            sel = 0
+            continue
+        if page == 0:
+            if ch in (curses.KEY_RIGHT, ord("n")):
+                page, sel = 1, 0
+            elif ch == ord("r"):
+                sysinfo = detect_system(cfg)
+            continue
+        if page == 2:
+            if ch == curses.KEY_LEFT:
+                page = 1
+            elif ch == ord("s"):
+                save_cfg(cfg)
+                msg = "Saved " + write_launch_script(cfg)
+            elif ch in (ord("i"), ord("l"), ord("x")):
+                save_cfg(cfg)
+                action = {"i": ("install",), "l": ("launch",), "x": ("stop",)}[chr(ch)]
+                break
+            continue
+        # page 1
+        idx = selectable(r)
+        if ch in (curses.KEY_DOWN, ord("j")):
+            sel = (sel + 1) % len(idx)
+        elif ch in (curses.KEY_UP, ord("k")):
+            sel = (sel - 1) % len(idx)
+        elif ch == ord("d"):
+            m = cfg["model"]
+            cfg.clear()
+            cfg.update(default_cfg(m))
+            msg = "All options reset to the recommended defaults."
+        elif ch in (ord(" "), 10, 13, curses.KEY_RIGHT, curses.KEY_LEFT):
+            k, p = r[idx[sel]]
+            step = -1 if ch == curses.KEY_LEFT else 1
+            if k == "model":
+                keys = list(MODELS)
+                cfg["model"] = keys[(keys.index(cfg["model"]) + step) % len(keys)]
+                sel = 0
+                sysinfo = detect_system(cfg)
+            elif k == "tp":
+                msg = p[2] or "TP=2 is already selected."
+            elif p["kind"] == "toggle":
+                cfg[p["key"]] = not cfg[p["key"]]
+            elif p["kind"] == "choice":
+                ch_list = gpu_pairs() if p["key"] == "gpus" else p["choices"]
+                cur_v = cfg[p["key"]]
+                i = ch_list.index(cur_v) if cur_v in ch_list else 0
+                cfg[p["key"]] = ch_list[(i + step) % len(ch_list)]
+            else:  # text
+                curses.curs_set(1)
+                buf = str(cfg[p["key"]])
+                while True:
+                    put(h - 2, 1, " " * (w - 3))
+                    put(h - 2, 1, f"{p['label']}: {buf}", curses.A_BOLD)
+                    stdscr.refresh()
+                    c2 = stdscr.getch()
+                    if c2 in (10, 13):
+                        if buf.strip():
+                            cfg[p["key"]] = buf.strip()
+                        break
+                    if c2 == 27:
+                        break
+                    if c2 in (curses.KEY_BACKSPACE, 127, 8):
+                        buf = buf[:-1]
+                    elif 32 <= c2 < 127:
+                        buf += chr(c2)
+                curses.curs_set(0)
+    return action
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Guided setup for Saber")
+    ap.add_argument("--print", dest="show", action="store_true", help="print the plan and exit (no UI)")
+    ap.add_argument("--model", choices=list(MODELS), help="model (overrides the saved one)")
+    ap.add_argument("--defaults", action="store_true", help="ignore saved settings")
+    args = ap.parse_args()
+
+    cfg = default_cfg() if args.defaults else load_cfg()
+    if args.model:
+        cfg["model"] = args.model
+    if args.show or not sys.stdout.isatty() or not sys.stdin.isatty():
+        print(plan_text(cfg))
+        return 0
+
+    import curses
+
+    while True:
+        action = curses.wrapper(ui, cfg)
+        if not action or action[0] == "quit":
+            return 0
+        sysinfo = detect_system(cfg)
+        if action[0] == "install":
+            do_install(cfg, sysinfo)
+        elif action[0] == "launch":
+            if sysinfo["running"]:
+                print("Another Saber server is running and shares the GPUs: " + ", ".join(sysinfo["running"]))
+            else:
+                do_launch(cfg)
+        elif action[0] == "stop":
+            do_stop(cfg)
+        input("\nPress Enter to return to the setup screen (Ctrl-C to exit)... ")
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

@@ -1,0 +1,46 @@
+[package]
+name = "saber-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "saber"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+sha2.workspace = true
+saber-hip = { path = "../saber-hip" }
+# FN63: the HSA-direct replay prototype (`saber step-capture --fn63`).
+saber-hsa = { path = "../saber-hsa" }
+saber-mem = { path = "../saber-mem" }
+saber-exec = { path = "../saber-exec" }
+saber-kernels = { path = "../saber-kernels" }
+saber-cpux = { path = "../saber-cpux" }
+saber-model = { path = "../saber-model" }
+saber-plan = { path = "../saber-plan" }
+# `saber serve --mock`: the scheduler, the serving plane and the model plane, composed the way
+# P3 will compose them with a real executor underneath.
+saber-sched = { path = "../saber-sched" }
+# `saber engine` / `saber serve --engine real`: the P3 seam — a real StepExecutor over the
+# whole-model forward at TP=1.
+saber-engine = { path = "../saber-engine" }
+saber-serve = { path = "../saber-serve" }
+saber-vision-input = { path = "../saber-vision-input" }
+serde = { workspace = true }
+toml = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "signal", "sync"] }
+# Draining one request's step stream in `saber engine`'s forward-vs-serve identity check. The
+# stream is the serving plane's own; this is the `StreamExt` that collects it.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# Test scratch under target/, deleted on drop -- never /tmp (FN51h; structural.sh check 10).
+saber-test-scratch = { path = "../saber-test-scratch" }

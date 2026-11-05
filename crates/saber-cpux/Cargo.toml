@@ -1,0 +1,15 @@
+[package]
+name = "saber-cpux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# AVX-512 intrinsics are stable since 1.89 (the toolchain here is 1.98).
+rust-version = "1.89"
+
+# FN60: the host (AVX-512) twin of Flash-Next's routed-expert W4A8 chain (gate_up -> silu-quant ->
+# down), for experts whose bytes already sit in pinned RAM. Pure host code: no ROCm, no device.
+[dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+saber-test-scratch = { path = "../saber-test-scratch" }

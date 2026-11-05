@@ -1,0 +1,357 @@
+# Flash-Next (qwen4_exp) hyper-connection + bf16 dense launch rules for gfx1201 (workstream FN5),
+# as DATA. The kernels are `hip/flashnext_hc.hip` (code object `flashnext_hc`), the drafter's bf16
+# bands (`dflash_bgemm`, routed here at new shapes) and the D6 LDS tile body (`bf16_gemm_lds.h`).
+# The math is written down in tools/capture/fn5/hc_ref.py and docs/LEDGER.md "FN5".
+schema_version = 1
+name = "flashnext-gfx1201"
+
+# Upstream's HyperConnectionConfig for this checkpoint (config.json text_config; FN2's
+# `saber_model::qwen4_exp`): 4 streams of 2,560, rank 320, per-branch norm weight [10,240], eps
+# 1e-6. hc_count and hidden are compiled into the HC symbols (FN_S / FN_H): a checkpoint off these
+# is a refusal, not a slower path.
+[model]
+hc_count = 4
+hidden = 2560
+lowrank = 320
+eps = 1e-6
+
+[hc]
+# THE HC LAUNCH LAW (docs/EXEC.md): a mix is TWO launches -- `down` (norm [+ fused combine or
+# expand] + the down/inject GEMM over K slices + the slice sum / silu / logits in the last arrival)
+# and `up` (the K = 320 up GEMM + sigmoid gate + gated mean [+ the per-token e4m3 quant in the last
+# arrival]). A decoder layer is two mixes (attention side, MoE side): FOUR launches. Layer 1's PLE
+# splits its attention-side combine out (`combine`, one launch) -> five there. The final mixer is a
+# mix without an inject: two launches. A combine's output stream never aliases its input (the
+# down's other K slices still read `res` while slice 0 writes x'): two stream buffers, ping-ponged.
+launches_per_mix = 2
+launches_per_layer = 4
+down_waves = 7
+up_waves = 4
+# The down's partial row stride (21 column tiles x 16 = 336 floats: 320 lora + 4 logits + pad).
+partial_stride = 336
+# K slices per stream the down symbol can take: 2,560 / sps must be whole 64-k groups (the
+# kernel unrolls four 16-k steps).
+sps_allowed = [1, 2, 4, 5, 8, 10]
+
+# FN11 v2 variants (hip/flashnext_hc.hip "FN11"): BIT-EXACT restructurings of the shipped down /
+# up -- gated byte for byte against the shipped symbol of the same sps on every FN5 gate input
+# (tools/gates/fn11_hold.sh; LEDGER FN11). The A slab formed once per workgroup in LDS, the norm's
+# loads in one round trip, a register weight ring, the 21 column tiles over `groups` workgroups
+# (counters: row blocks x groups), batched last-arrival tails; the up `s1` puts one stream per wave
+# (amax [160, M]), `w2` stages the lora rows in LDS. Launch count and output layouts unchanged.
+[[hc.down_v2]]
+cfg = "m1w3t1"
+mf = 1
+waves = 3
+tiles = 1
+kc = 320
+groups = 7
+[[hc.down_v2]]
+cfg = "m1w7t1"
+mf = 1
+waves = 7
+tiles = 1
+kc = 640
+groups = 3
+[[hc.down_v2]]
+cfg = "m2w7t3"
+mf = 2
+waves = 7
+tiles = 3
+kc = 320
+groups = 1
+[[hc.down_v2]]
+cfg = "m2w21t1"
+mf = 2
+waves = 21
+tiles = 1
+kc = 320
+groups = 1
+[[hc.up_v2]]
+cfg = "s1"
+mf = 1
+grid_x = 160
+[[hc.up_v2]]
+cfg = "w2"
+mf = 2
+grid_x = 40
+
+# FN21 (hip/flashnext_hc.hip "FN21"; LEDGER FN21): BIT-EXACT prefill ups -- 8 waves x 16 block-input
+# columns x 4 streams over 16 mf rows (Wup read once per 64 rows at mf 4), the fragments through a
+# register ring, the epilogue row-major (16-byte hid / rr / bi accesses), B6's sigmoid from a
+# 7,336-entry LDS table built by fn_sigmoid itself (`s` / `t`; `n` = no table, the control).
+# `s` runs the chain transposed (Wup as the WMMA's A operand), `t` transposes g through LDS.
+[[hc.up_v2]]
+cfg = "p4s"
+mf = 4
+grid_x = 20
+waves = 8
+
+[[hc.up_v2]]
+cfg = "p4t"
+mf = 4
+grid_x = 20
+waves = 8
+
+[[hc.up_v2]]
+cfg = "p2s"
+mf = 2
+grid_x = 20
+waves = 8
+
+[[hc.up_v2]]
+cfg = "p2n"
+mf = 2
+grid_x = 20
+waves = 8
+
+# FN21 decode downs: FN11's geometries (m1w3t1 / m1w7t1) with the slab operands loaded before the
+# norm, the next chunk's before the chain, and the last arrival's 16 slices in one round
+# (`q`: the weight ring the whole chunk deep).
+[[hc.down_v2]]
+cfg = "m1w3t1p"
+mf = 1
+waves = 3
+tiles = 1
+kc = 320
+groups = 7
+
+[[hc.down_v2]]
+cfg = "m1w3t1q"
+mf = 1
+waves = 3
+tiles = 1
+kc = 320
+groups = 7
+
+[[hc.down_v2]]
+cfg = "m1w7t1p"
+mf = 1
+waves = 7
+tiles = 1
+kc = 640
+groups = 3
+
+# FN49b: the decode cfgs (m1w3t1 / m1w7t1, the up s1) with their serial butterflies (the stream
+# norm's 5 hops, the q8 amax's 4) on DPP16 row_xmask / v_permlanex16 instead of ds_bpermute: the
+# same partner lanes in the same order, byte-identical by construction (gated against FN5's
+# symbols like every v2 cfg, `tools/capture/fn11/fn11_gate.py`).
+[[hc.down_v2]]
+cfg = "m1w3t1d"
+mf = 1
+waves = 3
+tiles = 1
+kc = 320
+groups = 7
+
+[[hc.down_v2]]
+cfg = "m1w7t1d"
+mf = 1
+waves = 7
+tiles = 1
+kc = 640
+groups = 3
+
+[[hc.up_v2]]
+cfg = "s1d"
+mf = 1
+grid_x = 160
+
+[kernels]
+down_mix = "fn_hc_down_mix_mf{mf}"
+down_expand = "fn_hc_down_expand_mf{mf}"
+down_combine = "fn_hc_down_combine_mf{mf}"
+down_final = "fn_hc_down_final_mf{mf}"
+up_bf16 = "fn_hc_up_bf16_mf{mf}"
+up_q8 = "fn_hc_up_q8_mf{mf}"
+up_q8_tiled = "fn_hc_up_q8t_mf{mf}"
+combine = "fn_hc_combine"
+gdn_norm_bf16 = "fn_gdn_norm_bf16_t256"
+# FN9: Flash-Next's gated norm gates with SIGMOID (upstream RMSNormGated activation="sigmoid");
+# the silu symbol above is the 27B twin FN5 gated. The layer graph routes this one.
+gdn_norm_bf16_sigmoid = "fn_gdn_norm_bf16_sig_t256"
+attn_gate_bf16 = "fn_attn_gate_bf16_t256"
+down2 = "fn_hc_down_{mode}_v2_{cfg}"
+up2 = "fn_hc_up_{kind}_v2_{cfg}"
+# GATE-ONLY symbols (never routed): the up with g written out, and the WMMA rounding probe.
+gate_only = ["fn_hc_up_q8_dbg_mf1", "fn_hc_up_q8_dbg_mf2", "fn_hc_up_q8_dbg_v2_s1", "fn_hc_up_q8_dbg_v2_s1d", "fn_hc_up_q8_dbg_v2_w2", "fn_hc_up_q8_dbg_v2_p4s", "fn_hc_up_q8_dbg_v2_p4t", "fn_hc_up_q8_dbg_v2_p2s", "fn_hc_up_q8_dbg_v2_p2n", "fn_wmma_probe", "fn_hc_sig_probe", "fn_ar_exact_hcrr_rev_bf16"]
+
+# The mix's variant per row band: the first row whose `max_m` holds M. MEASURED (FN5 hold 1,
+# card 1, 210 W, 2026-09-28, IC-cold, combine mode + q8, us per mix = down + up): M1 sps4 mf1/1
+# 43.8 (sps8 45.2); M8 sps2 1/1 72.6; M16 sps2 1/1 93.2; M64 sps2 1/1 94.4; M2048 sps1 2/2 1,068.8
+# (sps2 1,114.5). The block input's arithmetic class depends on `sps` only (the down's K slices),
+# never on `mf` (gated: every variant of one sps byte-identical), so M = 1 and M >= 2 are two
+# classes, as the 27B's split-K decode GEMM is.
+# FN11 (hold 2, card 1, 210 W, IC-cold, paired A B A B, 8 rounds, combine + q8, us per mix;
+# hold 1 agreed within 1 %): the v2 pair routed per band -- M1 43.2 -> 32.0 (m1w3t1/s1), M8 71.8 ->
+# 37.3, M16 93.4 -> 44.5, M64 98.6 -> 60.0 (m1w7t1/s1), M256 198.2 -> 126.3, M2048 1,044.0 -> 735.6
+# (m2w21t1/w2). Every v2 symbol is byte-identical to the shipped symbol of the same sps (the class
+# is `sps`); `down_mf` / `up_mf` stay as the shipped control arm (a band without `down_v2` /
+# `up_v2` plans the FN5 symbols).
+[[hc.band]]
+# FN49b (hold 1, card 1, 210 W, IC-cold, 16 rounds A B A B, combine + q8, us p50; 4,618 oracle
+# checks 0 bytes): the DPP cfgs routed where they win or tie -- down M1 m1w3t1 16.9 -> m1w3t1d
+# 16.4 (M8 22.5 -> 22.0); up s1 -> s1d M1 12.5 -> 12.4, M8 14.9 -> 14.8, M16 18.2 -> 18.1, M64
+# 28.8 -> 28.6; m1w7t1d ties at M8 / M16 (18.1 / 21.8) and LOSES at M64 (30.5 -> 31.1): the 64 band
+# keeps m1w7t1. `--fn-route-control` plans the cfgs without `d` (the executor strips it).
+max_m = 1
+sps = 4
+down_mf = 1
+up_mf = 1
+down_v2 = "m1w3t1d"
+up_v2 = "s1d"
+[[hc.band]]
+max_m = 64
+sps = 2
+down_mf = 1
+up_mf = 1
+down_v2 = "m1w7t1"
+up_v2 = "s1d"
+# FN21 (hold 1, card 1, 210 W, IC-cold, paired A B A B, 8 rounds, combine + q8; LEDGER FN21): the
+# prefill ups routed, byte-identical to FN5's up (0 of 6.24 GB differing over the gate), same sps
+# class -- up alone M256 w2 65.6 -> p2s 56.5, M1024 191.9 -> p4s 159.5, M2048 362.2 -> p4s 294.5;
+# mix M256 132.6 -> 122.9, M1024 405.0 -> 378.2, M2048 759.7 -> 696.3. The p2s / p4s crossover lies
+# between 256 (p2s ahead 7 %) and 1,024 (p4s ahead 17 %); 512 was not timed. FN21's decode downs
+# (m1w3t1p/q, m1w7t1p) TIED or LOST at M 1..8: not routed.
+[[hc.band]]
+max_m = 512
+sps = 1
+down_mf = 2
+up_mf = 2
+down_v2 = "m2w21t1"
+up_v2 = "p2s"
+# FN38: the 2,048 band's symbols + sps carried to 8,192 rows (the wide prefill chunk,
+# `--fn-max-chunk`): the mix is row-local (per-row norm / quant, row blocks x groups), so a row of an
+# 8,192-row chunk takes the 2,048-row chunk's class; the bgemm top bands below likewise (a 128-row
+# M tile, K walked in one order per row).
+[[hc.band]]
+max_m = 8192
+sps = 1
+down_mf = 2
+up_mf = 2
+down_v2 = "m2w21t1"
+up_v2 = "p4s"
+
+# The bf16 dense GEMM family. Per shape (TP=1 and the TP=2 shard), per row band `[max_m, symbol,
+# K splits]`, the first band holding M wins. `dflash_bgemm_*` = the drafter's committed bands at a
+# new shape, `fn_bgemm_sk_*` = the split-K band (splits 1 is the drafter band's arithmetic, gated
+# byte-identical), `fn_bgemm_lds_*` = the D6 tile with no bias (gated byte-identical to the vision
+# tile at a zero bias). MEASURED: the fastest gated candidate at M = 1 / 16 / 32 / 64 / 2,048
+# (tools/capture/fn5/fn5_gate.py "TUNE", hold 1). Each band's candidates were all gated first.
+# measured (us, IC-cold, card 1, 210 W): M1 157.9, M16 166.3, M64 282.5, M2048 2842.1
+[[bgemm]]
+shape = "gdn.in_proj.tp1"
+n = [16480]
+k = 2560
+bands = [[1, "dflash_bgemm_bf16_m16n16", 1], [16, "fn_bgemm_sk_m16", 1], [32, "dflash_bgemm_bf16_m32n16", 1], [64, "fn_bgemm_sk_m64", 1], [8192, "fn_bgemm_lds_l128x64", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 78.6, M16 83.0, M64 105.5, M2048 927.4
+[[bgemm]]
+shape = "gdn.in_proj.tp2"
+n = [8240]
+k = 2560
+bands = [[1, "fn_bgemm_sk_m16", 2], [16, "dflash_bgemm_bf16_m16n16", 1], [32, "dflash_bgemm_bf16_m32n16", 1], [64, "fn_bgemm_sk_m64", 2], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 58.2, M16 61.8, M64 67.1, M2048 690.2
+[[bgemm]]
+shape = "gdn.out_proj.tp1"
+n = [2560]
+k = 6144
+bands = [[1, "fn_bgemm_sk_m16", 2], [16, "dflash_bgemm_bf16_m16n16", 1], [32, "fn_bgemm_sk_m16", 1], [64, "dflash_bgemm_bf16_m32n16", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 29.4, M16 31.5, M64 35.0, M2048 308.5
+[[bgemm]]
+shape = "gdn.out_proj.tp2"
+n = [2560]
+k = 3072
+bands = [[1, "fn_bgemm_sk_m16", 4], [16, "dflash_bgemm_bf16_m16n16", 1], [32, "fn_bgemm_sk_m16", 1], [64, "dflash_bgemm_bf16_m32n16", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 117.9, M16 121.5, M64 177.7, M2048 1415.9
+[[bgemm]]
+shape = "qsa.q_proj.tp1"
+n = [12288]
+k = 2560
+bands = [[16, "fn_bgemm_sk_m16", 1], [64, "dflash_bgemm_bf16_m32n16", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 54.7, M16 60.3, M64 73.5, M2048 660.6
+[[bgemm]]
+shape = "qsa.q_proj.tp2"
+n = [6144]
+k = 2560
+bands = [[1, "fn_bgemm_sk_m16", 2], [16, "dflash_bgemm_bf16_m16n16", 1], [32, "dflash_bgemm_bf16_m32n16", 1], [64, "fn_bgemm_sk_m64", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 5.7, M16 8.6, M64 11.0, M2048 58.4
+[[bgemm]]
+shape = "qsa.kv_proj.tp1"
+n = [512]
+k = 2560
+bands = [[1, "fn_bgemm_sk_m16", 4], [32, "fn_bgemm_sk_m16", 1], [64, "dflash_bgemm_bf16_m32n16", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 5.5, M16 8.6, M64 11.0, M2048 45.0
+[[bgemm]]
+shape = "qsa.kv_proj.tp2"
+n = [256]
+k = 2560
+bands = [[1, "fn_bgemm_sk_m16", 4], [32, "fn_bgemm_sk_m16", 2], [64, "dflash_bgemm_bf16_m32n16", 1], [8192, "fn_bgemm_lds_l128x64", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 6.5, M16 9.9, M64 13.3, M2048 77.8
+[[bgemm]]
+shape = "qsa.index_qk"
+n = [640]
+k = 2560
+bands = [[1, "fn_bgemm_sk_m16", 4], [32, "fn_bgemm_sk_m16", 2], [64, "dflash_bgemm_bf16_m32n16", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 5.8, M16 8.7, M64 11.7, M2048 58.5
+[[bgemm]]
+shape = "moe.router"
+n = [512]
+k = 2560
+bands = [[1, "fn_bgemm_sk_m16", 4], [16, "fn_bgemm_sk_m16", 2], [32, "fn_bgemm_sk_m16", 1], [64, "dflash_bgemm_bf16_m32n16", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 22.2, M16 24.3, M64 28.5, M2048 258.5
+[[bgemm]]
+shape = "mtp.fc"
+n = [2560]
+k = 2560
+bands = [[1, "fn_bgemm_sk_m16", 2], [16, "dflash_bgemm_bf16_m16n16", 1], [32, "fn_bgemm_sk_m16", 1], [64, "dflash_bgemm_bf16_m32n16", 1], [2048, "fn_bgemm_lds_l128x128", 1]]
+# FN38: the PLE value_proj (the same [2560, 2560] GEMM; it ran on `mtp.fc`'s bands until FN38) with
+# the top band carried to the widest prefill rung -- `mtp.fc` keeps 2,048 (the MTP pass's 512-row
+# bound: fc_hidden at 4 x 513 rows has no band).
+[[bgemm]]
+shape = "ple.value_proj"
+n = [2560]
+k = 2560
+bands = [[1, "fn_bgemm_sk_m16", 2], [16, "dflash_bgemm_bf16_m16n16", 1], [32, "fn_bgemm_sk_m16", 1], [64, "dflash_bgemm_bf16_m32n16", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 97.7, M16 100.7, M64 142.6, M2048 1156.2
+[[bgemm]]
+shape = "ple.key_proj"
+n = [10240]
+k = 2560
+bands = [[16, "dflash_bgemm_bf16_m16n16", 1], [32, "dflash_bgemm_bf16_m32n16", 1], [64, "fn_bgemm_sk_m64", 2], [8192, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 38.8, M16 41.1, M64 46.2, M2048 460.8
+[[bgemm]]
+shape = "vision.merger.fc2"
+n = [2560]
+k = 4608
+bands = [[1, "fn_bgemm_sk_m16", 2], [16, "dflash_bgemm_bf16_m16n16", 1], [32, "fn_bgemm_sk_m16", 1], [64, "fn_bgemm_sk_m32", 1], [2048, "fn_bgemm_lds_l128x128", 1]]
+# measured (us, IC-cold, card 1, 210 W): M1 1123.8, M16 1211.1, M64 1946.7
+[[bgemm]]
+shape = "head.tp2"
+n = [124160]
+k = 2560
+bands = [[1, "dflash_bgemm_bf16_m32n16", 1], [16, "fn_bgemm_sk_m16", 1], [32, "fn_bgemm_sk_m32", 1], [64, "fn_bgemm_sk_m64", 1]]
+
+
+# FN9: the QSA layer's MERGED projection (EXEC §13: rows [q|gate x heads | k | v | index_qk], one
+# GEMM, one A read). N 7,296 per rank at TP=2 (the pack's `layer.L.self_attn.qkv_idx.w`), 13,952 at
+# TP=1 (24 q|gate heads, 2 kv heads, the replicated indexer). NOT TUNED: the bands are
+# `qsa.q_proj.*`'s (the dominant 84-88 % of the rows), borrowed until a timing round measures these.
+[[bgemm]]
+shape = "qsa.proj.tp1"
+n = [13952]
+k = 2560
+bands = [[16, "fn_bgemm_sk_m16", 1], [64, "dflash_bgemm_bf16_m32n16", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+[[bgemm]]
+shape = "qsa.proj.tp2"
+n = [7296]
+k = 2560
+bands = [[1, "fn_bgemm_sk_m16", 2], [16, "dflash_bgemm_bf16_m16n16", 1], [32, "dflash_bgemm_bf16_m32n16", 1], [64, "fn_bgemm_sk_m64", 1], [8192, "fn_bgemm_lds_l128x128", 1]]
+
+# FN84: the MoE miss-overlap order law (`--fn-moe-miss-order capped|cappre`, ARMS; the default is
+# `id`): at decode / verify steps of <= t rows ONE RAM-tier workgroup of the fused back half takes a
+# ticket per k resident ones (moe_back_mo{,p}_*'s kint). An ORDER, not a class: no byte depends on
+# it. Measured (FN84 hold 1, card 1, IC-cold, 210 W, 0-25 % of the experts in pinned RAM): k 8 is
+# the best capped k at every T (k 1 / 2 / 4 lose more) and still ties or loses to id order.
+[[moe_miss]]
+t = 64
+k = 8

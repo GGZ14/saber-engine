@@ -1,0 +1,159 @@
+# Saber manifest — the production configuration, as ONE resolved file.
+#
+# This is the replacement for the 137 `SABER_*` environment variables that Python and HIP each
+# `getenv` independently and must agree on or weights read as garbage. Everything here is read
+# once, hashed into the plan, and printed by `saber explain`:
+#
+#   saber explain examples/qwen38-27b-nvfp4-tp2.toml --prebuilt prebuilt/gfx1201
+#
+# Started from `saber_plan::reference::EXAMPLE_MANIFEST_TOML` and pointed at the artifacts this
+# repo actually ships, so the plugin names match `prebuilt/gfx1201/*.manifest.toml` and the build
+# hashes are the ones `saber-kbuild` wrote into them.
+#
+# The tier is production's default since 2026-09-15: unit `qwen_prod_nvfp4`, Qwen3.8-27B-NVFP4
+# requantized NVFP4 -> MXFP4 at load onto the W4A8 kernel, 22.2 ms/step, GSM8K 97.60, TP=2.
+
+[model]
+path = "/mnt/nvme/models/Qwen3.8-27B-NVFP4"
+tier_id = "tier:qwen38-27b-nvfp4-mxfp4-dflash2-v22.3"
+
+[device]
+target_gfx = "gfx1201"
+# Required, and load-bearing: an autotune record measured uncapped is invalid at the enforced cap.
+# Both cards are held at a FIXED 210 W policy with -75 mV; a MODE1 reset clears it silently.
+power_cap_w = 210
+tp = 2
+
+# One entry per committed code object. `build_hash` is sha256(preprocessed source ++ flags) as
+# recorded in prebuilt/gfx1201/<name>.manifest.toml, and it is part of every autotune key: a
+# recompiled plugin invalidates its measurements rather than inheriting them.
+#
+# Five for the MXFP4 W4A8 GEMM family and its fused producers, one for the attention glue, nine
+# for saber: paged attention,
+# the fused GDN decode step, the conv + recurrent decode PAIR, the prefill trio (conv prep, KKT
+# solve, chunk scan), the gated norm, and BOTH all-reduce families -- the WHT-quantised one above
+# the 128 KiB threshold and the exact one below it, which prod runs every step.
+
+[[plugins]]
+# The attention layer's glue: qk_norm_rope, attn_gate_quant and the paged K/V append -- the
+# three ops prod runs as Triton/ATen and Saber ran as nothing at all until workstream F's
+# fourth plugin.
+name = "attn_glue"
+path = "prebuilt/gfx1201/attn_glue.hsaco"
+build_hash = "1fb9de642a3c7480d7799748bb08537c98ffaf1bfe6b475b3b5c305ae7ea461f"
+
+[[plugins]]
+name = "mxfp4_gemm_atiled"
+path = "prebuilt/gfx1201/mxfp4_gemm_atiled.hsaco"
+build_hash = "cd46dc206cea2e0834e3b13e0464015bab7619774d92a3eed57051e3563d1dc3"
+
+[[plugins]]
+name = "mxfp4_gemm_base"
+path = "prebuilt/gfx1201/mxfp4_gemm_base.hsaco"
+build_hash = "49d1772032aa8a9059f1c9b91d75a9f94906b1f315ca3d38b903c32c490e7713"
+
+[[plugins]]
+name = "mxfp4_gemm_decode"
+path = "prebuilt/gfx1201/mxfp4_gemm_decode.hsaco"
+build_hash = "a842f8b685f326dd45c59f6da848fa0ee750bebeea81a95ac17f30dfbf3863ac"
+
+[[plugins]]
+name = "mxfp4_gemm_folded"
+path = "prebuilt/gfx1201/mxfp4_gemm_folded.hsaco"
+build_hash = "42839dbab28e2e97e2f14a80633d0c59fd0a90d73dafb892caf3819c32ae30ea"
+
+[[plugins]]
+name = "mxfp4_quant"
+path = "prebuilt/gfx1201/mxfp4_quant.hsaco"
+build_hash = "a6dba8c9ef521667e3cca88b0ff1e5b8a12aea38dd33964bda9df39984d57fe6"
+
+[[plugins]]
+name = "saber_ar_exact"
+path = "prebuilt/gfx1201/saber_ar_exact.hsaco"
+build_hash = "14cf6856317abd6783ec3e75229741bf438c55e6013e58ae84db6ab7f6a196e1"
+
+[[plugins]]
+name = "saber_ar_wht"
+path = "prebuilt/gfx1201/saber_ar_wht.hsaco"
+build_hash = "a48e7119b1ed6df477700de7bd38fa965697a05ea0844ccaf83539bd00495e42"
+
+[[plugins]]
+name = "saber_attn"
+path = "prebuilt/gfx1201/saber_attn.hsaco"
+build_hash = "cc4be96e76328b0840f89bb8865853c7c3e4304a989b622d18d001beae370d13"
+
+[[plugins]]
+name = "saber_gdn_chunk_scan"
+path = "prebuilt/gfx1201/saber_gdn_chunk_scan.hsaco"
+build_hash = "e562414a3c07906bb54d47b075f0263dbb93abd3aa038ac3f1fc2762b17211e2"
+
+[[plugins]]
+name = "saber_gdn_conv"
+path = "prebuilt/gfx1201/saber_gdn_conv.hsaco"
+build_hash = "80d27fad3b299c27cdf615b1ea5cf1dad746f75726e7cb82dfd17d0770587889"
+
+[[plugins]]
+name = "saber_gdn_fused_update"
+path = "prebuilt/gfx1201/saber_gdn_fused_update.hsaco"
+build_hash = "178f6285139b6a1f7d629a912a907a0638cc15cf0c21143cf8f8c7cdc0644650"
+
+[[plugins]]
+name = "saber_gdn_kkt_solve"
+path = "prebuilt/gfx1201/saber_gdn_kkt_solve.hsaco"
+build_hash = "4ed6fbcce519df65ccad90af9ce40ed09fe02180023f5b8b8d1d0b8d8ee3b80b"
+
+[[plugins]]
+name = "saber_gdn_norm"
+path = "prebuilt/gfx1201/saber_gdn_norm.hsaco"
+build_hash = "2f298c2416c41d555ce111553f434b739dd26b173a5e6d36ede7bc5e6c8b0c5e"
+
+[[plugins]]
+name = "saber_gdn_recurrent_update"
+path = "prebuilt/gfx1201/saber_gdn_recurrent_update.hsaco"
+build_hash = "4e275ca13480dee0f78eff37a1a8023190849665d1f16c2cf0cadcc42ea10986"
+
+# The bucket set is load-bearing in both directions. Dropping capture sizes 1/2/4 cost 8% of
+# single-stream decode, so the small buckets stay; and the total speculative GDN state a bucket
+# touches must stay under the 64 MB Infinity Cache, which is why 8x5 is here and 8x6 is not
+# (8:6 measured +2.2 ms/step, max_num_seqs=16 +5.5 ms/step, 2026-09-14).
+
+[[buckets]]
+batch = 1
+spec_width = 5
+ctx_band = 8192
+
+[[buckets]]
+batch = 2
+spec_width = 5
+ctx_band = 8192
+
+[[buckets]]
+batch = 4
+spec_width = 5
+ctx_band = 8192
+
+[[buckets]]
+batch = 8
+spec_width = 5
+ctx_band = 8192
+
+# Prefill buckets: M = prompt tokens in a chunk, batch 1, no speculative width. A prefill bucket
+# runs a DIFFERENT op set from a decode one -- the query-tiled attention kernel, the three-kernel
+# GDN chunk path, the standalone gated norm -- and it carries ONE recurrent state per sequence
+# rather than one per draft token, so it is nowhere near the Infinity-Cache bound that shapes the
+# decode set above. 2048 is the smallest chunk above a_tiled_min_m (513) where the A-tiled family
+# is the measured one; 8192 is --max-num-batched-tokens on the prod unit, the largest chunk the
+# scheduler forms.
+
+[[buckets]]
+phase = "prefill"
+tokens = 2048
+ctx_band = 8192
+
+[[buckets]]
+phase = "prefill"
+tokens = 8192
+ctx_band = 8192
+
+[plan]
+capture = true

@@ -1,0 +1,93 @@
+# The vision tower's launch rules for gfx1201 (workstream D1), as DATA.
+#
+# Prod runs `Qwen3_VisionTransformer` (the reference server qwen3_vl.py) in ATen: hipBLASLt for every linear and
+# the patch-embed Conv3d, `upstream::torch_sdpa_wrapper` for the attention (`rocm.py`: "Using Torch
+# SDPA backend for ViT model"), nn.LayerNorm, ATen bf16 elementwise for the rope and residuals.
+# There is no HIP source to slice, so `hip/vision.hip` is written to ATen's semantics and the
+# gate (`the internal reference harness`) compares against prod's own forward on one fixed image.
+schema_version = 2
+name = "vision-gfx1201"
+
+# Qwen3.8-27B-NVFP4 `vision_config`, verbatim. `head_dim` is compiled into the attention symbol
+# (`_hd72`), so a checkpoint off these is a refusal, not a slower path.
+[model]
+depth = 27
+hidden = 1152
+heads = 16
+head_dim = 72
+intermediate = 4304
+out_hidden = 5120
+patch = 16
+temporal_patch = 2
+in_channels = 3
+spatial_merge = 2
+num_position_embeddings = 2304
+# nn.LayerNorm eps: `norm_eps=getattr(config, "rms_norm_eps", 1e-6)` -- the TOP-LEVEL config has
+# no rms_norm_eps (it is on text_config), so prod takes the default.
+eps = 1e-6
+# get_rope(head_size=72, rope_parameters={"partial_rotary_factor": 0.5}) -> rotary_dim 36,
+# 18 inverse frequencies, base 10000, neox.
+rotary_dim = 36
+rope_theta = 10000.0
+# EMPTY for this checkpoint: Qwen3.5/3.8 carries no deepstack mergers (the pack has no
+# `deepstack_merger_list` record and `Qwen3_5ForConditionalGeneration.forward` passes no
+# deepstack embeds to the language model). A non-empty list is refused by name: the injection op
+# is not built.
+deepstack_visual_indexes = []
+
+[kernels]
+cast = "vis_cast_f32_bf16"
+gemm = "vis_gemm_bf16_bias"
+gemm_gelu_tanh = "vis_gemm_bf16_bias_gelu_tanh"
+gemm_gelu_erf = "vis_gemm_bf16_bias_gelu_erf"
+# D2: the BLOCK MLP's act, as prod computes it on ROCm. The checkpoint says `gelu_pytorch_tanh`,
+# but the reference server's `_get_gelu_pytorch_tanh()` (activation.py:851) returns nn.GELU(approximate="none")
+# whenever `current_platform.is_rocm()` ("PyTorch's native GELU with tanh approximation is
+# unstable. Falling back to GELU(approximate='none')"), so prod's block act is the ERF GELU, on
+# the card and in the CPU reference alike (both run as ROCm). D1 bound the tanh epilogue and had
+# no capture of prod's act output to see it; with that capture (D2) prod's own act misses the
+# tanh oracle at 50.2% of outputs. The tanh symbol stays compiled as the control.
+gemm_block_fc1 = "vis_gemm_bf16_bias_gelu_erf"
+gemm_residual = "vis_gemm_bf16_bias_residual"
+layernorm = "vis_layernorm_bf16"
+pos_add = "vis_pos_add"
+rope = "vis_rope_2d"
+# D2: the tiled attention (flash-style, 64-key tiles, online softmax, head 72 padded to 80, P as
+# hi + lo bf16) is the plan's attention; it holds no per-image state in LDS, so the only cap on an
+# image is `max_image_patches` below. `attn_p16` is the same kernel with P rounded once (the class
+# arm the gate measures beside it) and `attn_reference` is D1's correctness-first kernel (scores of
+# the whole sequence in LDS), kept as the gate's second reference and refused past its own cap.
+attn = "vis_attn_tiled_bf16_hd72"
+attn_p16 = "vis_attn_tiled_p16_bf16_hd72"
+attn_reference = "vis_attn_bf16_hd72"
+# Geometry, as compiled: the GEMM's workgroup tile and threads, the elementwise/LN threads, the
+# attention's query rows per workgroup (tiled: 4 waves x 16), and D1's kernel's LONGEST sequence.
+gemm_tile = 64
+gemm_threads = 128
+ew_threads = 256
+ln_threads = 256
+attn_threads = 128
+attn_q_rows = 64
+attn_reference_threads = 256
+attn_reference_q_rows = 4
+attn_reference_max_patches = 3072
+# The largest image (patches in one frame) the planner admits: prod's processor ceiling,
+# max_pixels 16,777,216 / (16 x 16) = 65,536 patches = 16,384 tokens. The tiled kernel has no
+# smaller limit (its indices are i32 offsets into qkv: L x 3456 < 2^31 up to L = 621,378); what an
+# engine admits is its arena, sized from this number or a smaller one it is configured with.
+max_image_patches = 65536
+
+# (Last in the file: TOML puts every key after an array-of-tables header into its last table.)
+# D6: the LDS-staged tile (`vis_gemm_lds_body`), the shipped kernel's arithmetic BIT FOR BIT (gated
+# per shape by tools/capture/d6_gemm_bench.py before any time is taken). Measured (card 1, 210 W,
+# 2026-09-23, IC-cold): 128x128 (8 waves of 64x32, 40 KiB LDS) is the fastest of the three compiled
+# tiles on ALL 14 shapes (768 and 8,064 patches), including the ones with fewer workgroups than CUs
+# (proj at 768: 54 workgroups, 36.3 us vs 128x64 37.5, 64x64 43.9), so the table has one entry and
+# `min_wgs = 0`; `_l128x64` / `_l64x64` stay compiled as measured arms. An empty list binds the
+# shipped kernel (the control).
+[[kernels.gemm_tiles]]
+suffix = "_l128x128"
+m = 128
+n = 128
+threads = 256
+min_wgs = 0

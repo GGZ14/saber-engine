@@ -1,0 +1,171 @@
+schema_version = 1
+plugin = "flashnext_df120b"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_df120b.hip"
+source_sha256 = "1c29ccb099b14f2d317bc705e0bd951f248611706eac66e8fee53cab33059237"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "1549bbb4bdb3de171d0da117250e5cd4bf18f7fa4dd552a2c4560b9a4667148b"
+hsaco = "flashnext_df120b.hsaco"
+hsaco_sha256 = "55e9d8102ad9f8ba231843c63894a18c4f5f8ad45d6f8ecfe119bb575a6cd7a1"
+
+[[kernel]]
+name = "fn120_df_gdn_b1"
+symbol = "fn120_df_gdn_b1.kd"
+kernarg_segment_size = 312
+kernarg_segment_align = 8
+group_segment_fixed_size = 4520
+private_segment_fixed_size = 0
+vgpr_count = 245
+sgpr_count = 107
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "tk"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "ntasks"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ctl"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "nstages"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "by_value"
+name = "timeout"
+
+[[kernel]]
+name = "fn120_df_gemm_probe"
+symbol = "fn120_df_gemm_probe.kd"
+kernarg_segment_size = 312
+kernarg_segment_align = 8
+group_segment_fixed_size = 4520
+private_segment_fixed_size = 0
+vgpr_count = 224
+sgpr_count = 63
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "tk"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "ntasks"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ctl"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "nstages"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "by_value"
+name = "timeout"
+
+[[kernel]]
+name = "fn120_df_nobody_probe"
+symbol = "fn120_df_nobody_probe.kd"
+kernarg_segment_size = 312
+kernarg_segment_align = 8
+group_segment_fixed_size = 40
+private_segment_fixed_size = 0
+vgpr_count = 10
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "tk"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "ntasks"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "imgs"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "ctl"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "nstages"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "by_value"
+name = "timeout"

@@ -1,0 +1,609 @@
+schema_version = 1
+plugin = "flashnext_attnfuse"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/flashnext_attnfuse.hip"
+source_sha256 = "02c2fed98d7638323205fdabd7ba5df80da75c7ad53a6941222e094f0d6a8720"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "4e3f7737df38bea18a5ddaf3cdd6404fda97615ad4d4356ab04b17321e2fb693"
+hsaco = "flashnext_attnfuse.hsaco"
+hsaco_sha256 = "27639d5b72a7ee1bba4ef89be3f3379b5470df622481a45ce275554681df3713"
+
+[[kernel]]
+name = "fn_attnfuse_combine_gate_q8_h256"
+symbol = "fn_attnfuse_combine_gate_q8_h256.kd"
+kernarg_segment_size = 188
+kernarg_segment_align = 8
+group_segment_fixed_size = 1056
+private_segment_fixed_size = 0
+vgpr_count = 26
+sgpr_count = 34
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 136
+value_kind = "by_value"
+name = "a"
+
+[[kernel.arg]]
+offset = 136
+size = 4
+value_kind = "by_value"
+name = "splits"
+
+[[kernel.arg]]
+offset = 140
+size = 4
+value_kind = "by_value"
+name = "tile"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "gate"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "gated"
+
+[[kernel.arg]]
+offset = 160
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 168
+size = 8
+value_kind = "global_buffer"
+name = "scales"
+
+[[kernel.arg]]
+offset = 176
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 180
+size = 4
+value_kind = "by_value"
+name = "hd"
+
+[[kernel.arg]]
+offset = 184
+size = 4
+value_kind = "by_value"
+name = "gs"
+
+[[kernel]]
+name = "fn_attnfuse_front_h256_bf16"
+symbol = "fn_attnfuse_front_h256_bf16.kd"
+kernarg_segment_size = 304
+kernarg_segment_align = 8
+group_segment_fixed_size = 64
+private_segment_fixed_size = 0
+vgpr_count = 48
+sgpr_count = 81
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "qkv"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "qw"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "kw"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "cos_sin"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "q_out"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "k_out"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "nq"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "nkv"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "qkv_n"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "sec_h"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "sec_w"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "iqk"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "by_value"
+name = "iqk_stride"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "iqw"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "global_buffer"
+name = "ikw"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "row_seq"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "row_lpos"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "seq_row0"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "seq_pos0"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "ring_row0"
+
+[[kernel.arg]]
+offset = 160
+size = 8
+value_kind = "global_buffer"
+name = "ring"
+
+[[kernel.arg]]
+offset = 168
+size = 8
+value_kind = "global_buffer"
+name = "ring_pos"
+
+[[kernel.arg]]
+offset = 176
+size = 4
+value_kind = "by_value"
+name = "ring_rows"
+
+[[kernel.arg]]
+offset = 184
+size = 8
+value_kind = "global_buffer"
+name = "block_table"
+
+[[kernel.arg]]
+offset = 192
+size = 4
+value_kind = "by_value"
+name = "max_blocks"
+
+[[kernel.arg]]
+offset = 200
+size = 8
+value_kind = "global_buffer"
+name = "iq_out"
+
+[[kernel.arg]]
+offset = 208
+size = 8
+value_kind = "global_buffer"
+name = "comp"
+
+[[kernel.arg]]
+offset = 216
+size = 8
+value_kind = "global_buffer"
+name = "value"
+
+[[kernel.arg]]
+offset = 224
+size = 8
+value_kind = "by_value"
+name = "value_stride"
+
+[[kernel.arg]]
+offset = 232
+size = 8
+value_kind = "global_buffer"
+name = "kv"
+
+[[kernel.arg]]
+offset = 240
+size = 8
+value_kind = "global_buffer"
+name = "slot"
+
+[[kernel.arg]]
+offset = 248
+size = 8
+value_kind = "by_value"
+name = "block_stride"
+
+[[kernel.arg]]
+offset = 256
+size = 8
+value_kind = "by_value"
+name = "page_stride"
+
+[[kernel.arg]]
+offset = 264
+size = 8
+value_kind = "by_value"
+name = "head_stride"
+
+[[kernel.arg]]
+offset = 272
+size = 8
+value_kind = "global_buffer"
+name = "ikey"
+
+[[kernel.arg]]
+offset = 280
+size = 8
+value_kind = "by_value"
+name = "ikey_stride"
+
+[[kernel.arg]]
+offset = 288
+size = 8
+value_kind = "global_buffer"
+name = "ring_slot"
+
+[[kernel.arg]]
+offset = 296
+size = 4
+value_kind = "by_value"
+name = "k_scale"
+
+[[kernel.arg]]
+offset = 300
+size = 4
+value_kind = "by_value"
+name = "v_scale"
+
+[[kernel]]
+name = "fn_attnfuse_front_h256_fp8"
+symbol = "fn_attnfuse_front_h256_fp8.kd"
+kernarg_segment_size = 304
+kernarg_segment_align = 8
+group_segment_fixed_size = 64
+private_segment_fixed_size = 0
+vgpr_count = 71
+sgpr_count = 81
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "qkv"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "qw"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "kw"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "cos_sin"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "q_out"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "k_out"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "nq"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "nkv"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "qkv_n"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "sec_h"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "sec_w"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "iqk"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "by_value"
+name = "iqk_stride"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "iqw"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "global_buffer"
+name = "ikw"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "row_seq"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "row_lpos"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "seq_row0"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "seq_pos0"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "ring_row0"
+
+[[kernel.arg]]
+offset = 160
+size = 8
+value_kind = "global_buffer"
+name = "ring"
+
+[[kernel.arg]]
+offset = 168
+size = 8
+value_kind = "global_buffer"
+name = "ring_pos"
+
+[[kernel.arg]]
+offset = 176
+size = 4
+value_kind = "by_value"
+name = "ring_rows"
+
+[[kernel.arg]]
+offset = 184
+size = 8
+value_kind = "global_buffer"
+name = "block_table"
+
+[[kernel.arg]]
+offset = 192
+size = 4
+value_kind = "by_value"
+name = "max_blocks"
+
+[[kernel.arg]]
+offset = 200
+size = 8
+value_kind = "global_buffer"
+name = "iq_out"
+
+[[kernel.arg]]
+offset = 208
+size = 8
+value_kind = "global_buffer"
+name = "comp"
+
+[[kernel.arg]]
+offset = 216
+size = 8
+value_kind = "global_buffer"
+name = "value"
+
+[[kernel.arg]]
+offset = 224
+size = 8
+value_kind = "by_value"
+name = "value_stride"
+
+[[kernel.arg]]
+offset = 232
+size = 8
+value_kind = "global_buffer"
+name = "kv"
+
+[[kernel.arg]]
+offset = 240
+size = 8
+value_kind = "global_buffer"
+name = "slot"
+
+[[kernel.arg]]
+offset = 248
+size = 8
+value_kind = "by_value"
+name = "block_stride"
+
+[[kernel.arg]]
+offset = 256
+size = 8
+value_kind = "by_value"
+name = "page_stride"
+
+[[kernel.arg]]
+offset = 264
+size = 8
+value_kind = "by_value"
+name = "head_stride"
+
+[[kernel.arg]]
+offset = 272
+size = 8
+value_kind = "global_buffer"
+name = "ikey"
+
+[[kernel.arg]]
+offset = 280
+size = 8
+value_kind = "by_value"
+name = "ikey_stride"
+
+[[kernel.arg]]
+offset = 288
+size = 8
+value_kind = "global_buffer"
+name = "ring_slot"
+
+[[kernel.arg]]
+offset = 296
+size = 4
+value_kind = "by_value"
+name = "k_scale"
+
+[[kernel.arg]]
+offset = 300
+size = 4
+value_kind = "by_value"
+name = "v_scale"

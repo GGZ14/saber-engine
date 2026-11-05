@@ -1,0 +1,20 @@
+[package]
+name = "saber-exec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+saber-abi = { path = "../saber-abi" }
+saber-hip = { path = "../saber-hip" }
+saber-kernels = { path = "../saber-kernels" }
+# P1: `layer.rs` assembles one decoder block out of `saber-model`'s Graph. The model plane has no
+# dependency back on the execution plane, so this stays a one-way edge.
+saber-model = { path = "../saber-model" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
