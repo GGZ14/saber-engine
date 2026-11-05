@@ -2,7 +2,7 @@ schema_version = 1
 plugin = "saber_ar_exact"
 arch = "gfx1201"
 source = "crates/saber-kernels/hip/saber_ar_exact.hip"
-source_sha256 = "0bf58049785b73a2ed3837adfbbbd3d81add01c99ff88527d00d44b525e22e5b"
+source_sha256 = "c61f698d9ce08e9d8d6c96821330d554a6bb496e8802ab81c333938c9fe85f0b"
 flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
 build_hash = "775eedcd5333933002388632f77d2413f57b4b43f30f3382c47a7df13ff89c3a"
 hsaco = "saber_ar_exact.hsaco"

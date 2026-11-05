@@ -142,7 +142,7 @@ extern "C" __global__ __launch_bounds__(DM_NT) void dflash_silu_quant_g128(
 //
 // THE ARITHMETIC, read off the drafter's OWN generated Triton and not off the Python
 // (`triton_red_fused_add_arange_bitwise_and_constant_pad_nd_fused_add_rms_norm_*_2` and `_8`,
-// kept at `~/saber-cache/evidence-f28/drafter_graph.py`):
+// kept at `an internal evidence capture (not shipped)`):
 //
 //   o       = the conv, in FP32                `tmp22 = tmp21.to(tl.float32)` is a NO-OP: the
 //                                              bf16 round a MATERIALISED conv output takes

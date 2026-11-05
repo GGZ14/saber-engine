@@ -1,5 +1,5 @@
 // SABER-AUTHORED (workstream G2, 2026-09-23) -- NOT sliced from the reference. Included at the end
-// of the generated mxfp4_quant.hip by the internal reference harness, after the reference's own
+// of the generated mxfp4_quant.hip by tools/gen_hip_sources.py, after the reference's own
 // `saber_gdn_norm_quant_impl`, so ArnqVec8, uint32_tt and ARNQ_T are the reference's.
 //
 // The GDN out_proj's A producer writing the FRAGMENT-TILED layout the A-tiled prefill GEMM reads.

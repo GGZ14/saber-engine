@@ -126,8 +126,8 @@ def packs_dir(cfg):
 # TP choices shown for information; only TP=2 is wired. (label, enabled, why)
 TP_ROWS = [
     ("TP=2   two GPUs   (the default)", True, ""),
-    ("TP=1   one GPU", False, "needs single-card packs and single-card tuning that the launchers do not wire; not offered yet"),
-    ("TP=3 / TP=4", False, "not implemented: the engine drives exactly two ranks (one peer device)"),
+    ("TP=1   one GPU", False, "the engine supports it, but the launchers and hosted packs only cover TP=2 for now"),
+    ("TP=3 / TP=4", False, "not supported: the engine is built for TP=1 and TP=2 and refuses any other value"),
 ]
 
 

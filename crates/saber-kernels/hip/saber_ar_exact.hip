@@ -1,7 +1,7 @@
 // Saber two-rank exact all-reduce (CLEANROOM-2, CR2-4c): the instantiation table of code object `saber_ar_exact`.
 // Bodies: sar_exact.h (the one-shot), sar_nq.h (one row + the decoder epilogue). Built -ffp-contract=off.
 //
-// Includable as text (spec 1.5.1): `flashnext_mega.hip` pastes this file in with __global__ / __launch_bounds__ /
+// Includable as text (spec 1.5.1): another translation unit may paste this file in with __global__ / __launch_bounds__ /
 // blockIdx / gridDim / blockDim / __syncthreads remapped and calls saber_ar_oneshot_2rank_exact_bf16 as a device
 // function with this argument list.
 #include "sar_exact.h"

@@ -2,7 +2,7 @@ schema_version = 1
 plugin = "dflash_mlp"
 arch = "gfx1201"
 source = "crates/saber-kernels/hip/dflash_mlp.hip"
-source_sha256 = "1d1ff222eb05329bd9e59151ee331ee93847105ec772d6529df908fb982883f7"
+source_sha256 = "c65093851e3b70146d2cdc31fc5846b750d51022673888acd562bcc450a3e301"
 flags = "--genco --offload-arch=gfx1201 -O3"
 build_hash = "904e471fb37d981b7ba5721cd897901ebdc5332df4a081ebebdf6e14edb996fd"
 hsaco = "dflash_mlp.hsaco"

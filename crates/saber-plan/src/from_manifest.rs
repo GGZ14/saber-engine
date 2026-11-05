@@ -596,12 +596,6 @@ pub const SEPARATELY_PLANNED: &[(&str, &str)] = &[
          executor under `--fn-kv-dtype fp8`, never a row of the 27B's text plan",
     ),
     (
-        "flashnext_mega",
-        "Flash-Next (FN23): the persistent decode-layer PROTOTYPE -- a feasibility instrument that \
-         walks a device stage table over the certified bodies; no plan binds it (the bench \
-         `tools/capture/fn23/fn23_bench.cpp` launches it)",
-    ),
-    (
         "flashnext_hc",
         "Flash-Next (FN5): the hyper-connection mix / combine kernels, the bf16 split-K band and \
          LDS tile, the bf16 norm twins -- planned by `saber_kernels::flashnext` for the qwen4_exp \

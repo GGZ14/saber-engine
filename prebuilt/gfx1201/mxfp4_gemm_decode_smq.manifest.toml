@@ -2,7 +2,7 @@ schema_version = 1
 plugin = "mxfp4_gemm_decode_smq"
 arch = "gfx1201"
 source = "crates/saber-kernels/hip/mxfp4_gemm_decode_smq.hip"
-source_sha256 = "afb97d3754548f9e929da190565fa9cd650399cbfaf2cd818bd419594fe69fb5"
+source_sha256 = "4c99fd8dacd6c0ff52fb2966b75dcb8b60d43a41b7df7fbca92f72d1afa22f1f"
 flags = "--genco --offload-arch=gfx1201 -O3"
 build_hash = "54c4e4181601ac70166a50b0561269a4252370c8c0f4f44d8c04bc024338d1c6"
 hsaco = "mxfp4_gemm_decode_smq.hsaco"

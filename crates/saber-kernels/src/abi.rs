@@ -3340,19 +3340,6 @@ pub const SIG_DFLASH_WALK: &[SigArg] = &[
     a("top_k", I32),
 ];
 
-/// FN23 (a feasibility prototype, no plan binds it): `fn23_mega_{a,b}_b{1,8}[_inl]`, the
-/// persistent decode-layer walk over a device stage table (`flashnext_mega.hip`): the table
-/// (`fn23_stage`, 32 B a row), the stage range, the kernarg image blob, the grid-barrier words and
-/// the optional per-stage wall-clock stamps.
-pub const SIG_FN23_MEGA: &[SigArg] = &[
-    p("st", 4),
-    a("s0", I32),
-    a("s1", I32),
-    p("imgs", 1),
-    p("gbar", 4),
-    p("ts", 8),
-];
-
 /// FN23: `fn23_offsets`, the card-side pre-flight of the argument offsets the walk unpacks.
 pub const SIG_FN23_OFFSETS: &[SigArg] = &[p("out", 4)];
 
@@ -3449,8 +3436,6 @@ pub fn signature_for(kernel: &str) -> Option<&'static [SigArg]> {
         } else {
             SIG_DFLASH_RERANK
         }
-    } else if kernel.starts_with("fn23_mega_") {
-        SIG_FN23_MEGA
     } else if kernel == "fn23_offsets" {
         SIG_FN23_OFFSETS
     } else if (kernel.starts_with("fn_hc_down_") || kernel.starts_with("fn131_down_"))

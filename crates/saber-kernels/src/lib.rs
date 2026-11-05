@@ -23,7 +23,6 @@ pub mod dflash;
 pub mod flashnext;
 pub mod fn19;
 pub mod fn22;
-pub mod fn23;
 pub mod fn33;
 pub mod fn50;
 pub mod fn6;
@@ -154,8 +153,6 @@ pub fn rule_table_for_plugin(plugin: &str) -> Option<&'static str> {
         // geometry is `saber_kernels::fn19`'s declared law (the decode form reuses FN10's split rows
         // at the sparse context band), keyed to the instrument table so nothing is re-keyed.
         "flashnext_qsa" | "flashnext_qsa_attn" => "noop_gfx1201.toml",
-        // FN23: the persistent decode-layer PROTOTYPE (a feasibility round; no plan binds it).
-        "flashnext_mega" => "noop_gfx1201.toml",
         // FN22: the MTP drafter's device-side chain (argmax -> the next token's embedding row). No
         // policy row binds it: its geometry is `saber_kernels::fn22`'s declared law.
         "flashnext_draft" => "noop_gfx1201.toml",
@@ -559,9 +556,6 @@ pub mod prebuilt {
             "flashnext_qsa_attn.hsaco",
             "fn_qsa_attn_prefill_h256_gqa12_bf16kv",
         ),
-        // FN23: the persistent decode-layer prototype (the certified bodies included verbatim and
-        // walked from a device stage table; a feasibility round, no plan binds it).
-        ("flashnext_mega.hsaco", "fn23_mega_a_b1"),
         // Flash-Next (FN22): the MTP drafter's device-side chain -- the argmax over the rank's
         // vocabulary half, the cross-rank exchange payload (the candidate's embedding row + its key
         // and id as exact bf16 lanes, summed with -0.0 by the certified exact all-reduce) and the

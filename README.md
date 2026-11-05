@@ -71,9 +71,11 @@ Keys: arrows or `j`/`k` move, Space/Enter change a row, `←`/`→` cycle choice
 quits. Settings are saved to `~/.config/saber/setup.json` and the launch script to
 `~/.config/saber/launch-<model>.sh`. `tools/saber-setup --print` shows the plan without the UI.
 
-Parallelism is **TP=2** (both cards, the tuned setup), and the wizard lets you choose which two GPUs.
-TP=1 and TP>=3 are listed but disabled: the engine drives exactly two ranks, and single-card serving is
-not wired into the launchers. The manual steps below do the same thing without the wizard.
+Parallelism is **TP=2** (both cards): that is the setup the launchers and the hosted packs cover, and the
+wizard lets you choose which two GPUs. The engine itself also runs **TP=1** (one card), but the
+launchers do not serve it yet and the single-card packs are not hosted, so the wizard lists it as
+unavailable. The engine refuses any other TP (3, 4, ...) by name: it is built for TP=1 and TP=2. The
+manual steps below do the same thing without the wizard.
 
 ## Get running
 
@@ -290,6 +292,40 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 `saber --help` lists the CLI: `serve`, `engine` (one-prompt gate with ms/step), `probe`, `gate`,
 `explain` and the per-feature gates.
 
+## Reproducing the code objects
+
+`prebuilt/gfx1201/` holds 116 compiled GPU code objects. Each has a manifest next to it recording the
+source file, its sha256, the compiler flags, a build hash (sha256 of the preprocessed source plus
+flags) and the object's own sha256. The sources are in `crates/saber-kernels/hip`.
+
+**Two ROCm toolchains built them**, both AMD "TheRock" builds. Each object records its compiler in
+the file; `tools/verify_prebuilt.py --table` lists it per object.
+
+| Objects | ROCm | TheRock commit | LLVM (`ROCm/llvm-project`) | Patches on LLVM |
+|---|---|---|---|---|
+| 64 | 10.1.0rc3 (HIP 7.16.26385) | `b324869fb311` | `d6f6cb69` (clang 24.0.0git) | none |
+| 52 | 7.14.0rc3 (HIP 7.14.60850) | `418cd5f63abb` | `46fcb339` (clang 23.0.0git) | 2 TheRock patches, both `hipcc` driver path handling (Windows include path, `HIP_PATH` precedence); the clang string carries `+PATCHED:` for them |
+
+Saber applies no patches to LLVM. The container image from `tools/build-image.sh` uses the public
+ROCm 7.2.4 image, whose compiler (clang 22) emits different code, so it will not reproduce these
+objects. To check them you need the matching toolchain:
+
+```bash
+# rebuild with a toolchain that has the right ROCm (SABER_IMAGE names the image tools/hipcc.sh uses)
+SABER_IMAGE=<image with that ROCm> cargo run -p saber-kernels --bin saber-kbuild -- --out /abs/path/inside/repo/rebuilt
+tools/verify_prebuilt.py --rebuilt /abs/path/inside/repo/rebuilt
+```
+
+**Compare the machine code, not the files.** Two builds of one source with one compiler differ in
+the dynamic symbol-table sections, so file hashes never match. `verify_prebuilt.py` compares `.text`,
+`.rodata` and the register limits, and only against a rebuild by the same compiler. When we ran it,
+every shipped object matched: 64 of 64 on ROCm 10.1 and 52 of 52 on ROCm 7.14, none different.
+
+The MXFP4 GEMM sources were derived from `tools/reference/ref_mxfp4_fp8.hip` by
+`tools/gen_hip_sources.py`. The committed `.hip` files are the inputs that were compiled, not the
+generator output: they have been renamed since, and the generator no longer reproduces every file
+(its header says which). Its reference differs from the one the file headers record by one comment and an identifier-prefix rename (the generator was renamed to match).
+
 ## Layout
 
 | Path | What |
@@ -299,4 +335,4 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 | `crates/saber-serve` | the OpenAI HTTP plane |
 | `crates/saber-kernels`, `prebuilt/gfx1201` | HIP kernel sources and their compiled code objects with manifests |
 | `crates/saber-mem`, `-model` | weight packs and the model graph |
-| `tools/` | launchers, the setup wizard, kernel generators, the optional kernel patch |
+| `tools/` | launchers, the setup wizard, kernel generators and their MXFP4 reference, `verify_prebuilt.py`, the optional kernel patch |

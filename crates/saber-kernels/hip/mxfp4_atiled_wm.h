@@ -1,5 +1,5 @@
 // SABER-AUTHORED (workstream G1, 2026-09-23) -- NOT sliced from the reference. Included at the end
-// of the generated mxfp4_gemm_atiled.hip by the internal reference harness, after the reference's own
+// of the generated mxfp4_gemm_atiled.hip by tools/gen_hip_sources.py, after the reference's own
 // A-tiled kernel, so kMag, PAD and the fragment typedefs are the reference's.
 //
 // The A-tiled prefill GEMM (fragment-order W, WPERM=1 only) with WM waves down M instead of the

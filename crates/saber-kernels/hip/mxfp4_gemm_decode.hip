@@ -1474,7 +1474,7 @@ extern "C" __global__ __launch_bounds__(DEC_DWN * 32) void mxfp4_gemm_decode_bk1
 }
 
 // ---------------------------------------------------------------- the decode PAIR (ws-h37)
-// GENERATED from the same slice by `decode_pair` in the internal reference harness see there.
+// GENERATED from the same slice by `decode_pair` in tools/gen_hip_sources.py: see there.
 // DTM = number of 16-row M-fragments; the launcher picks ceil(M/16). The reference server captures decode at
 // num_seqs*(SPEC+1): 5/10/20/25/35/40 under mtp at SPEC=4, and batch x 8 under a dflash drafter
 // at SPEC=7, which reaches 64 at max_num_seqs=8. DTM 1..4 covers every reachable batch of both.
