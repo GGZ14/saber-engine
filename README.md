@@ -336,3 +336,13 @@ generator output: they have been renamed since, and the generator no longer repr
 | `crates/saber-kernels`, `prebuilt/gfx1201` | HIP kernel sources and their compiled code objects with manifests |
 | `crates/saber-mem`, `-model` | weight packs and the model graph |
 | `tools/` | launchers, the setup wizard, kernel generators and their MXFP4 reference, `verify_prebuilt.py`, the optional kernel patch |
+
+## License
+
+Saber is licensed under the [Apache License 2.0](LICENSE). Copyright 2026 GGZ14. If you redistribute it
+or a fork, keep the [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) files with it: the Apache License
+requires the `NOTICE` attribution to be carried into your distribution.
+
+Two things in this repository are not covered by that license. `tools/kernel/fn71/` holds a patch to the
+Linux kernel, which is under the kernel's own license (GPL-2.0). The model weights the launchers download
+(Qwen3.8 and AMD's Flash-Next checkpoint) keep their own licenses.
