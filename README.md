@@ -71,10 +71,10 @@ Keys: arrows or `j`/`k` move, Space/Enter change a row, `←`/`→` cycle choice
 quits. Settings are saved to `~/.config/saber/setup.json` and the launch script to
 `~/.config/saber/launch-<model>.sh`. `tools/saber-setup --print` shows the plan without the UI.
 
-Parallelism is **TP=2** (both cards): that is the setup the launchers and the hosted packs cover, and the
-wizard lets you choose which two GPUs. The engine itself also runs **TP=1** (one card), but the
-launchers do not serve it yet and the single-card packs are not hosted, so the wizard lists it as
-unavailable. The engine refuses any other TP (3, 4, ...) by name: it is built for TP=1 and TP=2. The
+Parallelism is **TP=2** (both cards): that is the setup the launchers cover, and the wizard lets you
+choose which two GPUs. The engine itself also runs **TP=1** (one card), and the 27B's single-card packs
+are hosted too (`tools/fetch_packs.sh 27b-tp1`, see "One card (TP=1)" below), but the launchers do not
+boot TP=1 yet, so the wizard lists it as unavailable. The engine refuses any other TP (3, 4, ...) by name: it is built for TP=1 and TP=2. The
 manual steps below do the same thing without the wizard.
 
 ## Get running
@@ -111,6 +111,15 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' -
 ```
 
 (Use model id `Qwen3.8-Flash-Next` for Flash-Next.)
+
+**One card (TP=1).** A pack is cut for one TP degree: its rows and columns are already sharded per
+rank, so the TP=2 packs above (`rank0.pack` + `rank1.pack`) cannot be loaded on one card. The same
+Hugging Face repo hosts the single-card packs as separate folders, each with one `rank0.pack`:
+`qwen38-27b-nvfp4-devfinal-tp1-fp8head` (18.5 GB) and `qwen38-dflash2-drafter-tp1-fp8head` (6.4 GB).
+`tools/fetch_packs.sh 27b-tp1` downloads them into the packs directory. The launcher scripts
+(`serve_27b.sh`, the wizard) still start TP=2 only; to serve on one card, run `saber serve --engine real
+--engine-tp 1` yourself with `--pack` and `--engine-draft-pack` pointing at these folders. No single-card
+Flash-Next pack is hosted.
 
 **What the 27B download contains.** The target pack (`qwen38-27b-nvfp4-devfinal-fp8head`), the DFlash2
 drafter pack (`qwen38-dflash2-drafter-fp8head`), and the tokenizer and chat template, which

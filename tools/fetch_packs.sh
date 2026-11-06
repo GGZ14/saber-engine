@@ -4,6 +4,7 @@
 #
 #   tools/fetch_packs.sh 27b          # ~26 GB: the 27B target pack + the DFlash2 drafter pack,
 #                                     #   and the tokenizer / chat template into .cache/
+#   tools/fetch_packs.sh 27b-tp1      # ~25 GB: the SINGLE-CARD (TP=1) 27B target + drafter packs
 #   tools/fetch_packs.sh flashnext    # ~70 GB pack + the ~170 GB original checkpoint it points into
 #   tools/fetch_packs.sh all
 #
@@ -25,7 +26,7 @@ HF=$(command -v hf || command -v huggingface-cli || true)
 [ -n "$HF" ] || { echo "needs the Hugging Face CLI: pip install -U 'huggingface_hub[cli]'" >&2; exit 1; }
 
 want=${1:-}
-case "$want" in 27b | flashnext | all) ;; *) echo "usage: $0 27b|flashnext|all" >&2; exit 2 ;; esac
+case "$want" in 27b | 27b-tp1 | flashnext | all) ;; *) echo "usage: $0 27b|27b-tp1|flashnext|all" >&2; exit 2 ;; esac
 
 # A pack the engine would refuse fails here, by name, instead of mid-boot: every rank file
 # must start with the SBRPACK1 magic (docs/abi/PACK.md).
@@ -49,6 +50,20 @@ if [ "$want" = 27b ] || [ "$want" = all ]; then
   check_packs "$PACKS"/qwen38-27b-nvfp4-devfinal-fp8head/rank{0,1}.pack \
               "$PACKS"/qwen38-dflash2-drafter-fp8head/rank{0,1}.pack
   echo "27B ready: tools/serve_27b.sh --enable-prefix-caching on"
+fi
+
+if [ "$want" = 27b-tp1 ]; then
+  # A pack is cut for one TP degree (rows/columns are already sharded per rank), so the TP=1 packs
+  # are separate folders from the TP=2 ones above. One rank file each: rank0.pack.
+  echo "== $R27 (TP=1 packs) -> $PACKS"
+  "$HF" download "$R27" --local-dir "$PACKS" \
+    --include 'qwen38-27b-nvfp4-devfinal-tp1-fp8head/*' --include 'qwen38-dflash2-drafter-tp1-fp8head/*'
+  mkdir -p "$REPO/.cache"
+  "$HF" download "$R27" --local-dir "$REPO/.cache" \
+    --include 'template_corpus.tokenizer.json' --include 'template_corpus.jinja'
+  check_packs "$PACKS"/qwen38-27b-nvfp4-devfinal-tp1-fp8head/rank0.pack \
+              "$PACKS"/qwen38-dflash2-drafter-tp1-fp8head/rank0.pack
+  echo "27B TP=1 packs ready (the launchers still boot TP=2; see README 'One card (TP=1)')"
 fi
 
 if [ "$want" = flashnext ] || [ "$want" = all ]; then
