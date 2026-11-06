@@ -7,6 +7,8 @@ resolved plan replaces a flat environment-variable namespace. The server speaks 
 **Qwen3.8-27B** runs at tensor-parallel 2 on two R9700s with the DFlash2 speculative drafter:
 about 229 tok/s single-stream decode, TTFT around 47 ms, and 5,000+ tok/s prefill at a 210 W
 per-card cap, with a 262,144-token context, prefix caching and optional vision.
+It also runs on **one card** (TP=1, `tools/serve_27b.sh --tp 1`) with smaller context and concurrency
+defaults; see "One card (TP=1)" below.
 **Qwen3.8 Flash-Next** (MoE) is served by the same binary.
 
 ## What you need
@@ -57,12 +59,12 @@ tools/saber-setup
 
 A text-mode wizard (Python 3 standard library only, no installs) that does the setup for you:
 
-1. **System** checks the GPU driver, that you have two supported GPUs, podman or docker, the dev image, the
-   Hugging Face CLI, and free disk space.
-2. **Configure** picks the model (27B or Flash-Next) and shows a checklist of the common options with
-   our recommended defaults already selected: prefix caching, images (vision) off / lazy / on, thinking,
-   max context, concurrent sequences, port, packs directory, and which two GPUs to use. `d` puts everything
-   back to the defaults.
+1. **System** checks the GPU driver, that you have two supported GPUs (one for the 27B at TP=1), podman
+   or docker, the dev image, the Hugging Face CLI, and free disk space.
+2. **Configure** picks the model (27B or Flash-Next), the parallelism (TP=2 on two GPUs, or TP=1 on one
+   GPU for the 27B) and shows a checklist of the common options with our recommended defaults already
+   selected: prefix caching, images (vision) off / lazy / on, thinking, max context, concurrent
+   sequences, port, packs directory, and which GPU(s) to use. `d` puts everything back to the defaults.
 3. **Review & run** shows the exact launch command, what is installed and what is missing, and can
    install the missing pieces (builds the image, downloads the weights, each step asks first), save a
    re-runnable launch script, start the server, or stop it.
@@ -71,11 +73,13 @@ Keys: arrows or `j`/`k` move, Space/Enter change a row, `←`/`→` cycle choice
 quits. Settings are saved to `~/.config/saber/setup.json` and the launch script to
 `~/.config/saber/launch-<model>.sh`. `tools/saber-setup --print` shows the plan without the UI.
 
-Parallelism is **TP=2** (both cards): that is the setup the launchers cover, and the wizard lets you
-choose which two GPUs. The engine itself also runs **TP=1** (one card), and the 27B's single-card packs
-are hosted too (`tools/fetch_packs.sh 27b-tp1`, see "One card (TP=1)" below), but the launchers do not
-boot TP=1 yet, so the wizard lists it as unavailable. The engine refuses any other TP (3, 4, ...) by name: it is built for TP=1 and TP=2. The
-manual steps below do the same thing without the wizard.
+Parallelism is **TP=2** (both cards) by default, and the wizard lets you choose which two GPUs. For the
+27B you can pick **TP=1** instead: it then asks for ONE GPU, downloads the single-card packs
+(`tools/fetch_packs.sh 27b-tp1`) and launches `tools/serve_27b.sh --tp 1` with the TP=1 context and
+sequence defaults (see "One card (TP=1)" below; `tools/saber-setup --tp 1 --print` shows that plan).
+Flash-Next is TP=2 only (no single-card Flash-Next pack is hosted), and the wizard says so on its TP=1
+row. The engine refuses any other TP (3, 4, ...) by name: it is built for TP=1 and TP=2. The manual
+steps below do the same thing without the wizard.
 
 ## Get running
 
@@ -87,7 +91,7 @@ only one server runs at a time, they share the cards).
 | Download | about 26 GB | about 70 GB of packs **plus the original 170 GB checkpoint** (see below) |
 | Hugging Face | [`Launch80/Qwen3.8-27B-NVFP4-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-NVFP4-SABER) | [`Launch80/Qwen3.8-Flash-Next-SABER`](https://huggingface.co/Launch80/Qwen3.8-Flash-Next-SABER) + [`amd/Qwen3.8-Flash-Next-Quark-MXFP4`](https://huggingface.co/amd/Qwen3.8-Flash-Next-Quark-MXFP4) |
 | Fetch | `tools/fetch_packs.sh 27b` (two cards, TP=2); `tools/fetch_packs.sh 27b-tp1` (one card, TP=1, about 25 GB) | `tools/fetch_packs.sh flashnext` |
-| Serve | `tools/serve_27b.sh` | `tools/serve_flashnext.sh` |
+| Serve | `tools/serve_27b.sh` (two cards); `tools/serve_27b.sh --tp 1` (one card) | `tools/serve_flashnext.sh` |
 
 ```bash
 git clone git@github.com:GGZ14/saber-engine.git && cd saber-engine
@@ -103,6 +107,7 @@ tools/fetch_packs.sh 27b            # or: flashnext   (or: all = 27b + flashnext
 
 # 3. Serve. Builds the release binary, boots both cards, waits for /v1/models.
 tools/serve_27b.sh --enable-prefix-caching on        # or: tools/serve_flashnext.sh
+#    One card (with the 27b-tp1 packs):  tools/serve_27b.sh --tp 1 --enable-prefix-caching on
 
 # 4. Talk to it.
 curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' -d '{
@@ -118,10 +123,32 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' -
 rank, so the TP=2 packs above (`rank0.pack` + `rank1.pack`) cannot be loaded on one card. The same
 Hugging Face repo hosts the single-card packs as separate folders, each with one `rank0.pack`:
 `qwen38-27b-nvfp4-devfinal-tp1-fp8head` (18.5 GB) and `qwen38-dflash2-drafter-tp1-fp8head` (6.4 GB).
-`tools/fetch_packs.sh 27b-tp1` downloads them into the packs directory. The launcher scripts
-(`serve_27b.sh`, the wizard) still start TP=2 only; to serve on one card, run `saber serve --engine real
---engine-tp 1` yourself with `--pack` and `--engine-draft-pack` pointing at these folders. No single-card
-Flash-Next pack is hosted.
+`tools/fetch_packs.sh 27b-tp1` downloads them into the packs directory (the tokenizer and chat template
+are the same files as TP=2's). Then:
+
+```bash
+tools/serve_27b.sh --tp 1 --enable-prefix-caching on          # card 0
+DEVICE=1 tools/serve_27b.sh --tp 1 --no-build                 # or card 1 (container saber-27b-tp1-serve)
+```
+
+One card holds the 18.5 GB target pack and the 6.4 GB drafter pack, so the KV pool is far smaller than
+TP=2's, and the TP=1 defaults are **`MAX_CTX=65536` per sequence, `MAX_SEQS=4`, decode batches
+`1,2,4`** (draft block 8 and verify widths `1,8` as at TP=2). At those defaults the pool holds 10,548
+blocks = 168,768 tokens, about 2.5 full-length sequences. Measured on one R9700 (card 0 at a 210 W cap;
+ROCm 10.1 dev image; the optional 2 GiB P2P pool carved out of the card):
+
+| TP=1, one R9700 | measured |
+|---|---|
+| Single-stream decode, 256 tokens, temperature 0 | 67 tok/s (prose) / 148 tok/s (code) / 231 tok/s (counting): the speculative drafter's acceptance sets the rate (card 1 at a 300 W cap: 68 / 152 / 237) |
+| Max context per sequence | 65,536 by default; 131,072 and 163,840 also boot (a 145k-token prompt answered, prefill ~2,650 tok/s); 196,608 is refused at boot (one sequence would not fit the pool) |
+| Max sequences | 4 by default; 8 boots and serves (`MAX_SEQS=8 BATCHES=1,2,4,8`: the GDN state doubles, the pool drops to 101,120 tokens) |
+| VRAM | 29.5 GiB used at the served peak (31.5 GiB with the P2P pool), of 32 GiB |
+| Images | `--vision lazy` and `--vision on` both work (`on` keeps the tower resident: the pool drops to 122k tokens, so keep `MAX_CTX` at 65,536 or below and `MAX_SEQS` at 4) |
+
+Boot takes under 10 s with the packs in the page cache. The chat, streaming, 1k- and 2.6k-token prompts
+and a 3-request burst were checked on both cards; no TP=1 BetterBench run, prefill sweep or long soak
+has been done, and the speculative tree verify form is planned for TP=2 only (a TP=1 boot runs the
+chain form and says so in its log). No single-card Flash-Next pack is hosted.
 
 **What the 27B download contains.** The target pack (`qwen38-27b-nvfp4-devfinal-fp8head`), the DFlash2
 drafter pack (`qwen38-dflash2-drafter-fp8head`), and the tokenizer and chat template, which
@@ -178,6 +205,7 @@ Both launchers take their own flags first, then pass everything else straight to
 | Flag | What it does |
 |---|---|
 | `--no-build` | Skip the `cargo build`; reuse `.cache/target-container/release/saber`. Use this for every boot after the first (a build takes about two minutes). |
+| `--tp 1` | Serve on ONE card (TP=1) from the `-tp1-fp8head` packs (`tools/fetch_packs.sh 27b-tp1`), on HIP device `DEVICE` (default 0), container `saber-27b-tp1-serve`. `TP=1` in the environment does the same; `--tp 2` (the default) is the two-card server. See "One card (TP=1)". |
 | `--vision` | Accept images (`image_url` parts). Same as `--vision lazy`: the vision tower lives in pinned host RAM and streams through the idle prefill arena per image. No VRAM is billed and the full 262k context stays, at about +30 ms per image. |
 | `--vision on` | Keep the tower resident (about 1.9 GiB a rank). Needs `MAX_CTX=131072`. |
 | `--vision off` | Text only (the default). |
@@ -185,15 +213,18 @@ Both launchers take their own flags first, then pass everything else straight to
 | `--enable-prefix-caching on` | Cache finished prompts, so a returning conversation prefills only its new tail. Default `off`. |
 | `--warm-prompts FILE` | Prefill the system prompt(s) in `FILE` at boot and report ready only when done. Turns prefix caching on. |
 | `--tool-call-parser NAME` / `--reasoning-parser NAME` | Tool-call and reasoning-block parsing. Default `qwen3_coder` and `qwen3`. |
-| `stop` | Stop the server container. |
+| `stop` | Stop the server container: whichever 27B server (TP=2 or TP=1) is running. `--tp 1 stop` stops only the TP=1 one. |
 
 Environment variables (put them before the command):
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `8080` | Listen port |
-| `MAX_CTX` | `262144` | Context per sequence; lower it for more concurrent sessions or `--vision on` |
-| `MAX_SEQS` | `8` | Concurrent sequences |
+| `MAX_CTX` | `262144` (TP=1: `65536`) | Context per sequence; lower it for more concurrent sessions or `--vision on` |
+| `MAX_SEQS` | `8` (TP=1: `4`) | Concurrent sequences |
+| `BATCHES` | `1,2,3,4,8` (TP=1: `1,2,4`) | Captured decode batch sizes |
+| `DEVICE` | `0` | TP=1 only: the one HIP device to serve on (the container sees only that card) |
+| `HIP_DEVICES` | `0,1` | TP=2 only: the two HIP devices |
 | `WIDTHS` | `1,8` | Speculative verify widths |
 | `DRAFT_BLOCK` | `8` | Drafter block size (`4` halves the GDN slots) |
 | `MODEL` | `Qwen3.8` | Served model id |
@@ -201,7 +232,7 @@ Environment variables (put them before the command):
 | `SABER_SHARED` | `~/saber-cache` | Scratch and logs shared between runs |
 | `SABER_IMAGE` | `localhost/saber-dev:latest` | The dev image |
 | `SABER_CONTAINER` | autodetect | `podman` or `docker` |
-| `CNAME` | `saber-27b-serve` | Container name |
+| `CNAME` | `saber-27b-serve` (TP=1: `saber-27b-tp1-serve`) | Container name |
 
 ### Flash-Next: `tools/serve_flashnext.sh [flags]` (model id `Qwen3.8-Flash-Next`)
 
@@ -257,6 +288,7 @@ Without a vision flag the 27B refuses an image part by name.
 | Reuse the last build | `tools/serve_27b.sh --no-build` |
 | Another port | `PORT=8100 tools/serve_27b.sh ...` |
 | Smaller context | `MAX_CTX=65536 tools/serve_27b.sh ...` |
+| One card | `tools/serve_27b.sh --tp 1` (card 1: `DEVICE=1 tools/serve_27b.sh --tp 1`) |
 | Logs | `podman logs -f saber-27b-serve` (or `docker logs -f ...`) |
 | Exit code of a dead server | `podman wait saber-27b-serve` |
 | Flash-Next | `tools/serve_flashnext.sh` |
@@ -268,6 +300,8 @@ Without a vision flag the 27B refuses an image part by name.
 | `missing pack ...` / `missing .cache/template_corpus...` | A step in "Get running" was skipped; the message names the file. |
 | `port 8080 is already in use` | Another server is up; stop it or set `PORT`. |
 | `another saber server or an agent hold holds the cards` | A `saber-*` container is running; `ps` it and stop it. |
+| `container ... holds HIP device N` (TP=1) | A running `saber-*` container already uses that card; stop it or pick another `DEVICE`. |
+| `... is a TP=2 pack (it has rank1.pack)` | TP=1 needs the single-card packs: `tools/fetch_packs.sh 27b-tp1`. |
 | Exit code **86**, last log line `saber: FATAL rank R: <reason>` | A rank failed. The server exits, answers queued requests 503 and frees both cards within 10 s. |
 | `permission denied` on `/dev/kfd` | Add yourself to `video` and `render`, log in again. Under docker, check the printed `--group-add` gids. |
 | `neither podman nor docker is installed` | Install one, or set `SABER_CONTAINER`. |

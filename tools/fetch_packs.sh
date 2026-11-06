@@ -63,7 +63,7 @@ if [ "$want" = 27b-tp1 ]; then
     --include 'template_corpus.tokenizer.json' --include 'template_corpus.jinja'
   check_packs "$PACKS"/qwen38-27b-nvfp4-devfinal-tp1-fp8head/rank0.pack \
               "$PACKS"/qwen38-dflash2-drafter-tp1-fp8head/rank0.pack
-  echo "27B TP=1 packs ready (the launchers still boot TP=2; see README 'One card (TP=1)')"
+  echo "27B TP=1 packs ready: tools/serve_27b.sh --tp 1 --enable-prefix-caching on"
 fi
 
 if [ "$want" = flashnext ] || [ "$want" = all ]; then

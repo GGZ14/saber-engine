@@ -5,6 +5,7 @@ the missing pieces and launch the server.
     tools/saber-setup                 # the terminal UI
     tools/saber-setup --print         # no UI: print the plan for the saved (or default) settings
     tools/saber-setup --model flashnext --print
+    tools/saber-setup --tp 1 --print  # the 27B on ONE card (TP=1)
 
 Python 3 standard library only (curses). The UI never decides anything the launchers do not: every
 option maps to an environment variable or a flag that tools/serve_27b.sh / tools/serve_flashnext.sh
@@ -37,6 +38,14 @@ MODELS = {
         extra_files=[".cache/template_corpus.tokenizer.json", ".cache/template_corpus.jinja"],
         download_gb=26,
         note="about 26 GB of packs",
+        # The single-card (TP=1) form: its own packs (a pack is cut for one TP degree), container, fetch target.
+        tp1=dict(
+            container="saber-27b-tp1-serve",
+            packs=["qwen38-27b-nvfp4-devfinal-tp1-fp8head", "qwen38-dflash2-drafter-tp1-fp8head"],
+            download_gb=25,
+            note="about 25 GB of single-card (TP=1) packs",
+            fetch="27b-tp1",
+        ),
     ),
     "flashnext": dict(
         title="Qwen3.8 Flash-Next (MoE)",
@@ -59,9 +68,18 @@ def _none(_v, _c):
     return {}, []
 
 
-def opt(key, label, kind, default, help, emit=_none, choices=None, models=("27b", "flashnext")):
+def opt(key, label, kind, default, help, emit=_none, choices=None, models=("27b", "flashnext"), tps=("1", "2")):
     return dict(key=key, label=label, kind=kind, default=default, help=help, emit=emit,
-                choices=choices or [], models=models)
+                choices=choices or [], models=models, tps=tps)
+
+
+# TP=1 (the 27B on one card): the launcher's own defaults (tools/serve_27b.sh --tp 1) and the values
+# offered. One card holds 18.5 GB of target + 6.4 GB of drafter pack, so the KV pool is far smaller
+# than TP=2's (about 168k tokens at 4 sequences, 101k at 8); every value here booted and answered on a
+# card (README "One card (TP=1)"). 163840 also boots but one such sequence takes the whole pool.
+TP1_CTX_DEFAULT, TP1_CTX_CHOICES = "65536", ["65536", "131072", "32768", "16384"]
+TP1_SEQS_DEFAULT, TP1_SEQS_CHOICES = "4", ["4", "8", "2", "1"]
+TP1_VISION = ["off", "lazy", "on"]
 
 
 def _ctx_flag_27b(v, c):
@@ -75,7 +93,10 @@ def _ctx_flag_fn(v, c):
 OPTIONS = [
     opt("gpus", "GPU pair (HIP devices)", "choice", "0,1",
         "Which two GPUs serve. Saber runs tensor-parallel over exactly two cards (TP=2).",
-        emit=lambda v, c: ({"HIP_DEVICES": str(v)}, []), choices=["0,1"]),
+        emit=lambda v, c: ({"HIP_DEVICES": str(v)}, []), choices=["0,1"], tps=("2",)),
+    opt("gpu1", "GPU (HIP device)", "choice", "0",
+        "Which one GPU serves the 27B at TP=1.",
+        emit=lambda v, c: ({"DEVICE": str(v)}, []), choices=["0", "1"], models=("27b",), tps=("1",)),
     # 27B
     opt("prefix", "Prefix caching", "toggle", True,
         "Cache finished prompts so a returning conversation only prefills its new tail.",
@@ -123,20 +144,63 @@ FN_NVME = "/mnt/nvme"  # Flash-Next: the pack's manifest names the checkpoint un
 def packs_dir(cfg):
     return cfg["packs"] if cfg["model"] == "27b" else FN_NVME + "/saber-packs"
 
-# TP choices shown for information; only TP=2 is wired. (label, enabled, why)
-TP_ROWS = [
-    ("TP=2   two GPUs   (the default)", True, ""),
-    ("TP=1   one GPU", False, "the engine supports it, but the launchers and hosted packs only cover TP=2 for now"),
-    ("TP=3 / TP=4", False, "not supported: the engine is built for TP=1 and TP=2 and refuses any other value"),
-]
+FN_TP1_REFUSAL = "Flash-Next serves TP=2 only: no single-card (TP=1) Flash-Next pack is hosted"
 
 
-def options_for(model):
-    return [o for o in OPTIONS if model in o["models"]]
+def tp_rows(model):
+    """The Parallelism rows: [(tp or None, label, enabled, why)]."""
+    one = (True, "") if model == "27b" else (False, FN_TP1_REFUSAL)
+    return [
+        ("2", "TP=2   two GPUs   (the default)", True, ""),
+        ("1", "TP=1   one GPU" + ("" if model == "27b" else "   (27B only; Flash-Next is TP=2)"), *one),
+        (None, "TP=3 / TP=4", False, "not supported: the engine is built for TP=1 and TP=2 and refuses any other value"),
+    ]
+
+
+def options_for(model, tp="2"):
+    return [o for o in OPTIONS if model in o["models"] and tp in o["tps"]]
+
+
+def choices_for(o, cfg):
+    if cfg.get("tp") == "1" and o["key"] == "ctx27":
+        return TP1_CTX_CHOICES
+    if cfg.get("tp") == "1" and o["key"] == "seqs":
+        return TP1_SEQS_CHOICES
+    if cfg.get("tp") == "1" and o["key"] == "vision27":
+        return TP1_VISION
+    return o["choices"]
+
+
+def default_of(o, cfg):
+    if cfg.get("tp") == "1" and o["key"] == "ctx27":
+        return TP1_CTX_DEFAULT
+    if cfg.get("tp") == "1" and o["key"] == "seqs":
+        return TP1_SEQS_DEFAULT
+    return o["default"]
+
+
+def set_tp(cfg, tp):
+    """Switch TP: a context / sequence count / vision mode left at the old TP's default, or one the new TP
+    does not offer, goes to the new TP's default."""
+    keys = ("ctx27", "seqs", "vision27")
+    old = {o["key"]: default_of(o, cfg) for o in OPTIONS if o["key"] in keys}
+    cfg["tp"] = tp
+    for o in OPTIONS:
+        if o["key"] in keys and (cfg[o["key"]] == old[o["key"]] or cfg[o["key"]] not in choices_for(o, cfg)):
+            cfg[o["key"]] = default_of(o, cfg)
+
+
+def model_info(cfg):
+    """MODELS[model], with the TP=1 form's packs / container / download folded in."""
+    m = dict(MODELS[cfg["model"]])
+    if cfg.get("tp") == "1" and "tp1" in m:
+        m.update(m["tp1"])
+    m.setdefault("fetch", cfg["model"])
+    return m
 
 
 def default_cfg(model="27b"):
-    cfg = {"model": model}
+    cfg = {"model": model, "tp": "2"}
     for o in OPTIONS:
         cfg[o["key"]] = o["default"]
     return cfg
@@ -148,10 +212,12 @@ def load_cfg():
         with open(CONF) as f:
             saved = json.load(f)
         for k, v in saved.items():
-            if (k == "model" and v in MODELS) or (k != "model" and k in cfg):
+            if (k == "model" and v in MODELS) or (k == "tp" and v in ("1", "2")) or (k not in ("model", "tp") and k in cfg):
                 cfg[k] = v
     except (OSError, ValueError):
         pass
+    if cfg["model"] != "27b":
+        cfg["tp"] = "2"
     return cfg
 
 
@@ -235,7 +301,7 @@ def detect_system(cfg):
 
 
 def pack_status(cfg):
-    m = MODELS[cfg["model"]]
+    m = model_info(cfg)
     have = []
     legacy = {"qwen38-flashnext-quark-trunk8": "qwen38-flashnext-quark-ep2-trunk8"}  # the maintainers' local name
     for p in m["packs"]:
@@ -261,22 +327,33 @@ def effective_cfg(cfg):
     if c["model"] == "27b" and c["vision27"] == "on" and int(c["ctx27"]) > 131072:
         c["ctx27"] = "131072"
         notes.append("Vision 'on' keeps the tower in VRAM, so max context is lowered to 131072.")
+    if c.get("tp") == "1" and c["vision27"] == "on" and (int(c["ctx27"]) > 65536 or int(c["seqs"]) > 4):
+        c["ctx27"], c["seqs"] = str(min(int(c["ctx27"]), 65536)), str(min(int(c["seqs"]), 4))
+        notes.append("Vision 'on' at TP=1 keeps the tower in the one card's VRAM: context <= 65536 and <= 4 sequences.")
+    if c.get("tp") == "1":
+        for o in OPTIONS:
+            if o["key"] in ("ctx27", "seqs", "vision27") and c[o["key"]] not in choices_for(o, c):
+                notes.append(f"{o['label']} {c[o['key']]} is not offered at TP=1; using {default_of(o, c)}.")
+                c[o["key"]] = default_of(o, c)
     return c, notes
 
 
 def build_launch(cfg):
     """(env dict, argv list) for the launcher; only non-default settings produce flags."""
     c, _ = effective_cfg(cfg)
+    tp = c.get("tp", "2")
     env, flags = {}, []
-    for o in options_for(c["model"]):
+    for o in options_for(c["model"], tp):
         e, f = o["emit"](c[o["key"]], c)
         env.update(e)
         flags += f
     # Environment that equals the launcher's own default is left out, so the command stays short.
     defaults = {"PORT": "8080", "MAX_SEQS": "8", "MAX_CTX": "262144", "HIP_DEVICES": "0,1",
                 "SABER_PACKS": "/mnt/nvme/saber-packs"}
+    if tp == "1":
+        defaults.update({"MAX_SEQS": TP1_SEQS_DEFAULT, "MAX_CTX": TP1_CTX_DEFAULT, "DEVICE": "0"})
     env = {k: v for k, v in env.items() if defaults.get(k) != v}
-    return env, [MODELS[c["model"]]["launcher"]] + flags
+    return env, [MODELS[c["model"]]["launcher"]] + (["--tp", "1"] if tp == "1" else []) + flags
 
 
 def shell_line(cfg):
@@ -286,13 +363,13 @@ def shell_line(cfg):
 
 def install_steps(cfg, sysinfo):
     """[(label, command or None, already_done)] in order."""
-    m = MODELS[cfg["model"]]
+    m = model_info(cfg)
     steps = []
     steps.append(("Build the dev image (one time, needs network)", ["tools/build-image.sh"], sysinfo["image"]))
     missing = [n for n, ok in pack_status(cfg) if not ok]
     env = {"SABER_PACKS": packs_dir(cfg)} if packs_dir(cfg) != "/mnt/nvme/saber-packs" else {}
     steps.append((f"Download weights: {m['note']}",
-                  ["tools/fetch_packs.sh", cfg["model"]], not missing))
+                  ["tools/fetch_packs.sh", m["fetch"]], not missing))
     return steps, env
 
 
@@ -304,7 +381,7 @@ def launch_script(cfg):
 
 def write_launch_script(cfg):
     os.makedirs(CONF_DIR, exist_ok=True)
-    p = os.path.join(CONF_DIR, f"launch-{cfg['model']}.sh")
+    p = os.path.join(CONF_DIR, f"launch-{cfg['model']}{'-tp1' if cfg.get('tp') == '1' else ''}.sh")
     with open(p, "w") as f:
         f.write(launch_script(cfg))
     os.chmod(p, 0o755)
@@ -312,13 +389,17 @@ def write_launch_script(cfg):
 
 
 def plan_text(cfg, sysinfo=None):
-    m = MODELS[cfg["model"]]
-    _, notes = effective_cfg(cfg)
-    lines = [f"Model        {m['title']}", "Parallelism  TP=2 on HIP devices " + cfg["gpus"]]
-    for o in options_for(cfg["model"]):
-        if o["key"] in ("gpus",):
+    m = model_info(cfg)
+    c, notes = effective_cfg(cfg)
+    if c.get("tp") == "1":
+        lines = [f"Model        {m['title']}", "Parallelism  TP=1 on HIP device " + c["gpu1"],
+                 "Packs        " + " + ".join(m["packs"]) + f"  (tools/fetch_packs.sh {m['fetch']})"]
+    else:
+        lines = [f"Model        {m['title']}", "Parallelism  TP=2 on HIP devices " + cfg["gpus"]]
+    for o in options_for(cfg["model"], c.get("tp", "2")):
+        if o["key"] in ("gpus", "gpu1"):
             continue
-        v = cfg[o["key"]]
+        v = (c if c.get("tp") == "1" else cfg)[o["key"]]
         v = ("on" if v else "off") if o["kind"] == "toggle" else v
         lines.append(f"{o['label']:<22}{v}")
     if cfg["model"] == "flashnext":
@@ -346,7 +427,7 @@ def do_install(cfg, sysinfo):
     if not todo:
         print("Everything is already installed.")
         return True
-    need = MODELS[cfg["model"]]["download_gb"]
+    need = model_info(cfg)["download_gb"]
     print(f"Free space at {sysinfo['packs_dir']}: {sysinfo['free_gb']:.0f} GB; the download needs about {need} GB.")
     if sysinfo["free_gb"] < need:
         print("Not enough free space. Free some up or change the packs directory.")
@@ -372,7 +453,8 @@ def do_launch(cfg):
 
 
 def do_stop(cfg):
-    return run_step([MODELS[cfg["model"]]["launcher"], "stop"]) == 0
+    tp = ["--tp", "1"] if cfg.get("tp") == "1" else []
+    return run_step([MODELS[cfg["model"]]["launcher"]] + tp + ["stop"]) == 0
 
 
 # --------------------------------------------------------------------------------------------
@@ -410,9 +492,9 @@ def ui(stdscr, cfg):
     def rows():
         """The Configure page: [(kind, payload)]; kinds: model, tp, opt, head."""
         r = [("head", "Model"), ("model", None), ("head", "Parallelism")]
-        r += [("tp", t) for t in TP_ROWS]
+        r += [("tp", t) for t in tp_rows(cfg["model"])]
         r += [("head", "Options (recommended defaults are preselected)")]
-        r += [("opt", o) for o in options_for(cfg["model"])]
+        r += [("opt", o) for o in options_for(cfg["model"], cfg["tp"])]
         return r
 
     def selectable(r):
@@ -421,6 +503,16 @@ def ui(stdscr, cfg):
     def gpu_pairs():
         n = max(sysinfo["supported_gpus"], 2)
         return [f"{a},{b}" for a in range(n) for b in range(a + 1, n)]
+
+    def gpu_ones():
+        return [str(a) for a in range(max(sysinfo["supported_gpus"], 1))]
+
+    def row_choices(o):
+        if o["key"] == "gpus":
+            return gpu_pairs()
+        if o["key"] == "gpu1":
+            return gpu_ones()
+        return choices_for(o, cfg)
 
     while True:
         stdscr.erase()
@@ -436,7 +528,9 @@ def ui(stdscr, cfg):
             gp = ", ".join(f"{g[0]}{'' if g[1] else ' (unsupported)'}" for g in s["gpus"]) or "none found"
             lines = [
                 (s["kfd"], f"GPU driver (/dev/kfd)"),
-                (s["supported_gpus"] >= 2, f"GPUs: {gp}   (Saber needs two supported gfx12 cards)"),
+                (s["supported_gpus"] >= (1 if cfg["tp"] == "1" else 2),
+                 f"GPUs: {gp}   " + ("(TP=1 needs one supported gfx12 card)" if cfg["tp"] == "1"
+                                    else "(Saber needs two supported gfx12 cards; one for the 27B at TP=1)")),
                 (bool(s["container"]), f"Container runtime: {s['container'] or 'podman or docker not found'}"),
                 (s["image"], "Dev image localhost/saber-dev:latest (built by tools/build-image.sh)"),
                 (bool(s["hf"]), "Hugging Face CLI (for downloading weights)" if s["hf"] else
@@ -467,9 +561,9 @@ def ui(stdscr, cfg):
                     seg = "   ".join(("(*) " if m == cfg["model"] else "( ) ") + MODELS[m]["title"] for m in MODELS)
                     put(y, 3, seg, a)
                 elif k == "tp":
-                    label, enabled, why = p
-                    mark = "(*)" if enabled else "( )"
-                    put(y, 3, f"{mark} {label}", a if enabled else curses.A_DIM)
+                    tpv, label, enabled, why = p
+                    mark = "(*)" if tpv == cfg["tp"] else "( )"
+                    put(y, 3, f"{mark} {label}", a if enabled else (a | curses.A_DIM))
                 else:
                     o = p
                     v = cfg[o["key"]]
@@ -477,8 +571,7 @@ def ui(stdscr, cfg):
                         val = "[x]" if v else "[ ]"
                         put(y, 3, f"{val} {o['label']}", a)
                     elif o["kind"] == "choice":
-                        ch = gpu_pairs() if o["key"] == "gpus" else o["choices"]
-                        put(y, 3, f"{o['label']:<24}< {v} >" + ("   (default)" if v == o["default"] else ""), a)
+                        put(y, 3, f"{o['label']:<24}< {v} >" + ("   (default)" if v == default_of(o, cfg) else ""), a)
                     else:
                         put(y, 3, f"{o['label']:<24}[{v}]" + ("   (default)" if v == o["default"] else ""), a)
                 y += 1
@@ -487,7 +580,8 @@ def ui(stdscr, cfg):
                 if k == "opt":
                     help_ = p["help"]
                 elif k == "tp":
-                    help_ = p[2] or "Both cards, tensor-parallel: the supported and tuned setup."
+                    help_ = p[3] or ("Both cards, tensor-parallel: the tuned setup." if p[0] == "2" else
+                                     "One card: the single-card packs, a smaller context and fewer sequences.")
                 else:
                     help_ = "Switch between the two supported models (←/→)."
                 put(h - 5, 1, help_[: w - 3], YELLOW)
@@ -542,9 +636,10 @@ def ui(stdscr, cfg):
         elif ch in (curses.KEY_UP, ord("k")):
             sel = (sel - 1) % len(idx)
         elif ch == ord("d"):
-            m = cfg["model"]
+            m, tp = cfg["model"], cfg["tp"]
             cfg.clear()
             cfg.update(default_cfg(m))
+            set_tp(cfg, tp)
             msg = "All options reset to the recommended defaults."
         elif ch in (ord(" "), 10, 13, curses.KEY_RIGHT, curses.KEY_LEFT):
             k, p = r[idx[sel]]
@@ -552,14 +647,23 @@ def ui(stdscr, cfg):
             if k == "model":
                 keys = list(MODELS)
                 cfg["model"] = keys[(keys.index(cfg["model"]) + step) % len(keys)]
+                if cfg["model"] != "27b" and cfg["tp"] != "2":
+                    set_tp(cfg, "2")
                 sel = 0
                 sysinfo = detect_system(cfg)
             elif k == "tp":
-                msg = p[2] or "TP=2 is already selected."
+                tpv, _label, enabled, why = p
+                if not enabled:
+                    msg = why
+                elif tpv == cfg["tp"]:
+                    msg = f"TP={tpv} is already selected."
+                else:
+                    set_tp(cfg, tpv)
+                    msg = f"TP={tpv} selected."
             elif p["kind"] == "toggle":
                 cfg[p["key"]] = not cfg[p["key"]]
             elif p["kind"] == "choice":
-                ch_list = gpu_pairs() if p["key"] == "gpus" else p["choices"]
+                ch_list = row_choices(p)
                 cur_v = cfg[p["key"]]
                 i = ch_list.index(cur_v) if cur_v in ch_list else 0
                 cfg[p["key"]] = ch_list[(i + step) % len(ch_list)]
@@ -589,12 +693,20 @@ def main():
     ap = argparse.ArgumentParser(description="Guided setup for Saber")
     ap.add_argument("--print", dest="show", action="store_true", help="print the plan and exit (no UI)")
     ap.add_argument("--model", choices=list(MODELS), help="model (overrides the saved one)")
+    ap.add_argument("--tp", choices=["1", "2"], help="tensor parallelism: 2 = two GPUs, 1 = one GPU (27B only)")
     ap.add_argument("--defaults", action="store_true", help="ignore saved settings")
     args = ap.parse_args()
 
     cfg = default_cfg() if args.defaults else load_cfg()
     if args.model:
         cfg["model"] = args.model
+        if args.model != "27b" and not args.tp:
+            cfg["tp"] = "2"
+    if args.tp:
+        if args.tp == "1" and cfg["model"] != "27b":
+            print(f"refused: {FN_TP1_REFUSAL}.", file=sys.stderr)
+            return 2
+        set_tp(cfg, args.tp)
     if args.show or not sys.stdout.isatty() or not sys.stdin.isatty():
         print(plan_text(cfg))
         return 0
