@@ -16,7 +16,7 @@ per-card cap, with a 262,144-token context, prefix caching and optional vision.
 | GPUs | 2x Radeon AI PRO R9700 (gfx1201), PCIe; one card works for TP=1 |
 | OS / runtime | Linux with the ROCm kernel driver (`/dev/kfd`, `/dev/dri`) and **podman or docker** |
 | Host | a fast NVMe for the weight packs (`/mnt/nvme/saber-packs`; 27B about 26 GB; Flash-Next about 70 GB, with its 170 GB checkpoint under `models/`) |
-| Weights | the prebuilt packs from `tools/fetch_packs.sh`: 27B ~26 GB; Flash-Next ~70 GB of packs plus the original 170 GB checkpoint |
+| Weights | the prebuilt packs from `tools/fetch_packs.sh`: 27B ~26 GB (TP=2) or ~25 GB (`27b-tp1`, one card); Flash-Next ~70 GB of packs plus the original 170 GB checkpoint |
 
 All builds and GPU runs happen inside the dev container, so the host needs no ROCm toolchain.
 
@@ -86,7 +86,7 @@ only one server runs at a time, they share the cards).
 |---|---|---|
 | Download | about 26 GB | about 70 GB of packs **plus the original 170 GB checkpoint** (see below) |
 | Hugging Face | [`Launch80/Qwen3.8-27B-NVFP4-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-NVFP4-SABER) | [`Launch80/Qwen3.8-Flash-Next-SABER`](https://huggingface.co/Launch80/Qwen3.8-Flash-Next-SABER) + [`amd/Qwen3.8-Flash-Next-Quark-MXFP4`](https://huggingface.co/amd/Qwen3.8-Flash-Next-Quark-MXFP4) |
-| Fetch | `tools/fetch_packs.sh 27b` | `tools/fetch_packs.sh flashnext` |
+| Fetch | `tools/fetch_packs.sh 27b` (two cards, TP=2); `tools/fetch_packs.sh 27b-tp1` (one card, TP=1, about 25 GB) | `tools/fetch_packs.sh flashnext` |
 | Serve | `tools/serve_27b.sh` | `tools/serve_flashnext.sh` |
 
 ```bash
@@ -97,7 +97,9 @@ tools/build-image.sh
 
 # 2. Pull the weights. Downloads resume if interrupted. Packs land in /mnt/nvme/saber-packs
 #    (override with SABER_PACKS); it also needs `pip install -U 'huggingface_hub[cli]'`.
-tools/fetch_packs.sh 27b            # or: flashnext   (or: all)
+tools/fetch_packs.sh 27b            # or: flashnext   (or: all = 27b + flashnext, both TP=2)
+#    One card? use the TP=1 packs instead:  tools/fetch_packs.sh 27b-tp1   (see "One card (TP=1)" below;
+#    `all` does not include them)
 
 # 3. Serve. Builds the release binary, boots both cards, waits for /v1/models.
 tools/serve_27b.sh --enable-prefix-caching on        # or: tools/serve_flashnext.sh
