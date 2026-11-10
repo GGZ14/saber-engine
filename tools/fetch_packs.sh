@@ -38,6 +38,22 @@ check_packs() {
   [ "$bad" = 0 ]
 }
 
+# The Flash-Next trunk8 / mtp_fp8 / mtp_x4 / hc8 files are raw record blobs, NOT SBRPACK1 files: they have no
+# magic, and the engine reads them through the sibling <name>.json, whose "bytes" is the blob's size. So check
+# that the index exists and the size matches (a truncated download fails here). dense.pack and vision/rank*.pack
+# in the same repo are real SBRPACK1 files and keep the magic check above.
+check_blobs() {
+  local f j want have bad=0
+  for f in "$@"; do
+    j=${f%.pack}.json
+    if [ ! -f "$f" ] || [ ! -f "$j" ]; then echo "bad or missing blob: $f (needs $j)" >&2; bad=1; continue; fi
+    want=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["bytes"])' "$j" 2>/dev/null) || want=
+    have=$(wc -c < "$f" | tr -d ' ')
+    [ -n "$want" ] && [ "$want" = "$have" ] || { echo "bad blob size: $f is $have bytes, $j says ${want:-?}" >&2; bad=1; }
+  done
+  [ "$bad" = 0 ]
+}
+
 mkdir -p "$PACKS"
 
 if [ "$want" = 27b ] || [ "$want" = all ]; then
@@ -70,8 +86,9 @@ if [ "$want" = flashnext ] || [ "$want" = all ]; then
   echo "== $RFN -> $PACKS"
   "$HF" download "$RFN" --local-dir "$PACKS"
   P=$PACKS/qwen38-flashnext-quark-trunk8
-  check_packs "$P"/rank{0,1}/trunk8.pack "$P"/rank{0,1}/mtp_fp8.pack "$P"/rank{0,1}/mtp_x4.pack \
-              "$P"/vision/rank{0,1}.pack "$P"/shared/hc8.pack
+  check_blobs "$P"/rank{0,1}/trunk8.pack "$P"/rank{0,1}/mtp_fp8.pack "$P"/rank{0,1}/mtp_x4.pack \
+              "$P"/shared/hc8.pack
+  check_packs "$P"/rank{0,1}/dense.pack "$P"/shared/dense.pack "$P"/vision/rank{0,1}.pack
   [ -s "$P/rank0/experts.tp2.xtier" ] && [ -s "$P/rank1/experts.tp2.xtier" ] \
     || { echo "missing rank*/experts.tp2.xtier under $P" >&2; exit 1; }
   # The Flash-Next pack is NOT self-contained: its manifest points into the original checkpoint
