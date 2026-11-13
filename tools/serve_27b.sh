@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# Boot Saber's served Qwen3.8-27B (the main-branch defaults: NVFP4->MXFP4 devfinal pack, fp8 head,
-# the DFlash2 drafter, TP=2) for a client to point at. Mirrors tools/gates/betterbench.sh's server half.
+# Boot Saber's served Qwen3.8-27B for a client to point at. The default weights are the MACaQ MXFP4
+# pack (qwen38-27b-macaq7-bc3: a block-32 Hadamard before every W4A8 GEMM + 19 W8 promotions, all
+# driven by the pack -- the boot log says `macaqhad ON` / `macaqw8 19`), the quarkhead DFlash2 drafter,
+# verify widths 1,5,8, TP=2, model id Qwen3.8-27B-MACaQ-MXFP4; packs from `tools/fetch_packs.sh 27b-macaq`.
 #
 #   tools/serve_27b.sh              # build the release binary in the dev image, then serve on :8080
 #   tools/serve_27b.sh --no-build   # reuse the last container build
 #   tools/serve_27b.sh stop         # stop the server container (whichever of TP=2 / TP=1 is running)
-#   tools/serve_27b.sh --tp 1 [--no-build]   # ONE card (TP=1; or TP=1 in the environment): the -tp1-fp8head
-#     packs from `tools/fetch_packs.sh 27b-tp1`, on HIP device DEVICE (default 0), container
+#   tools/serve_27b.sh --tp 1 [--no-build]   # ONE card (TP=1; or TP=1 in the environment): the -tp1 packs of
+#     the chosen weights (`tools/fetch_packs.sh 27b-macaq-tp1` for the default), on HIP device DEVICE (default 0), container
 #     saber-27b-tp1-serve; defaults MAX_CTX 65536, MAX_SEQS 4, BATCHES 1,2,4 (every env knob below
 #     still overrides). `--tp 1 stop` stops only the TP=1 container. TP=2 (`--tp 2`) is the default.
-#   tools/serve_27b.sh --weights quark [--tp 1] ...   # amd/Qwen3.8-27B-Quark-AWQ-MXFP4 instead of the NVFP4 packs
-#     (WEIGHTS=quark in the environment does the same): the qwen38-27b-quark-awq-mxfp4[-tp1] target +
-#     the qwen38-dflash2-drafter-quarkhead[-tp1] drafter from `tools/fetch_packs.sh 27b-quark[-tp1]` (or
-#     tools/build_packs.sh), and that checkpoint's own tokenizer (.cache/quark27b.tokenizer.json).
-#     TIER / DRAFT / TOKENIZER / CHAT_TEMPLATE override any of them (paths as the container sees them).
+#   tools/serve_27b.sh --weights macaq|quark|nvfp4 [--tp 1] ...   # which 27B weights (WEIGHTS=... in the environment
+#     does the same). macaq (the default): the MACaQ pack above. quark: amd/Qwen3.8-27B-Quark-AWQ-MXFP4 as
+#     published (qwen38-27b-quark-awq-mxfp4[-tp1], `tools/fetch_packs.sh 27b-quark[-tp1]` or tools/build_packs.sh).
+#     Both use the qwen38-dflash2-drafter-quarkhead[-tp1] drafter and the Quark checkpoint's own tokenizer
+#     (.cache/quark27b.tokenizer.json). nvfp4: the NVFP4->MXFP4 devfinal pack + fp8-head drafter (the previous
+#     default; `tools/fetch_packs.sh 27b[-tp1]`), model id Qwen3.8, widths 1,8.
+#     TIER / DRAFT / MODEL / TOKENIZER / CHAT_TEMPLATE override any of them (paths as the container sees them).
 #   SERVE_PREFIX="/opt/rocm/bin/rocprofv3 --kernel-trace -f csv -d DIR --" tools/serve_27b.sh ...   # CMP27D: a DIAGNOSTIC tool wrapped around `saber serve` (both ranks)
-#   PORT=8100 MAX_CTX=16384 WIDTHS=1,5,8 tools/serve_27b.sh ...   # port / per-sequence context (default 262144) / verify-width ladder (default 1,8)
+#   PORT=8100 MAX_CTX=16384 WIDTHS=1,5,8 tools/serve_27b.sh ...   # port / per-sequence context (default 262144) / verify-width ladder (default 1,5,8; 1,8 for --weights nvfp4 / quark)
 #   DRAFT_BLOCK=4 WIDTHS=1,4 tools/serve_27b.sh ...   # P27-7: the drafter's block (default 8; 4 = the priced option, GDN slots 65 -> 33)
 #   VISION (P27-11, 2026-10-07): `--vision` = `--vision lazy` -- the tower streams from pinned host RAM through the
 #   idle prefill arena per image (no VRAM billed, the full 262k KV pool: 47,335 blocks a rank; images up to
@@ -29,7 +33,7 @@
 #   tools/serve_27b.sh --no-build --warm-prompts ~/pi-system.txt   # FN66: prefill your system prompt(s)
 #     once at boot (prefix caching turns on); see docs/HOWTO-SERVE.md "Warm prompts"
 # Extra arguments after the subcommand are passed to `saber serve`. OpenAI-compatible: /v1/models,
-# /v1/chat/completions, /v1/completions; model id Qwen3.8. Logs: podman logs -f saber-27b-serve (or docker logs ...). Docker works too: SABER_CONTAINER=docker.
+# /v1/chat/completions, /v1/completions; model id Qwen3.8-27B-MACaQ-MXFP4 (MODEL=...; Qwen3.8 for --weights nvfp4). Logs: podman logs -f saber-27b-serve (or docker logs ...). Docker works too: SABER_CONTAINER=docker.
 set -uo pipefail
 REPO=${SABER_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}   # SABER_REPO: a hold run from a worktree serves from the main checkout's .cache
 . "$REPO/tools/lib/container.sh"   # CTR = podman or docker (SABER_CONTAINER=docker to force)
@@ -38,7 +42,7 @@ SHARED=${SABER_SHARED:-$HOME/saber-cache}
 # The launcher's own leading words, in any order: `--tp 1|2`, `--no-build`, `stop`.
 TP_GIVEN=${TP:+env}
 TP=${TP:-2}
-WEIGHTS=${WEIGHTS:-nvfp4}
+WEIGHTS=${WEIGHTS:-macaq}
 BUILD=1
 STOP=0
 while [ $# -gt 0 ]; do
@@ -59,7 +63,6 @@ case "$TP" in
 esac
 PORT=${PORT:-8080}
 PACKS=${SABER_PACKS:-/mnt/nvme/saber-packs}
-MODEL=${MODEL:-Qwen3.8}
 PREBUILT=${PREBUILT:-prebuilt/gfx1201}   # CMP27E: a hold's frozen prebuilt dir (a path the container sees: under /work or $SHARED)
 SABER=${SABER_BIN:-.cache/target-container/release/saber}   # P27-9d: SABER_BIN = another build, a path under the repo as the container sees /work
 OUT=$SHARED/serve-27b
@@ -82,14 +85,15 @@ if [ "$STOP" = 1 ]; then
 fi
 
 case "$WEIGHTS" in
-  nvfp4) Q=nvfp4-devfinal; QD=; QF= ;;
-  quark) Q=quark-awq-mxfp4; QD=-quarkhead; QF=-quark ;;
-  *) echo "--weights $WEIGHTS: nvfp4 (the default) or quark" >&2; exit 2 ;;
+  macaq) Q=macaq7-bc3; QD=-quarkhead; QF=-macaq; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-MXFP4}; WIDTHS=${WIDTHS:-1,5,8} ;;
+  quark) Q=quark-awq-mxfp4; QD=-quarkhead; QF=-quark; MODEL=${MODEL:-Qwen3.8} ;;
+  nvfp4) Q=nvfp4-devfinal; QD=; QF=; MODEL=${MODEL:-Qwen3.8} ;;
+  *) echo "--weights $WEIGHTS: macaq (the default), quark or nvfp4" >&2; exit 2 ;;
 esac
 CNAME=${CNAME:-$TP_DEF_CNAME}
 if [ "$TP" = 2 ]; then
   MAX_CTX=${MAX_CTX:-262144}
-  if [ "$WEIGHTS" = quark ]; then TIER=${TIER:-qwen38-27b-$Q}; DRAFT=${DRAFT:-qwen38-dflash2-drafter$QD}
+  if [ "$WEIGHTS" != nvfp4 ]; then TIER=${TIER:-qwen38-27b-$Q}; DRAFT=${DRAFT:-qwen38-dflash2-drafter$QD}
   else TIER=${TIER:-qwen38-27b-nvfp4-devfinal-fp8head}; DRAFT=${DRAFT:-qwen38-dflash2-drafter-fp8head}; fi
   TP_ARGS="--engine-tp 2 --engine-device 0 --engine-peer-device 1"
   HIP_DEVICES=${HIP_DEVICES:-0,1}
@@ -102,7 +106,7 @@ else
   DEVICE=${DEVICE:-0}
   [[ "$DEVICE" =~ ^[0-9]+$ ]] || { echo "DEVICE=$DEVICE: TP=1 serves on ONE HIP device index" >&2; exit 2; }
   MAX_CTX=${MAX_CTX:-65536}
-  if [ "$WEIGHTS" = quark ]; then TIER=${TIER:-qwen38-27b-$Q-tp1}; DRAFT=${DRAFT:-qwen38-dflash2-drafter$QD-tp1}
+  if [ "$WEIGHTS" != nvfp4 ]; then TIER=${TIER:-qwen38-27b-$Q-tp1}; DRAFT=${DRAFT:-qwen38-dflash2-drafter$QD-tp1}
   else TIER=${TIER:-qwen38-27b-nvfp4-devfinal-tp1-fp8head}; DRAFT=${DRAFT:-qwen38-dflash2-drafter-tp1-fp8head}; fi
   TP_ARGS="--engine-tp 1 --engine-device 0"
   HIP_DEVICES=$DEVICE
@@ -110,7 +114,7 @@ else
   MAX_SEQS=${MAX_SEQS:-4}
   FETCH=27b$QF-tp1
 fi
-if [ "$WEIGHTS" = quark ]; then TOKENIZER=${TOKENIZER:-/work/.cache/quark27b.tokenizer.json}
+if [ "$WEIGHTS" != nvfp4 ]; then TOKENIZER=${TOKENIZER:-/work/.cache/quark27b.tokenizer.json}
 else TOKENIZER=${TOKENIZER:-/work/.cache/template_corpus.tokenizer.json}; fi
 CHAT_TEMPLATE=${CHAT_TEMPLATE:-/work/.cache/template_corpus.jinja}
 # FN66: `--warm-prompts FILE` -- the file is copied where the container sees it ($OUT) and the

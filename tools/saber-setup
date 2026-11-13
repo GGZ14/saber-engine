@@ -31,20 +31,22 @@ GIB = 1024**3
 # name, launcher, container name, packs the launcher needs (under SABER_PACKS), download size (GB), model id
 MODELS = {
     "27b": dict(
-        title="Qwen3.8-27B (dense, DFlash2 drafter)",
+        title="Qwen3.8-27B-MACaQ-MXFP4 (dense, DFlash2 drafter)",
         launcher="tools/serve_27b.sh",
         container="saber-27b-serve",
-        packs=["qwen38-27b-nvfp4-devfinal-fp8head", "qwen38-dflash2-drafter-fp8head"],
-        extra_files=[".cache/template_corpus.tokenizer.json", ".cache/template_corpus.jinja"],
-        download_gb=26,
-        note="about 26 GB of packs",
+        # The launcher's default weights (tools/serve_27b.sh --weights macaq): the MACaQ pack + the quarkhead drafter.
+        packs=["qwen38-27b-macaq7-bc3", "qwen38-dflash2-drafter-quarkhead"],
+        extra_files=[".cache/quark27b.tokenizer.json", ".cache/template_corpus.jinja"],
+        download_gb=29,
+        note="about 29 GB of packs",
+        fetch="27b-macaq",
         # The single-card (TP=1) form: its own packs (a pack is cut for one TP degree), container, fetch target.
         tp1=dict(
             container="saber-27b-tp1-serve",
-            packs=["qwen38-27b-nvfp4-devfinal-tp1-fp8head", "qwen38-dflash2-drafter-tp1-fp8head"],
-            download_gb=25,
-            note="about 25 GB of single-card (TP=1) packs",
-            fetch="27b-tp1",
+            packs=["qwen38-27b-macaq7-bc3-tp1", "qwen38-dflash2-drafter-quarkhead-tp1"],
+            download_gb=28,
+            note="about 28 GB of single-card (TP=1) packs",
+            fetch="27b-macaq-tp1",
         ),
     ),
     "flashnext": dict(
