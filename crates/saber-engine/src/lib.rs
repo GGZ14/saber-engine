@@ -63,6 +63,7 @@ pub mod host_levers;
 pub mod host_trace;
 pub mod index;
 pub mod lookup;
+pub mod macaq;
 pub mod mixed_class;
 pub mod null;
 pub mod park;

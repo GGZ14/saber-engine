@@ -54,11 +54,23 @@ impl Default for SamplingParams {
     }
 }
 
+/// The default floor of the `prompt_logprobs` cap: the device seam's K (`saber_kernels::head::DEVICE_ROW_K`),
+/// the widest top-k a prompt row can be answered with.
+pub const DEFAULT_MAX_PROMPT_LOGPROBS: i32 = 64;
+
 /// Server-side limits a request is validated against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SamplingLimits {
-    /// `--max-logprobs` (the reference server's default is 20).
+    /// `--max-logprobs` (the reference server's default is 20): the cap on the sampled token's
+    /// `logprobs` / `top_logprobs`, and on `prompt_logprobs` when it is above
+    /// [`Self::max_prompt_logprobs`].
     pub max_logprobs: i32,
+    /// The floor of the `prompt_logprobs` cap: [`DEFAULT_MAX_PROMPT_LOGPROBS`] = 64, the
+    /// seam's width, so a teacher-forced scorer (QualityBench's `logprobs` task reads the top 64
+    /// of every prompt position) is answered without lifting the sampled-token cap. The cap a
+    /// request meets is the larger of this and `--max-logprobs` ([`Self::max_prompt_logprobs_resolved`]);
+    /// above it the refusal is the reference server's own 400, text and shape.
+    pub max_prompt_logprobs: i32,
     pub max_model_len: usize,
     /// the reference server's max-n-sequences environment knob, read off the prod image: 16384. A plan field rather than
     /// a `getenv` (CLAUDE.md, structural rule 4).
@@ -80,6 +92,14 @@ impl SamplingLimits {
         }
     }
 
+    /// The `prompt_logprobs` cap: the larger of `--max-logprobs` and [`Self::max_prompt_logprobs`],
+    /// each resolved (`-1` = the whole vocabulary).
+    #[must_use]
+    pub fn max_prompt_logprobs_resolved(&self) -> i64 {
+        self.max_logprobs_resolved()
+            .max(self.resolve(self.max_prompt_logprobs))
+    }
+
     /// A request's `logprobs` / `prompt_logprobs`, resolved the same way.
     #[must_use]
     pub fn resolve(&self, requested: i32) -> i64 {
@@ -95,6 +115,7 @@ impl Default for SamplingLimits {
     fn default() -> Self {
         Self {
             max_logprobs: 20,
+            max_prompt_logprobs: DEFAULT_MAX_PROMPT_LOGPROBS,
             max_model_len: 262_144,
             max_n: 16_384,
             vocab_size: 248_320,
@@ -347,7 +368,7 @@ impl SamplingParams {
                 ));
             }
             let want = limits.resolve(prompt_logprobs);
-            let max = limits.max_logprobs_resolved();
+            let max = limits.max_prompt_logprobs_resolved();
             if prompt_logprobs != 0 && want > max {
                 return Err(ApiError::invalid_param(
                     format!(
@@ -448,6 +469,67 @@ mod tests {
             "Requested sample logprobs of 99, which is greater than max allowed: 20 \
              (parameter=logprobs, value=99)"
         );
+    }
+
+    /// `prompt_logprobs` is capped at the seam's 64 by default (QualityBench's
+    /// teacher-forced top-64), above it with the reference server's own 400; the sampled token's
+    /// `logprobs` keeps the reference server's 20; `--max-logprobs` above 64 lifts both.
+    #[test]
+    fn prompt_logprobs_cap_is_the_seam_and_sample_cap_stays_twenty() {
+        let limits = SamplingLimits::default();
+        assert_eq!(limits.max_prompt_logprobs_resolved(), 64);
+        for ok in [1, 20, 21, 64] {
+            SamplingParams {
+                prompt_logprobs: Some(ok),
+                ..Default::default()
+            }
+            .validate(limits)
+            .unwrap_or_else(|e| panic!("prompt_logprobs {ok}: {}", e.body.message));
+        }
+        let err = SamplingParams {
+            prompt_logprobs: Some(65),
+            ..Default::default()
+        }
+        .validate(limits)
+        .expect_err("65 is over the seam");
+        assert_eq!(
+            err.body.message,
+            "Requested prompt logprobs of 65, which is greater than max allowed: 64 \
+             (parameter=prompt_logprobs, value=65)"
+        );
+        assert_eq!(err.body.param.as_deref(), Some("prompt_logprobs"));
+        assert_eq!(err.body.code, 400);
+        let err = SamplingParams {
+            prompt_logprobs: Some(-1),
+            ..Default::default()
+        }
+        .validate(limits)
+        .expect_err("-1 is the whole vocabulary");
+        assert!(err.body.message.starts_with(
+            "Requested prompt logprobs of 248320, which is greater than max allowed: 64"
+        ));
+        // The sampled token's cap is untouched.
+        let err = SamplingParams {
+            logprobs: Some(21),
+            ..Default::default()
+        }
+        .validate(limits)
+        .expect_err("sample cap 20");
+        assert!(err
+            .body
+            .message
+            .starts_with("Requested sample logprobs of 21, which is greater than max allowed: 20"));
+        // `--max-logprobs` above 64 lifts the prompt cap with it; -1 is the vocabulary.
+        let wide = SamplingLimits {
+            max_logprobs: 100,
+            ..Default::default()
+        };
+        assert_eq!(wide.max_prompt_logprobs_resolved(), 100);
+        let all = SamplingLimits {
+            max_logprobs: -1,
+            ..Default::default()
+        };
+        assert_eq!(all.max_prompt_logprobs_resolved(), 248_320);
     }
 
     #[test]

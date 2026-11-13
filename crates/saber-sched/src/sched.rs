@@ -782,8 +782,13 @@ struct Seq {
     /// error rather than a list with a hole in it.
     prompt_lp: Option<Vec<PromptPositionLogprobs>>,
     /// FN52: prompt positions the prefill must CUT at (a chunk never crosses one): the prefix
-    /// snapshot point and the verify arm's compare point. Empty with the cache off.
+    /// snapshot point and the verify arm's compare point -- and, in the verify arm, every cut of
+    /// the compared entry's lineage. Empty with the cache off.
     cuts: Vec<u32>,
+    /// the cut lineage this session's prefill restarted its chunks at below its own
+    /// snapshot point -- the adopted (or verified) hit's [`crate::PrefixHit::lineage`]; an entry
+    /// saved by this session keeps it.
+    lineage: Vec<u32>,
     /// FN52: snapshot the state here (a whole-block boundary) and retain the prefix.
     snap_at: Option<u32>,
     /// FN52, the verify arm: `(entry, tokens, entry's blocks)` to compare against at `tokens`.
@@ -1151,6 +1156,8 @@ struct PrefixPlan {
     snap_at: Option<u32>,
     /// The verify arm's compare point.
     verify_at: Option<(u32, u32, Vec<u32>)>,
+    /// the hit's cut lineage (adopted or verified; empty on a miss).
+    lineage: Vec<u32>,
 }
 
 /// The engine: continuous batching, paged KV plus a separate GDN state arena, dynamic verify
@@ -2206,12 +2213,14 @@ impl Core {
             .snapshot_point(prompt_len)
             .filter(|a| !self.prefix.holds(&prompt, *a))
             .filter(|a| hit.as_ref().is_none_or(|h| *a > h.tokens));
+        let lineage = hit.as_ref().map(|h| h.lineage()).unwrap_or_default();
         if self.prefix.policy().verify {
             PrefixPlan {
                 looked: true,
                 adopt: None,
                 snap_at,
                 verify_at: hit.map(|h| (h.entry, h.tokens, h.blocks)),
+                lineage,
             }
         } else {
             PrefixPlan {
@@ -2219,6 +2228,7 @@ impl Core {
                 adopt: hit,
                 snap_at,
                 verify_at: None,
+                lineage,
             }
         }
     }
@@ -2295,11 +2305,12 @@ impl Core {
         }
         let blocks = seq.kv.blocks[..nblocks].to_vec();
         let tokens = seq.tokens[..at as usize].to_vec();
+        let lineage = seq.lineage.clone();
         let id = self.prefix.reserve_id();
         match exec.prefix_save(seq_id, id, at) {
             Ok(bytes) => {
                 self.arenas.retain_kv(&blocks);
-                let evicted = self.prefix.insert(id, tokens, blocks, bytes);
+                let evicted = self.prefix.insert(id, tokens, blocks, bytes, lineage);
                 tracing::info!(
                     seq = %seq_id, entry = id, tokens = at, host_bytes = bytes,
                     entries = self.prefix.len(), held = self.prefix.host_bytes(),
@@ -2642,11 +2653,22 @@ impl Core {
                     && w.resume.is_none()
                     && w.params.prompt_logprobs.is_some())
                 .then(|| vec![None]),
+                // the verify arm's fresh prefill restarts its chunks at the compared
+                // entry's whole lineage (an adopted session starts past it: nothing to cut).
                 cuts: prefix
                     .snap_at
                     .into_iter()
                     .chain(prefix.verify_at.as_ref().map(|v| v.1))
+                    .chain(
+                        prefix
+                            .verify_at
+                            .is_some()
+                            .then(|| prefix.lineage.iter().copied())
+                            .into_iter()
+                            .flatten(),
+                    )
                     .collect(),
+                lineage: prefix.lineage.clone(),
                 snap_at: prefix.snap_at,
                 verify_at: prefix.verify_at.clone(),
             });

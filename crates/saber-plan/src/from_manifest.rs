@@ -614,6 +614,34 @@ pub const SEPARATELY_PLANNED: &[(&str, &str)] = &[
          one op -- a `gemm_w4a8` row would let `select` bind a GEMM that also reduces",
     ),
     (
+        "macaq_w8",
+        "MACaQ: the `--macaq-w8` per-token W8A8 bodies (form-c W8 promotions), named only by the 27B \
+         planner's `KernelOp::GemmW8A8` route through `saber_kernels::macaq_w8::cell` (the band is data \
+         there) -- never a route row (a row would let `select` bind a W8 body against a W4 pack)",
+    ),
+    (
+        "mxfp4_had",
+        "MACaQ: the `--macaq-had` twins of `mxfp4_quant`'s producers, named only by \
+         `saber_kernels::macaq::had_twin` from the parent's resolved descriptor when the graph \
+         binds the `macaq_had32` t records -- never a route row (a row would bind a Hadamard \
+         producer against original-domain weights)",
+    ),
+    (
+        "attn_glue_had",
+        "MACaQ: the `--macaq-had` twins of `attn_gate_quant`, named only by \
+         `saber_kernels::macaq::had_twin` (see `mxfp4_had`)",
+    ),
+    (
+        "saber_ar_had",
+        "MACaQ: the `--macaq-had` twin of the served `_nq` epilogue, named only by \
+         `saber_kernels::macaq::had_twin` inside `Planner::nq_fusion` (see `mxfp4_had`)",
+    ),
+    (
+        "mxfp4_gemm_decode_arnq_had",
+        "MACaQ: the `--macaq-had` twin of fusion-map row 3, named only by \
+         `saber_kernels::macaq::had_twin` inside `Planner::gemm_ar_fusion` (see `mxfp4_had`)",
+    ),
+    (
         "mxfp4_gemm_decode_smq",
         "fusion-map row 4 (ws-h40): the gate_up decode GEMM + `silu_mul_quant` in one dispatch, \
          bound by the block planner's fold (`Planner::smq_fusion` -> \

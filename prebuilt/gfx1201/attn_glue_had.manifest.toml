@@ -1,0 +1,129 @@
+schema_version = 1
+plugin = "attn_glue_had"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/attn_glue_had.hip"
+source_sha256 = "e9219b1d911341b9fd7741549dafc13ca53a2412546e5bdf668aedf12a672c84"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "2f7b186bdcb20ca6a2c8a2ab2d0d488111762e7448c5c894fba847fa3bafa12c"
+hsaco = "attn_glue_had.hsaco"
+hsaco_sha256 = "ad0d330793c6fa760e6ce2f1e781da3f19bd1dc416d342cab06510998dd7e9d5"
+
+[[kernel]]
+name = "attn_gate_quant_had32_t256_tiled0"
+symbol = "attn_gate_quant_had32_t256_tiled0.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 80
+sgpr_count = 34
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "core"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "gate"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "hd"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "gs"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "had_t"
+
+[[kernel]]
+name = "attn_gate_quant_had32_t256_tiled1"
+symbol = "attn_gate_quant_had32_t256_tiled1.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 80
+sgpr_count = 33
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "core"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "gate"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "hd"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "gs"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "had_t"

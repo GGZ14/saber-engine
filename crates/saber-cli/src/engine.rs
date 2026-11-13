@@ -304,6 +304,10 @@ pub struct EngineArgs {
     pub race_shadow: bool,
     /// T6's boot poison (`--poison-boot SET:BYTE`, a diagnostic), forwarded to rank 1.
     pub poison_boot: Option<String>,
+    /// the replay law's gate control (`saber serve --engine-prefix-replay-poison leader|peer`): a prefix
+    /// save under the GDN replay arm treated as owed. Leader only (not forwarded: `peer` makes
+    /// the LEADER send rank 1 the owed bit).
+    pub prefix_replay_poison: saber_engine::device::PrefixReplayPoison,
     /// T7's gate control (`--constant-seed-control`): the pre-T7 re-seed policy, forwarded to
     /// rank 1.
     pub constant_seed_control: bool,
@@ -322,6 +326,13 @@ pub struct EngineArgs {
     pub host_wait: saber_exec::HostWait,
     /// The GDN recurrent state STORED as f16 (C1, `--gdn-state-dtype f16`). Forwarded to rank 1.
     pub gdn_state_f16: bool,
+    /// the prefill GDN chunk scan on the EXACT-GATE body (`--gdn-scan exact`; `split` =
+    /// the certified body). A plan input of both ranks, FORWARDED to rank 1 by value; the process
+    /// knob itself is [`saber_kernels::saber::GDN_SCAN_EXACT`], set at each rank's dispatch.
+    pub gdn_scan_exact: bool,
+    /// MACaQ (`--macaq-had on|off`): `None` = follow the pack's `macaq_had32` tag. Forwarded to
+    /// rank 1 by value when given.
+    pub macaq_had: Option<bool>,
     /// The target's `lm_head`: the EXACT head by default (N5; today the bf16 record, shared with
     /// the drafter's), `Mxfp4` under `--mxfp4-head`. Forwarded to rank 1 as `--head`.
     pub head: saber_engine::head_share::TargetHead,
@@ -459,6 +470,7 @@ impl EngineArgs {
                 .poison_boot
                 .as_deref()
                 .and_then(|s| saber_engine::device::PoisonBoot::parse(s).ok()),
+            prefix_replay_poison: self.prefix_replay_poison,
             constant_seed_control: self.constant_seed_control,
             gather_per_row: self.gather_per_row,
             propose_at: if self.propose_in_step {
@@ -474,6 +486,7 @@ impl EngineArgs {
             },
             host_wait: self.host_wait,
             gdn_state_f16: self.gdn_state_f16,
+            macaq_had: self.macaq_had,
             // D4: the tier's own field, forwarded to rank 1's argv (`Worker::command`).
             vision_max_patches: self.vision_max_patches,
             vision_lazy: self.vision_lazy,
@@ -990,6 +1003,12 @@ pub struct GateArgs {
     /// `CELL` — 3.75 nats apart in prod's own reference, which is too wide to call rounding. The
     /// arm runs both and names the first CHUNK and LAYER whose residual moves.
     pub chunk_bisect: u32,
+    /// Diagnostic: RUN ONLY the residual dump into this directory.
+    pub macaq6_resid_dump: Option<PathBuf>,
+    /// the prompts the residual dump prefills (a JSON array of token-id arrays).
+    pub macaq6_resid_ids: Option<PathBuf>,
+    /// the residual dump's row stride (rows 0, stride, .. and the last).
+    pub macaq6_resid_stride: u32,
 }
 
 /// One sequence driven directly through the pass.
@@ -3319,6 +3338,60 @@ fn read_message_turns(
     Ok(turns)
 }
 
+/// **the residual stream at every layer's input, raw**, for an off-engine comparison
+/// against a torch simulation of the same pack.
+///
+/// Each prompt of `ids` is admitted, prefilled as ONE chunk in the smallest planned prefill bucket
+/// that holds it (the serve path's shape for a prompt of at most the widest bucket), probed at rows
+/// 0, stride, 2 stride, .. and the last live row, and released. The probe's layer points are kept
+/// RAW (`saber_engine::device::PROBE_KEEP_RAW`, set by the caller), and each one is written as
+/// `p{i}_l{layer}.bf16` (`[rows, hidden]` bf16, layer -1 = the embedding) beside `rows.json`.
+fn macaq6_resid_dump(
+    forward: &mut HipForward,
+    dir: &Path,
+    ids: Option<&Path>,
+    stride: u32,
+) -> anyhow::Result<usize> {
+    let ids = ids.context("--macaq6-resid-dump needs --macaq6-resid-ids")?;
+    let prompts: Vec<Vec<TokenId>> = serde_json::from_slice(&std::fs::read(ids)?)?;
+    std::fs::create_dir_all(dir)?;
+    let stride = stride.max(1);
+    let mut meta = Vec::new();
+    for (i, prompt) in prompts.iter().enumerate() {
+        let len = prompt.len() as u32;
+        anyhow::ensure!(len >= 2, "prompt {i} has {len} token(s)");
+        let mut rows: Vec<u32> = (0..len).step_by(stride as usize).collect();
+        if rows.last() != Some(&(len - 1)) {
+            rows.push(len - 1);
+        }
+        let seq = SeqId(980 + i as u64);
+        let blocks: Vec<u32> = (0..len.div_ceil(16) + 1).collect();
+        forward.admit(seq, len, &blocks)?;
+        let (_out, probe) = forward.prefill_probe_at(seq, prompt, 0, true, None, &rows)?;
+        forward.release(seq);
+        for p in &probe {
+            anyhow::ensure!(
+                p.raw.len() as u64 == p.row_bytes * rows.len() as u64,
+                "prompt {i} layer {}: {} raw byte(s) for {} row(s) of {} B",
+                p.layer,
+                p.raw.len(),
+                rows.len(),
+                p.row_bytes
+            );
+            std::fs::write(dir.join(format!("p{i}_l{}.bf16", p.layer)), &p.raw)?;
+        }
+        println!(
+            "macaq6    prompt {i}: {len} token(s), {} layer point(s) x {} row(s) dumped",
+            probe.len(),
+            rows.len()
+        );
+        meta.push(serde_json::json!({"prompt": i, "len": len, "rows": rows,
+            "layers": probe.iter().map(|p| (p.layer, p.edge.clone(), p.row_bytes)).collect::<Vec<_>>()}));
+    }
+    std::fs::write(dir.join("rows.json"), serde_json::to_vec_pretty(&meta)?)?;
+    Ok(0)
+}
+
 /// Run the gate. Returns the number of failures, so the caller's exit code is the gate's verdict.
 /// **The chunked prefill against the one-bucket prefill, layer by layer** (ws-h29).
 ///
@@ -3922,6 +3995,19 @@ pub fn gate(args: &GateArgs) -> anyhow::Result<usize> {
     // It runs alone: the arms below drive four sequences through 400 decode steps each, and this
     // question is about ONE prefill. It also needs its own `--prefill-rows`, so a run that asked
     // for it is a run that was configured for it.
+    if let Some(dir) = &args.macaq6_resid_dump {
+        let n = macaq6_resid_dump(
+            &mut forward,
+            dir,
+            args.macaq6_resid_ids.as_deref(),
+            args.macaq6_resid_stride,
+        );
+        drop(forward);
+        if let Some(w) = worker.take() {
+            println!("tier      {}", w.stop());
+        }
+        return n;
+    }
     if args.chunk_bisect > 0 {
         let n = chunk_bisect(&mut forward, args.chunk_bisect, &prompts[0], per_seq);
         drop(forward);
@@ -9610,7 +9696,7 @@ pub fn serve(args: &ServeArgs) -> anyhow::Result<()> {
     )?;
     config.prefix_cache = args.prefix_cache;
     println!(
-        "prefixcache    {} (FN52: verify {}, host budget {} MiB/rank, min {} tokens){}",
+        "prefixcache    {} (prefix caching: verify {}, host budget {} MiB/rank, min {} tokens; GDN replay {}){}",
         if args.prefix_cache.enabled {
             "on"
         } else {
@@ -9619,6 +9705,11 @@ pub fn serve(args: &ServeArgs) -> anyhow::Result<()> {
         args.prefix_cache.verify,
         args.prefix_cache.host_budget_bytes >> 20,
         args.prefix_cache.min_tokens,
+        if args.engine.gdn_replay {
+            "on: snapshots image the base, an owed base is refused fail-closed"
+        } else {
+            "off"
+        },
         if args.warm_prompts.is_some() {
             " -- on by --warm-prompts (FN66)"
         } else {
@@ -10432,6 +10523,17 @@ impl Worker {
         // digests refuse at boot, and a pair with one narrow rank is not an arm.
         cmd.arg("--gdn-state-dtype")
             .arg(if args.gdn_state_f16 { "f16" } else { "f32" });
+        // AND THE PREFILL GDN SCAN FORM, BY VALUE: a pair whose ranks scan with different
+        // gates is two numerics at once, and the worker's `--gdn-scan` has no default.
+        cmd.arg("--gdn-scan").arg(if args.gdn_scan_exact {
+            "exact"
+        } else {
+            "split"
+        });
+        // an explicit `--macaq-had` reaches rank 1 by value (absent: both follow the pack).
+        if let Some(on) = args.macaq_had {
+            cmd.arg("--macaq-had").arg(if on { "on" } else { "off" });
+        }
         // The head the pair plans (N2, N5): both ranks plan the same graph or neither binds. It is
         // ALWAYS forwarded, by value, and the worker's `--head` has no default: since N5 the two
         // planes default to the exact head, and a forward that only said "mxfp4" when it differed
@@ -11385,6 +11487,7 @@ mod ar_band_tests {
             race_check: false,
             race_shadow: false,
             poison_boot: None,
+            prefix_replay_poison: Default::default(),
             constant_seed_control: false,
             gather_per_row: false,
             propose_in_step: false,
@@ -11392,6 +11495,8 @@ mod ar_band_tests {
             fail_after_steps: 0,
             host_wait: crate::engine::DEFAULT_HOST_WAIT_27B,
             gdn_state_f16: true,
+            gdn_scan_exact: false,
+            macaq_had: None,
             head: saber_engine::head_share::TargetHead::default(),
         }
     }
@@ -12033,6 +12138,76 @@ mod ar_band_tests {
             d.gdn_state_f16 && d.decode_fusion == DecodeFusion::All,
             "args_at is not the default"
         );
+    }
+
+    /// **the prefill GDN scan form is a plan input of BOTH ranks.** Serve
+    /// (`--engine-gdn-scan`) and engine (`--gdn-scan`) resolve `saber::DEFAULT_GDN_SCAN` with no
+    /// flag, accept the old `--macaq6-gdn-scan` spelling, refuse a typo; the worker's flag has NO
+    /// default (a follower never plans its parser's default); rank 1's argv carries the leader's
+    /// form by value both ways.
+    #[test]
+    fn macaq8_the_gdn_scan_form_crosses_to_rank_one_by_value() {
+        fn scan(argv: &[String]) -> anyhow::Result<String> {
+            let argv = argv.to_vec();
+            std::thread::Builder::new()
+                .stack_size(32 << 20)
+                .spawn(move || match crate::Cli::try_parse_from(&argv)?.cmd {
+                    crate::Cmd::Serve {
+                        engine_gdn_scan, ..
+                    } => Ok(engine_gdn_scan),
+                    crate::Cmd::Engine { gdn_scan, .. } => Ok(gdn_scan),
+                    crate::Cmd::EngineWorker { gdn_scan, .. } => Ok(gdn_scan),
+                    _ => panic!("not a serve / engine / engine-worker command line"),
+                })
+                .expect("spawning the parser thread")
+                .join()
+                .expect("the argv parser panicked")
+        }
+        // the default is the exact-gate scan; `split` is the control.
+        assert_eq!(saber_kernels::saber::DEFAULT_GDN_SCAN, "exact");
+        let d = saber_kernels::saber::DEFAULT_GDN_SCAN.to_owned();
+        assert_eq!(scan(&with(SERVE, &[])).unwrap(), d, "serve's default");
+        assert_eq!(scan(&with(ENGINE, &[])).unwrap(), d, "engine's default");
+        for form in ["split", "exact"] {
+            assert_eq!(
+                scan(&with(SERVE, &["--engine-gdn-scan", form])).unwrap(),
+                form
+            );
+            assert_eq!(
+                scan(&with(SERVE, &["--macaq6-gdn-scan", form])).unwrap(),
+                form
+            );
+            assert_eq!(scan(&with(ENGINE, &["--gdn-scan", form])).unwrap(), form);
+            assert_eq!(
+                scan(&with(ENGINE, &["--macaq6-gdn-scan", form])).unwrap(),
+                form
+            );
+        }
+        assert!(scan(&with(SERVE, &["--engine-gdn-scan", "clamp"])).is_err());
+        assert!(scan(&with(ENGINE, &["--gdn-scan", "xg2"])).is_err());
+        let argv = |args: &EngineArgs| -> Vec<String> {
+            let cmd = super::Worker::command(args, 4242).expect("rank 1's command");
+            std::iter::once("saber".to_owned())
+                .chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned()))
+                .collect()
+        };
+        for exact in [false, true] {
+            let mut args = args_at(false);
+            args.gdn_scan_exact = exact;
+            let w = argv(&args);
+            assert_eq!(
+                scan(&w).expect("rank 1's argv parses"),
+                if exact { "exact" } else { "split" },
+                "rank 1 was told something else"
+            );
+            // the worker has no default: drop the pair and it refuses
+            let i = w.iter().position(|a| a == "--gdn-scan").expect("by value");
+            let mut dropped = w.clone();
+            dropped.drain(i..i + 2);
+            assert!(scan(&dropped).is_err(), "the worker planned a default");
+        }
+        let e = saber_kernels::saber::set_gdn_scan("clamp").expect_err("a typo resolved");
+        assert!(e.to_string().contains("clamp"), "{e}");
     }
 }
 

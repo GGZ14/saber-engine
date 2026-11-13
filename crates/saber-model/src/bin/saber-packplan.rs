@@ -38,6 +38,12 @@ fn main() -> ExitCode {
     let mut spec = 7u32;
     let mut rope_max_pos = 4096u32;
     let mut kv_block = 16u32;
+    // the MACaQ-W4A8 Hadamard producers' `t` records (`Graph::with_macaq_had`) + the plan's
+    // `macaq_had32` transform tag.
+    let mut macaq_had = false;
+    // the form-c W8 promotions (`Graph::with_macaq_w8`), from a MACaQ presets map
+    // (`presets.json:VARIANT`, its `w8` = {layer: [out|o|down, ...]}).
+    let mut macaq_w8: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -46,6 +52,11 @@ fn main() -> ExitCode {
                 None => return fail("--tp needs a number"),
             },
             "--dflash" => dflash = true,
+            "--macaq-had" => macaq_had = true,
+            "--macaq-w8" => match args.next() {
+                Some(v) => macaq_w8 = Some(v),
+                None => return fail("--macaq-w8 needs presets.json:VARIANT"),
+            },
             // `bf16` (the default since N5): `lm_head.w` is prod's bf16 matrix (workstream N2).
             // `fp8` (N4): `lm_head.w8` + `lm_head.ws`, the checkpoint's e4m3 matrix and its
             // per-channel scale carried raw. `mxfp4`: the trio, the `--mxfp4-head` control's pack.
@@ -79,7 +90,8 @@ fn main() -> ExitCode {
             "-h" | "--help" => {
                 eprintln!(
                     "usage: saber-packplan [--tp N] [--head auto|bf16|fp8|mxfp4 (default auto)] \
-                     [--checkpoint DIR] [--config path/to/config.json]"
+                     [--checkpoint DIR] [--config path/to/config.json] [--macaq-had] \
+                     [--macaq-w8 presets.json:VARIANT]"
                 );
                 eprintln!(
                     "       saber-packplan --dflash [--tp N] [--spec K] [--rope-max-pos P] \
@@ -145,11 +157,21 @@ fn main() -> ExitCode {
         },
         None => ModelConfig::qwen38_27b(),
     };
-    let graph = match Graph::qwen38_27b(cfg, tp).and_then(|g| match head {
-        "bf16" => g.with_bf16_head(),
-        "fp8" => g.with_fp8_head(),
-        _ => Ok(g),
-    }) {
+    let w8_ops = match macaq_w8.as_deref().map(read_w8_map).transpose() {
+        Ok(v) => v,
+        Err(e) => return fail(&e),
+    };
+    let graph = match Graph::qwen38_27b(cfg, tp)
+        .and_then(|g| match head {
+            "bf16" => g.with_bf16_head(),
+            "fp8" => g.with_fp8_head(),
+            _ => Ok(g),
+        })
+        .and_then(|g| if macaq_had { g.with_macaq_had() } else { Ok(g) })
+        .and_then(|g| match &w8_ops {
+            Some(ops) => g.with_macaq_w8(ops),
+            None => Ok(g),
+        }) {
         Ok(g) => g,
         Err(e) => return fail(&e.to_string()),
     };
@@ -185,6 +207,11 @@ fn main() -> ExitCode {
         "tp_size": tp,
         "head": head,
         "head_auto": head_evidence,
+        "macaq_had": if macaq_had { Some(saber_kernels::macaq::TRANSFORM_TAG) } else { None },
+        "macaq_w8": w8_ops.as_ref().map(|o| serde_json::json!({
+            "map": macaq_w8,
+            "ops": o.iter().collect::<Vec<_>>(),
+        })),
         "unused_record_prefixes": graph
             .unused_records()
             .iter()
@@ -267,6 +294,35 @@ fn dflash_plan(
     });
     println!("{}", serde_json::to_string(&out).expect("serialize"));
     ExitCode::SUCCESS
+}
+
+/// `presets.json:VARIANT` -> the W8 op names (`saber_model::graph::macaq_w8_op`).
+fn read_w8_map(spec: &str) -> Result<std::collections::BTreeSet<String>, String> {
+    let (path, key) = spec
+        .rsplit_once(':')
+        .ok_or_else(|| format!("--macaq-w8 {spec}: want presets.json:VARIANT"))?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+    let w8 = v
+        .get(key)
+        .and_then(|p| p.get("w8"))
+        .and_then(|w| w.as_object())
+        .ok_or_else(|| format!("{path}: no `{key}.w8` map"))?;
+    let mut out = std::collections::BTreeSet::new();
+    for (layer, roles) in w8 {
+        let l: u32 = layer
+            .parse()
+            .map_err(|_| format!("{path}:{key}: layer `{layer}`"))?;
+        for r in roles.as_array().into_iter().flatten() {
+            let r = r.as_str().unwrap_or("?");
+            let op = saber_model::graph::macaq_w8_op(l, r)
+                .ok_or_else(|| format!("{path}:{key}: layer {l} role `{r}` is not out|o|down"))?;
+            if !out.insert(op.clone()) {
+                return Err(format!("{path}:{key}: `{op}` named twice"));
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn fail(msg: &str) -> ExitCode {

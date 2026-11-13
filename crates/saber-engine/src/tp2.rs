@@ -117,6 +117,8 @@ const MAGIC: u32 = 0x5342_5432;
 /// retained prefix's snapshot (GDN live slots + drafter pages; the KV pages stay in place).
 /// 16 = the GDN replay arm under the tree (CMP27G): [`Command::GdnMaterialize`] applies a
 /// sequence's pending replay to its GDN base on both cards before a tree step reads it.
+/// 17 = the prefix snapshot's replay law: [`Command::Prefix`]'s op word carries `owed`
+/// in bit 8 (a save rank 1 refuses fail-closed).
 /// 13 = the FUSED mixed step (C9): [`Command::Mixed`] runs a prompt chunk and a decode half as
 /// ONE forward at a prefill rung over the combined index blob that follows it; its sampling,
 /// seam and context-store frames follow in the leader's order (the chunk's head, the decode
@@ -130,7 +132,7 @@ const MAGIC: u32 = 0x5342_5432;
 /// ([`saber_exec::RankPeer::agree`], through [`crate::device`]'s startup handshake): a pair of
 /// mismatched binaries is then a message while both cards are still idle, rather than a refused
 /// frame with a graph already in flight on each of them.
-pub const VERSION: u32 = 16;
+pub const VERSION: u32 = 17;
 
 /// **C10: a packed step's word** ([`Command::Mixed::packed`]): `more` further chunks, and per
 /// chunk `k` (bit `k`) whether its head samples, its seam runs, and its seam carries penalties.
@@ -499,6 +501,9 @@ pub enum Command {
         draft_first: u32,
         /// Drafter pages the prefix covers (0 = no drafter).
         draft_pages: u32,
+        /// the leader's word that the session's GDN base still owes a replay (a save
+        /// rank 1 must refuse, fail-closed). Rides bit 8 of the op word.
+        owed: bool,
     },
 }
 
@@ -734,7 +739,16 @@ impl Command {
                 committed,
                 draft_first,
                 draft_pages,
-            } => (14, op, entry, slot, draft_first, draft_pages, committed),
+                owed,
+            } => (
+                14,
+                op | (u32::from(owed) << 8),
+                entry,
+                slot,
+                draft_first,
+                draft_pages,
+                committed,
+            ),
             Command::Vision { images, patches } => (11, 0, images, patches, 0, 0, 0),
             Command::Scatter { runs } => (12, 0, runs, 0, 0, 0, 0),
             Command::Propose {
@@ -964,7 +978,8 @@ impl Command {
                 packed: word(44),
             },
             14 => Command::Prefix {
-                op: word(8),
+                op: word(8) & 0xff,
+                owed: (word(8) >> 8) & 1 == 1,
                 entry: word(12),
                 slot: word(16),
                 draft_first: word(20),
@@ -2757,7 +2772,7 @@ mod tests {
         let mut old = h;
         old[32..36].copy_from_slice(&11u32.to_le_bytes());
         assert!(Command::decode(&old, 7).is_err(), "wire 11 must be refused");
-        assert_eq!(VERSION, 16);
+        assert_eq!(VERSION, 17);
     }
 
     /// C10: a packed step's word round-trips K, the per-chunk sample / seam / penalty masks, and
@@ -3367,8 +3382,33 @@ mod tests {
             committed: 1,
             draft_first: 4096,
             draft_pages: 250,
+            owed: false,
         };
         let h = c.encode(9);
         assert_eq!(Command::decode(&h, 9).expect("decode"), c);
+        // the owed bit rides the op word and does not move the op.
+        let o = Command::Prefix {
+            op: 0,
+            entry: 77,
+            slot: 13,
+            committed: 1,
+            draft_first: 4096,
+            draft_pages: 250,
+            owed: true,
+        };
+        let d = Command::decode(&o.encode(9), 9).expect("decode");
+        assert_eq!(d, o);
+        assert_ne!(
+            d,
+            Command::Prefix {
+                op: 0,
+                entry: 77,
+                slot: 13,
+                committed: 1,
+                draft_first: 4096,
+                draft_pages: 250,
+                owed: false
+            }
+        );
     }
 }

@@ -46,6 +46,10 @@ struct Toy {
     /// Prompt rows fed, per sequence.
     fed: BTreeMap<SeqId, u32>,
     drops: u64,
+    /// every prefill chunk folds a marker into the state before its rows, so the state
+    /// depends on WHERE the chunks started -- the real engine's chunk class (the GDN chunk scan's
+    /// cut, the GEMM row band), which the plain toy is blind to.
+    chunk_marks: bool,
 }
 
 impl Toy {
@@ -79,6 +83,10 @@ impl StepExecutor for Toy {
     fn execute(&mut self, batch: &StepBatch<'_>) -> StepResult {
         let mut out = Vec::new();
         for slot in batch.slots {
+            if self.chunk_marks && slot.chunk.is_some() {
+                let s = self.sessions.get_mut(&slot.seq_id).expect("admitted");
+                s.state = mix(s.state, 0xC0FF_EE00 ^ u64::from(slot.context_len));
+            }
             let h = self.feed(slot.seq_id, &slot.input_tokens, slot.context_len);
             if let Some(c) = slot.chunk {
                 *self.fed.entry(slot.seq_id).or_default() += c.prompt_tokens;
@@ -181,10 +189,18 @@ fn config(policy: PrefixCachePolicy, kv_bytes: u64) -> SchedulerConfig {
 }
 
 fn sched(policy: PrefixCachePolicy, kv_bytes: u64) -> Arc<Scheduler<Toy>> {
+    sched_with(policy, kv_bytes, false)
+}
+
+fn sched_with(policy: PrefixCachePolicy, kv_bytes: u64, chunk_marks: bool) -> Arc<Scheduler<Toy>> {
     let config = config(policy, kv_bytes);
     let model =
         saber_sched::mock_model_info("Qwen3.8", "/models/mock", EOS, config.max_context_tokens);
-    Arc::new(Scheduler::new(config, Toy::default(), model, boot_ledger()).expect("arenas fit"))
+    let toy = Toy {
+        chunk_marks,
+        ..Toy::default()
+    };
+    Arc::new(Scheduler::new(config, toy, model, boot_ledger()).expect("arenas fit"))
 }
 
 fn on() -> PrefixCachePolicy {
@@ -257,6 +273,58 @@ async fn an_adopted_prefix_answers_exactly_what_a_fresh_prefill_answers() {
         });
         off.with_executor(|e| assert_eq!(e.overwrites, 0));
         assert_eq!(off.prefix_counters().0.lookups, 0, "off never looks");
+    }
+}
+
+/// `turns` turns of one conversation: each turn's prompt is the last one's + its answer + a new
+/// message (`mt.py`'s chain).
+async fn chain(s: &Arc<Scheduler<Toy>>, p1: &[TokenId], turns: u32) -> Vec<Vec<TokenId>> {
+    let mut p = p1.to_vec();
+    let mut out = Vec::new();
+    for t in 0..turns {
+        let a = turn(s, &p, 24).await;
+        p.extend(&a);
+        p.extend(ids(100 + t, 250));
+        out.push(a);
+    }
+    out
+}
+
+/// The cut-lineage fix: on a 4-turn chain the verify arm's fresh prefill must
+/// restart its chunks at the compared entry's whole cut lineage. Before the fix it cut only at the
+/// hit, so turn 3's reference was `[0, c2)` against the entry's `[0, c1) + [c1, c2)` and turns 3
+/// and 4 reported `fresh != entry` on the chunk class alone (the real engine: GDN 95/96 buffers,
+/// exactly the KV pages in `[c1, c2)`).
+#[tokio::test]
+async fn the_verify_arm_cuts_at_the_entrys_lineage_on_a_four_turn_chain() {
+    for len in [700usize, 3000] {
+        let verify = PrefixCachePolicy {
+            verify: true,
+            ..on()
+        };
+        let v = sched_with(verify, 8 * GIB, true);
+        let got_v = chain(&v, &ids(7, len), 4).await;
+        let (c, _, _) = v.prefix_counters();
+        assert_eq!(
+            (
+                c.hits,
+                c.adopted,
+                c.verify_match,
+                c.verify_mismatch,
+                c.verify_skipped
+            ),
+            (3, 0, 3, 0, 0),
+            "{len}: every turn >= 2 compares IDENTICAL: {c:?}"
+        );
+        // The adopted chain runs the same schedule: its answers are the verify chain's, turn by
+        // turn, chunk marks and all.
+        let a = sched_with(on(), 8 * GIB, true);
+        let got_a = chain(&a, &ids(7, len), 4).await;
+        assert_eq!(got_a, got_v, "{len}: adopted == its verify arm, every turn");
+        let (c, _, _) = a.prefix_counters();
+        assert_eq!((c.hits, c.adopted), (3, 3), "{len}: {c:?}");
+        a.with_executor(|e| assert_eq!(e.overwrites, 0));
+        v.with_executor(|e| assert_eq!(e.overwrites, 0));
     }
 }
 

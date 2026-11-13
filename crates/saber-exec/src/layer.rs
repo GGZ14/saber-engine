@@ -40,6 +40,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// A diagnostic ARM (never a default): the prefill attention's `fp8_mode` (`[[attn_prefill]]`
+/// rows: 0 = the f16 legs over the fp8 KV cache, 1 = QK8, 2 = PV8, 3 = both = THE DEFAULT, prod's).
+/// A process-wide knob because the planner has no per-boot attention option to carry it; set once
+/// by `saber serve --macaq6-attn-fp8-mode` / `saber engine --macaq6-attn-fp8-mode` at TP = 1 before
+/// any plan is built, and refused at TP = 2 (rank 1 is a separate process that would not see it).
+pub static ATTN_PREFILL_FP8_MODE: AtomicU32 = AtomicU32::new(3);
 
 use saber_hip::{DeviceAddr, DevicePtr, HipThread, Job, PinnedBuf, Stream};
 use saber_kernels::glue::{self, GlueRules};
@@ -1857,6 +1865,45 @@ struct Planner<'g> {
 /// A thin name over [`producer_writes_tiled`], which answers `None` for a non-producer: reaching
 /// that arm here would mean a producer route was asked about a GEMM, so it is a refusal by
 /// panic-free default rather than a silent `false`.
+/// does this producer op run the `--macaq-had` twin (it binds a [`WeightRole::HadT`] record)?
+fn has_had(op: &ModelOp) -> bool {
+    op.weights.iter().any(|b| b.role == WeightRole::HadT)
+}
+
+/// the producer's descriptor under `--macaq-had on` -- its `*_had32_*` twin
+/// ([`saber_kernels::macaq::had_twin`], refused by name when there is none) -- else unchanged.
+fn had_desc(op: &ModelOp, desc: LaunchDescriptor) -> Result<LaunchDescriptor> {
+    if !has_had(op) {
+        return Ok(desc);
+    }
+    saber_kernels::macaq::had_twin(&desc).map_err(|e| Error::Refused(format!("{}: {e}", op.name)))
+}
+
+/// does this producer feed a form-c W8 promotion ([`Graph::with_macaq_w8`] fixes its output
+/// edge ROW-MAJOR AT EVERY M: the per-token W8A8 bodies read row-major A)?
+fn writes_rowmajor_always(op: &ModelOp) -> bool {
+    op.outputs
+        .first()
+        .is_some_and(|e| e.rule == saber_model::graph::LayoutRule::Fixed(Layout::RowMajorFp8))
+        && op.weights.iter().any(|b| b.role == WeightRole::HadT)
+}
+
+/// the rules a producer resolves against -- `mxfp4` itself, or for a W8 promotion's producer
+/// ([`writes_rowmajor_always`]) the same table under the row-major law (`a_tiled_min_m` 0, no mid
+/// band), so it takes its `tiled0` instantiation at every M and [`Planner::check_producer_layout`]
+/// holds it against the edge's fixed row-major declaration.
+fn producer_rules<'r>(op: &ModelOp, mxfp4: &'r LaunchRules) -> std::borrow::Cow<'r, LaunchRules> {
+    if writes_rowmajor_always(op) {
+        let mut r = mxfp4.clone();
+        r.knobs.a_tiled_min_m = 0;
+        r.knobs.atiled_mid = false;
+        r.knobs.atiled_mid_min_m = 0;
+        std::borrow::Cow::Owned(r)
+    } else {
+        std::borrow::Cow::Borrowed(mxfp4)
+    }
+}
+
 fn writes_tiled(op: GemmOp, m: u32, rules: &LaunchRules) -> bool {
     producer_writes_tiled(op, m, rules).unwrap_or(false)
 }
@@ -2013,7 +2060,8 @@ impl<'g> Planner<'g> {
                 KernelOp::GemmW4A8
                 | KernelOp::GemmBf16
                 | KernelOp::GemmBf16Head
-                | KernelOp::GemmFp8Head,
+                | KernelOp::GemmFp8Head
+                | KernelOp::GemmW8A8,
                 Geometry::Gemm { n, .. },
                 0,
             ) => *n,
@@ -2389,6 +2437,8 @@ impl<'g> Planner<'g> {
             // A shape the epilogue is not compiled for. The pair stays two ops.
             Err(_) => return Ok(None),
         };
+        // under `--macaq-had on` the epilogue is its had32 twin (refused by name if none).
+        let desc = had_desc(norm, desc)?;
         // ---- 5: the bindings, from BOTH ops -------------------------------------------------
         let resid = match norm.inputs.get(1) {
             Some(res) => self.at(&res.edge)?,
@@ -2413,6 +2463,13 @@ impl<'g> Planner<'g> {
             ("scale_out".to_owned(), self.scale_of(&q_out.name)?),
             ("res_out".to_owned(), self.at(&res_out.name)?),
         ];
+        let mut bindings = bindings;
+        if has_had(norm) {
+            bindings.push((
+                saber_kernels::macaq::HAD_T.to_owned(),
+                self.layer_weight(norm, WeightRole::HadT)?,
+            ));
+        }
         // The same coverage check the binding table ends with: a descriptor slot this does not
         // name would be packed from whatever the staging buffer last held.
         for slot in &desc.args {
@@ -2481,6 +2538,14 @@ impl<'g> Planner<'g> {
         };
         let Ok(desc) = saber_kernels::rules::gemm_decode_ar_nq((g, *shape), &nq_desc, mxfp4) else {
             return Ok(None);
+        };
+        // a had32 epilogue makes row 3 its had32 twin (the `had_t` binding rides in from
+        // `nq_fusion`).
+        let desc = if saber_kernels::macaq::is_twin(&nq_desc) {
+            saber_kernels::macaq::had_twin(&desc)
+                .map_err(|e| Error::Refused(format!("{}: {e}", gemm.name)))?
+        } else {
+            desc
         };
         let mut bindings = self.bindings(gemm, &route, rules.ar.max_bytes)?;
         let c = bindings
@@ -2629,6 +2694,13 @@ impl<'g> Planner<'g> {
         {
             return Ok(None);
         }
+        if has_had(norm) {
+            return Err(Error::Refused(format!(
+                "{}: fusion-map row 5 (gdn_norm_quant folded into the fused update) has no \
+                 `--macaq-had` twin; run the arm without it",
+                norm.name
+            )));
+        }
         let ([out], Some(input)) = (&fu.outputs[..], norm.inputs.first()) else {
             return Ok(None);
         };
@@ -2719,6 +2791,13 @@ impl<'g> Planner<'g> {
             || silu.kernel != KernelOp::SiluMulQuant
         {
             return Ok(None);
+        }
+        if has_had(silu) {
+            return Err(Error::Refused(format!(
+                "{}: fusion-map row 4 (silu_mul_quant folded into gate_up) has no `--macaq-had` \
+                 twin; run the arm without it",
+                silu.name
+            )));
         }
         let ([out], [input]) = (&gemm.outputs[..], &silu.inputs[..]) else {
             return Ok(None);
@@ -3051,6 +3130,26 @@ impl<'g> Planner<'g> {
                     shape,
                 }
             }
+            // a form-c W8 promotion -- the per-token W8A8 band (`saber_kernels::macaq_w8`),
+            // on its producer's row-major e4m3 edge (refused by name on any other layout).
+            KernelOp::GemmW8A8 => {
+                let Geometry::Gemm { n, k, .. } = op.geometry else {
+                    return Err(Error::Refused(format!("{}: not a GEMM geometry", op.name)));
+                };
+                if self.a_layout_of(op)? != ALayout::RowMajor {
+                    return Err(Error::Refused(format!(
+                        "{}: a W8A8 promotion reads row-major e4m3 only, and its A edge is \
+                         fragment-tiled at M={m}",
+                        op.name
+                    )));
+                }
+                let desc = saber_kernels::macaq_w8::resolve(m, n, k, saber_kernels::macaq_w8::RING)
+                    .map_err(refused)?;
+                Route::Kernel {
+                    descs: vec![desc],
+                    shape: Shape::new(m, n, k),
+                }
+            }
             KernelOp::AddRmsQuant => {
                 let Geometry::Rms { k } = op.geometry else {
                     return Err(Error::Refused(format!("{}: not an Rms geometry", op.name)));
@@ -3061,6 +3160,7 @@ impl<'g> Planner<'g> {
                 };
                 let desc = resolve(kop, shape, mxfp4).map_err(refused)?;
                 self.check_producer_layout(op, &desc, writes_tiled(kop, m, mxfp4))?;
+                let desc = had_desc(op, desc)?;
                 Route::Kernel {
                     descs: vec![desc],
                     shape,
@@ -3074,12 +3174,14 @@ impl<'g> Planner<'g> {
                     )));
                 };
                 let shape = Shape::new(m, n, 0);
+                let mxfp4 = &*producer_rules(op, mxfp4);
                 let desc = resolve(GemmOp::SiluMulQuant, shape, mxfp4).map_err(refused)?;
                 self.check_producer_layout(
                     op,
                     &desc,
                     writes_tiled(GemmOp::SiluMulQuant, m, mxfp4),
                 )?;
+                let desc = had_desc(op, desc)?;
                 Route::Kernel {
                     descs: vec![desc],
                     shape,
@@ -3097,8 +3199,10 @@ impl<'g> Planner<'g> {
                     zs: i64::from(zs),
                     eps: self.graph.config.rms_norm_eps,
                 };
+                let mxfp4 = &*producer_rules(op, mxfp4);
                 let desc = resolve(kop, shape, mxfp4).map_err(refused)?;
                 self.check_producer_layout(op, &desc, writes_tiled(kop, m, mxfp4))?;
+                let desc = had_desc(op, desc)?;
                 Route::Kernel {
                     descs: vec![desc],
                     shape,
@@ -3107,7 +3211,9 @@ impl<'g> Planner<'g> {
             KernelOp::AttnPrefillPaged => {
                 let s = self.attn_shape(op, rules, false)?;
                 let desc = saber::resolve(
-                    saber::Op::AttnPrefill { fp8_mode: 3 },
+                    saber::Op::AttnPrefill {
+                        fp8_mode: ATTN_PREFILL_FP8_MODE.load(Ordering::Relaxed),
+                    },
                     saber::Shape::Attn(s),
                     rules,
                 )
@@ -3305,14 +3411,23 @@ impl<'g> Planner<'g> {
                         op.name, op.kernel
                     ))
                 })?;
-                let desc =
-                    glue::resolve_under(gop, shape, &self.glue, self.law).map_err(refused)?;
+                // a W8 promotion's gate producer writes row-major at every M.
+                let law = if writes_rowmajor_always(op) {
+                    ATiledLaw {
+                        min_m: 0,
+                        mid_min_m: None,
+                    }
+                } else {
+                    self.law
+                };
+                let desc = glue::resolve_under(gop, shape, &self.glue, law).map_err(refused)?;
                 if op.kernel == KernelOp::AttnGateQuant {
                     // The glue plugin carries its own copy of the band edge
                     // (`rules/attn_glue_gfx1201.toml`'s `a_tiled_min_m`), so this is where the two
                     // copies are held against each other on the live plan rather than by a test.
-                    self.check_producer_layout(op, &desc, self.glue.tiled_under(m, self.law))?;
+                    self.check_producer_layout(op, &desc, self.glue.tiled_under(m, law))?;
                 }
+                let desc = had_desc(op, desc)?;
                 Route::Kernel {
                     descs: vec![desc],
                     shape: Shape::new(0, 0, 0),
@@ -3803,11 +3918,17 @@ impl<'g> Planner<'g> {
                 bind!("q", self.at(out_edge(0)?)?);
                 bind!("scale", self.scale_of(out_edge(0)?)?);
                 bind!("res_out", self.at(out_edge(1)?)?);
+                if has_had(op) {
+                    bind!(saber_kernels::macaq::HAD_T, weight(WeightRole::HadT)?);
+                }
             }
             KernelOp::SiluMulQuant => {
                 bind!("gu", self.at(&op.inputs[0].edge)?);
                 bind!("q", self.at(out_edge(0)?)?);
                 bind!("scale", self.scale_of(out_edge(0)?)?);
+                if has_had(op) {
+                    bind!(saber_kernels::macaq::HAD_T, weight(WeightRole::HadT)?);
+                }
             }
             KernelOp::AddRmsBf16 => {
                 bind!("y", self.at(&op.inputs[0].edge)?);
@@ -3825,6 +3946,16 @@ impl<'g> Planner<'g> {
             KernelOp::GemmBf16Head => {
                 bind!("a", self.at(&op.inputs[0].edge)?);
                 bind!("w", self.weight(&format!("{}.w", op.name))?);
+                bind!("c", self.at(out_edge(0)?)?);
+            }
+            // the per-token W8A8 body: the producer's e4m3 rows + their per-token scale, the
+            // preshuffled codes (layout 7) + the 128 x 128 block scales (layout 8).
+            KernelOp::GemmW8A8 => {
+                let a = &op.inputs[0].edge;
+                bind!("a", self.at(a)?);
+                bind!("as", self.scale_of(a)?);
+                bind!("w", self.weight(&format!("{}.w8", op.name))?);
+                bind!("ws", self.weight(&format!("{}.w8s", op.name))?);
                 bind!("c", self.at(out_edge(0)?)?);
             }
             KernelOp::GemmFp8Head => {
@@ -3850,6 +3981,9 @@ impl<'g> Planner<'g> {
                 bind!("w", weight(WeightRole::NormWeight)?);
                 bind!("q", self.at(out_edge(0)?)?);
                 bind!("scale", self.scale_of(out_edge(0)?)?);
+                if has_had(op) {
+                    bind!(saber_kernels::macaq::HAD_T, weight(WeightRole::HadT)?);
+                }
             }
             KernelOp::AttnDecodeTree => {
                 bind!("q", self.at(&op.inputs[0].edge)?);
@@ -4072,6 +4206,9 @@ impl<'g> Planner<'g> {
                 bind!("gate", self.at(&op.inputs[1].edge)?);
                 bind!("q", self.at(out_edge(0)?)?);
                 bind!("scale", self.scale_of(out_edge(0)?)?);
+                if has_had(op) {
+                    bind!(saber_kernels::macaq::HAD_T, weight(WeightRole::HadT)?);
+                }
             }
             KernelOp::KvAppend => {
                 let Geometry::Attn {

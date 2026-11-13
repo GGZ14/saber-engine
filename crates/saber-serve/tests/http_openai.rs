@@ -1744,17 +1744,33 @@ async fn prompt_logprobs_are_validated_like_prod() {
         ),
         (
             "/v1/completions",
-            json!({"model": "Qwen3.8", "prompt": "hi", "prompt_logprobs": 21}),
-            "Requested prompt logprobs of 21, which is greater than max allowed: 20 \
-             (parameter=prompt_logprobs, value=21)",
+            json!({"model": "Qwen3.8", "prompt": "hi", "prompt_logprobs": 65}),
+            "Requested prompt logprobs of 65, which is greater than max allowed: 64 \
+             (parameter=prompt_logprobs, value=65)",
             json!("prompt_logprobs"),
         ),
         (
             "/v1/completions",
             json!({"model": "Qwen3.8", "prompt": "hi", "prompt_logprobs": -1}),
-            "Requested prompt logprobs of 248320, which is greater than max allowed: 20 \
+            "Requested prompt logprobs of 248320, which is greater than max allowed: 64 \
              (parameter=prompt_logprobs, value=248320)",
             json!("prompt_logprobs"),
+        ),
+        // the SAMPLED token's caps stay the reference server's 20 -- only the prompt's
+        // rose to the seam's 64.
+        (
+            "/v1/completions",
+            json!({"model": "Qwen3.8", "prompt": "hi", "logprobs": 21}),
+            "Requested sample logprobs of 21, which is greater than max allowed: 20 \
+             (parameter=logprobs, value=21)",
+            json!("logprobs"),
+        ),
+        (
+            "/v1/chat/completions",
+            chat_body(json!({"logprobs": true, "top_logprobs": 21})),
+            "Requested sample logprobs of 21, which is greater than max allowed: 20 \
+             (parameter=logprobs, value=21)",
+            json!("logprobs"),
         ),
     ] {
         let response = client
@@ -1770,14 +1786,18 @@ async fn prompt_logprobs_are_validated_like_prod() {
     }
 }
 
-/// `--max-logprobs` moves the cap, and `-1` lifts it to the vocabulary (V7).
+/// `--max-logprobs` moves the `prompt_logprobs` cap only ABOVE the seam's 64, and `-1`
+/// lifts it to the vocabulary (V7); at or below 64 the prompt cap is 64 whatever the flag.
 #[tokio::test]
 async fn max_logprobs_moves_the_cap() {
     for (max, ask, ok) in [
-        (21, 21, true),
-        (21, 22, false),
+        (20, 64, true),
+        (20, 65, false),
+        (0, 1, true),
+        (0, 64, true),
+        (80, 80, true),
+        (80, 81, false),
         (-1, 248_320, true),
-        (0, 1, false),
     ] {
         let engine = Arc::new(MockEngine::new(ModelInfo::default()));
         engine.push_script(MockScript::per_token([b'x' as u32], FinishReason::Length));

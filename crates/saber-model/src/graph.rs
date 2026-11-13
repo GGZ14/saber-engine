@@ -66,7 +66,7 @@
 //! registry, which wants only geometry, and never `saber::resolve`, which wants strides it has
 //! no business knowing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use saber_kernels::glue::{GateShape, GlueRules, KvShape, QkShape};
@@ -792,6 +792,12 @@ pub enum KernelOp {
     /// [`KernelOp::GemmBf16Head`]'s bf16 weight bytes (`bf16(f32(w8) * scale)`, prod's loader
     /// arithmetic) before the same bf16 WMMA sequence -- half the head's DRAM bytes.
     GemmFp8Head,
+    /// **MACaQ** (`--macaq-w8`, pack-driven): a form-c W8 promotion of a row-parallel MACaQ-Hadamard
+    /// linear (`gdn.out_proj` / `attn.o_proj` / `mlp.down_proj`, [`Graph::with_macaq_w8`]): e4m3 weights
+    /// preshuffled `[N/16, K*16]` (pack layout 7) with one f32 scale a 128 x 128 block (layout 8), in the
+    /// had32 producer's rotated basis, read by `saber_kernels::macaq_w8`'s per-token-scale W8A8 bodies on
+    /// the producer's own row-major e4m3 activation + per-token scale. One launch, no split-K.
+    GemmW8A8,
 }
 
 impl KernelOp {
@@ -824,6 +830,7 @@ impl KernelOp {
             KernelOp::AddRmsBf16 => "add_rms_bf16",
             KernelOp::GemmBf16Head => "gemm_bf16_head",
             KernelOp::GemmFp8Head => "gemm_fp8_head",
+            KernelOp::GemmW8A8 => "gemm_w8a8",
         }
     }
 
@@ -848,7 +855,10 @@ impl KernelOp {
             | KernelOp::AttnDecodeTree
             | KernelOp::AllReduce => Plane::Saber,
             KernelOp::QkNormRope | KernelOp::AttnGateQuant | KernelOp::KvAppend => Plane::Glue,
-            KernelOp::AddRmsBf16 | KernelOp::GemmBf16Head | KernelOp::GemmFp8Head => Plane::Head,
+            KernelOp::AddRmsBf16
+            | KernelOp::GemmBf16Head
+            | KernelOp::GemmFp8Head
+            | KernelOp::GemmW8A8 => Plane::Head,
             KernelOp::GemmBf16 | KernelOp::Embedding | KernelOp::LogitsGather => Plane::None,
         }
     }
@@ -909,7 +919,9 @@ impl KernelOp {
             // two, so a bf16-head plan declares the same count per bucket.
             | KernelOp::AddRmsBf16
             | KernelOp::GemmBf16Head
-            | KernelOp::GemmFp8Head => Some(1),
+            | KernelOp::GemmFp8Head
+            // one per-token W8A8 body, no split-K
+            | KernelOp::GemmW8A8 => Some(1),
             KernelOp::AttnDecodePaged | KernelOp::AttnDecodeTree => Some(2),
             KernelOp::GemmBf16 | KernelOp::LogitsGather => None,
         }
@@ -951,6 +963,8 @@ pub enum WeightRole {
     KvScale,
     /// The embedding table.
     Embedding,
+    /// a producer's per-channel MACaQ scale `t` (f32), read by the `*_had32_*` twins.
+    HadT,
 }
 
 impl WeightRole {
@@ -969,6 +983,7 @@ impl WeightRole {
             WeightRole::DtBias => "dt_bias",
             WeightRole::KvScale => "kv_scale",
             WeightRole::Embedding => "embedding",
+            WeightRole::HadT => "had_t",
         }
     }
 }
@@ -1098,6 +1113,19 @@ pub struct Input {
 pub const ACCEPTS_FP8_ACTIVATION: &[Layout] = &[Layout::RowMajorFp8, Layout::ATiledFp8];
 /// bf16 only.
 pub const ACCEPTS_BF16: &[Layout] = &[Layout::Bf16];
+/// the per-token W8A8 bodies read row-major e4m3 only.
+pub const ACCEPTS_FP8_ROWMAJOR: &[Layout] = &[Layout::RowMajorFp8];
+
+/// the graph op a form-c W8 unit names (`role` = `out` | `o` | `down`, the MACaQ sim's roles).
+#[must_use]
+pub fn macaq_w8_op(layer: u32, role: &str) -> Option<String> {
+    Some(match role {
+        "out" => format!("layer.{layer}.gdn.out_proj"),
+        "o" => format!("layer.{layer}.attn.o_proj"),
+        "down" => format!("layer.{layer}.mlp.down_proj"),
+        _ => return None,
+    })
+}
 
 impl Input {
     fn new(edge: impl Into<String>, accepts: &'static [Layout]) -> Self {
@@ -2275,6 +2303,207 @@ impl Graph {
         self
     }
 
+    /// **MACaQ** (`--macaq-had on`): every target W4A8 GEMM's activation producer reads a per-channel
+    /// scale `t` and applies the block-32 Hadamard before its e4m3 law (`saber_kernels::macaq`). This
+    /// binds ONE f32 record a producer, `model.language_model.layers.<L>.macaq_had32.<site>_t`, as
+    /// [`WeightRole::HadT`]: `in_t` on the input norm (the GDN in_proj group / the attention qkv),
+    /// `gu_t` on the post-attention norm, `down_t` on `silu_mul_quant`, `out_t` on `gdn_norm_quant` /
+    /// `attn_gate_quant`. A norm-fed `t` is Replicated (its GEMM's K is the hidden size); the others are
+    /// the row-parallel inputs' Dim0 shards. The drafter and the head are untouched. Idempotent refusal:
+    /// a graph that already binds `HadT` is refused.
+    pub fn with_macaq_had(mut self) -> Result<Self, ModelError> {
+        if self.macaq_had() {
+            return Err(ModelError::Config(
+                "with_macaq_had: the graph already binds the macaq_had32 records".into(),
+            ));
+        }
+        let hidden = u64::from(self.config.hidden_size);
+        let mut bound = 0usize;
+        for op in &mut self.ops {
+            let Site::Layer(layer) = op.site else {
+                continue;
+            };
+            let lp = format!("model.language_model.layers.{layer}.macaq_had32");
+            let (site, k, shard) = match (op.kernel, &op.geometry) {
+                (KernelOp::AddRmsQuant, _) if op.name.ends_with(".input_layernorm") => {
+                    ("in", hidden, ShardKind::Replicated)
+                }
+                (KernelOp::AddRmsQuant, _) if op.name.ends_with(".post_attention_layernorm") => {
+                    ("gu", hidden, ShardKind::Replicated)
+                }
+                (KernelOp::SiluMulQuant, Geometry::SiluMul { n }) => {
+                    ("down", u64::from(*n), ShardKind::Dim0)
+                }
+                (KernelOp::GdnNormQuant, Geometry::GdnNorm { n, .. }) => {
+                    ("out", u64::from(*n), ShardKind::Dim0)
+                }
+                (KernelOp::AttnGateQuant, Geometry::GateQuant { n, .. }) => {
+                    ("out", u64::from(*n), ShardKind::Dim0)
+                }
+                (KernelOp::AddRmsQuant | KernelOp::SiluMulQuant | KernelOp::GdnNormQuant, _)
+                | (KernelOp::AttnGateQuant, _) => {
+                    return Err(ModelError::Config(format!(
+                        "with_macaq_had: producer `{}` has no macaq site",
+                        op.name
+                    )));
+                }
+                _ => continue,
+            };
+            op.weights.push(Binding::new(
+                format!("{lp}.{site}_t"),
+                WeightRole::HadT,
+                Dtype::F32,
+                vec![k],
+                shard,
+            ));
+            bound += 1;
+        }
+        let want = 4 * self.config.num_hidden_layers as usize;
+        if bound != want {
+            return Err(ModelError::Config(format!(
+                "with_macaq_had: bound {bound} producer records, the model has {want} (4 a layer)"
+            )));
+        }
+        Ok(self)
+    }
+
+    /// **MACaQ** (`--macaq-w8`, pack-driven): the form-c W8 promotions. Each named op -- a row-parallel
+    /// MACaQ-Hadamard linear, `layer.<L>.gdn.out_proj` / `layer.<L>.attn.o_proj` / `layer.<L>.mlp.down_proj`
+    /// ([`macaq_w8_op`]) -- becomes a [`KernelOp::GemmW8A8`] reading the block-fp8 source
+    /// `<linear>.weight_w8` (`e4m3` `[N, K]`, Dim1) + `<linear>.weight_w8_scale` (`f32` `[N/128, K/128]`,
+    /// Dim1) as the records `<op>.w8` (layout 7) + `<op>.w8s` (layout 8), and its producer's output edge
+    /// becomes ROW-MAJOR AT EVERY M (the W8 bodies read row-major A; the producer takes its `tiled0`
+    /// instantiation at prefill). The weight is in the had32 producer's rotated basis, so the graph must
+    /// already bind the MACaQ `t` records ([`Graph::with_macaq_had`]); an op that is not one of the three
+    /// roles, not a W4A8 GEMM, named twice or missing is refused by name. An empty set is the identity.
+    pub fn with_macaq_w8(mut self, ops: &BTreeSet<String>) -> Result<Self, ModelError> {
+        if ops.is_empty() {
+            return Ok(self);
+        }
+        if !self.macaq_had() {
+            return Err(ModelError::Config(
+                "with_macaq_w8: the W8 promotions are in the MACaQ-Hadamard basis; the graph does not \
+                 bind the macaq_had32 records (with_macaq_had first)"
+                    .into(),
+            ));
+        }
+        if !self.macaq_w8().is_empty() {
+            return Err(ModelError::Config(
+                "with_macaq_w8: the graph already carries W8 promotions".into(),
+            ));
+        }
+        for name in ops {
+            let ok_role = [".gdn.out_proj", ".attn.o_proj", ".mlp.down_proj"]
+                .iter()
+                .any(|r| name.ends_with(r));
+            let Some(i) = self.ops.iter().position(|o| &o.name == name) else {
+                return Err(ModelError::Config(format!(
+                    "with_macaq_w8: no op `{name}` in the graph"
+                )));
+            };
+            let op = &self.ops[i];
+            if !ok_role || op.kernel != KernelOp::GemmW4A8 {
+                return Err(ModelError::Config(format!(
+                    "with_macaq_w8: `{name}` ({}) is not a form-c W8 site (gdn.out_proj / attn.o_proj / \
+                     mlp.down_proj, a W4A8 GEMM)",
+                    op.kernel
+                )));
+            }
+            let Geometry::Gemm { n, k, .. } = op.geometry else {
+                return Err(ModelError::Config(format!("{name}: not a GEMM geometry")));
+            };
+            let Some(wb) = op
+                .weights
+                .iter()
+                .find(|b| matches!(b.role, WeightRole::Weight | WeightRole::WeightPacked))
+            else {
+                return Err(ModelError::Config(format!("{name}: no weight binding")));
+            };
+            let prefix = wb
+                .record
+                .strip_suffix(".weight_packed")
+                .or_else(|| wb.record.strip_suffix(".weight"))
+                .ok_or_else(|| {
+                    ModelError::Config(format!("{name}: weight record `{}`?", wb.record))
+                })?
+                .to_owned();
+            let shard = wb.shard;
+            let [input] = &op.inputs[..] else {
+                return Err(ModelError::Config(format!("{name}: one activation input")));
+            };
+            let edge = input.edge.clone();
+            let op = &mut self.ops[i];
+            op.kernel = KernelOp::GemmW8A8;
+            op.inputs[0].accepts = ACCEPTS_FP8_ROWMAJOR;
+            op.weights = vec![
+                Binding::new(
+                    format!("{prefix}.weight_w8"),
+                    WeightRole::Weight,
+                    Dtype::F8E4M3,
+                    vec![u64::from(n), u64::from(k)],
+                    shard,
+                ),
+                Binding::new(
+                    format!("{prefix}.weight_w8_scale"),
+                    WeightRole::WeightScale,
+                    Dtype::F32,
+                    vec![u64::from(n) / 128, u64::from(k) / 128],
+                    shard,
+                ),
+            ];
+            op.geometry = Geometry::Gemm {
+                n,
+                k,
+                w_dtype: "fp8_block128",
+                a_dtype: "fp8_e4m3",
+            };
+            op.note = "MACaQ: a form-c W8 promotion (per-token W8A8 body, row-major A at every M)";
+            let mut producers = 0;
+            for p in &mut self.ops {
+                for e in &mut p.outputs {
+                    if e.name == edge {
+                        e.rule = LayoutRule::Fixed(Layout::RowMajorFp8);
+                        producers += 1;
+                    }
+                }
+            }
+            if producers != 1 {
+                return Err(ModelError::Config(format!(
+                    "with_macaq_w8: `{name}`'s input `{edge}` has {producers} producers, not 1"
+                )));
+            }
+            if self
+                .ops
+                .iter()
+                .any(|o| o.name != *name && o.inputs.iter().any(|x| x.edge == edge))
+            {
+                return Err(ModelError::Config(format!(
+                    "with_macaq_w8: `{edge}` is read by another op too; its layout cannot change for \
+                     `{name}` alone"
+                )));
+            }
+        }
+        Ok(self)
+    }
+
+    /// The ops this graph serves as MACaQ W8 promotions ([`Graph::with_macaq_w8`]).
+    #[must_use]
+    pub fn macaq_w8(&self) -> BTreeSet<String> {
+        self.ops
+            .iter()
+            .filter(|o| o.kernel == KernelOp::GemmW8A8)
+            .map(|o| o.name.clone())
+            .collect()
+    }
+
+    /// Whether this graph runs the MACaQ Hadamard producers ([`Graph::with_macaq_had`]).
+    #[must_use]
+    pub fn macaq_had(&self) -> bool {
+        self.ops
+            .iter()
+            .any(|o| o.weights.iter().any(|b| b.role == WeightRole::HadT))
+    }
+
     /// Whether this graph routes every decode bucket's GDN update to the pair.
     #[must_use]
     pub fn gdn_pair_always(&self) -> bool {
@@ -2637,7 +2866,7 @@ impl Graph {
             })
             .collect();
         let gemm_family = match op.kernel {
-            KernelOp::GemmW4A8 | KernelOp::GemmBf16 => {
+            KernelOp::GemmW4A8 | KernelOp::GemmBf16 | KernelOp::GemmW8A8 => {
                 Some(if input_layouts.first() == Some(&Layout::ATiledFp8) {
                     GemmFamily::ATiled
                 } else {
@@ -2816,6 +3045,23 @@ impl Graph {
                     _ => return Route::none(),
                 };
                 match desc {
+                    Ok(desc) => Route::from_plugin_name(desc.kernel, &desc.plugin),
+                    Err(e) => Route {
+                        entry: None,
+                        plugin: None,
+                        refusal: Some(e.to_string()),
+                    },
+                }
+            }
+
+            // ---- MACaQ: the per-token W8A8 band answers ------------------------------------
+            KernelOp::GemmW8A8 => {
+                let (n, k) = match op.geometry {
+                    Geometry::Gemm { n, k, .. } => (n, k),
+                    _ => return Route::none(),
+                };
+                let m = u32::try_from(keys.num("m").unwrap_or(1)).unwrap_or(1);
+                match saber_kernels::macaq_w8::resolve(m, n, k, saber_kernels::macaq_w8::RING) {
                     Ok(desc) => Route::from_plugin_name(desc.kernel, &desc.plugin),
                     Err(e) => Route {
                         entry: None,
@@ -3060,6 +3306,7 @@ impl Graph {
                     | KernelOp::GemmBf16
                     | KernelOp::GemmBf16Head
                     | KernelOp::GemmFp8Head
+                    | KernelOp::GemmW8A8
             );
             if matrix && groups.is_empty() {
                 return Err(ModelError::Config(format!(
@@ -3206,6 +3453,9 @@ pub enum SourceQuant {
     Bf16,
     /// Not a matrix: carried as stored.
     AsStored,
+    /// block fp8, `weight_w8` (`e4m3` `[N, K]`) x `weight_w8_scale` (`f32` `[N/128, K/128]`),
+    /// carried as codes (layouts 7 / 8): nothing is requantized.
+    Fp8Block,
 }
 
 impl SourceQuant {
@@ -3217,6 +3467,7 @@ impl SourceQuant {
             SourceQuant::Fp8Channel => "fp8_channel",
             SourceQuant::Bf16 => "bf16",
             SourceQuant::AsStored => "as_stored",
+            SourceQuant::Fp8Block => "fp8_block",
         }
     }
 }
@@ -3376,6 +3627,56 @@ fn gemm_records(op: &Op, groups: &[Group<'_>]) -> Result<Vec<DeviceFinalRecord>,
     } else {
         groups[0].weight.shard
     };
+    if op.kernel == KernelOp::GemmW8A8 {
+        // TWO records from ONE block-fp8 source (`macaq_w8_export.py`'s e4m3 codes + the f32
+        // [N/128, K/128] scale, in the had32 producer's rotated basis): the codes preshuffled to the
+        // W8 bodies' B-fragment order (layout 7) and the scale carried as f32 (layout 8), both
+        // sharded like the op's weight (row-parallel: Dim1, the K shard on 128-column boundaries).
+        let g = match groups {
+            [g] if g.scale.is_some() => g,
+            _ => {
+                return Err(ModelError::Config(format!(
+                    "{}: a W8A8 promotion wants one block-fp8 weight and its scale",
+                    op.name
+                )))
+            }
+        };
+        if n % 128 != 0 || k % 128 != 0 {
+            return Err(ModelError::Config(format!(
+                "{}: W8A8 N={n} K={k} must be multiples of 128",
+                op.name
+            )));
+        }
+        let src = vec![SourceTensor {
+            weight: g.weight.record.clone(),
+            quant: SourceQuant::Fp8Block,
+            scale: g.scale.map(|b| b.record.clone()),
+            global_scale: None,
+            input_scale: None,
+        }];
+        return Ok(vec![
+            DeviceFinalRecord {
+                name: format!("{}.w8", op.name),
+                layout_id: LAYOUT_FP8_PRESHUFFLE,
+                role: DeviceFinalRole::Weight,
+                op: Some(op.name.clone()),
+                dtype: Dtype::F8E4M3,
+                shard: g.weight.shard,
+                shape: vec![u64::from(n) / 16, u64::from(k) * 16],
+                sources: src.clone(),
+            },
+            DeviceFinalRecord {
+                name: format!("{}.w8s", op.name),
+                layout_id: LAYOUT_FP8_BLOCK_SCALE,
+                role: DeviceFinalRole::BlockScale,
+                op: Some(op.name.clone()),
+                dtype: Dtype::F32,
+                shard: g.weight.shard,
+                shape: vec![u64::from(n) / 128, u64::from(k) / 128],
+                sources: src,
+            },
+        ]);
+    }
     if op.kernel == KernelOp::GemmFp8Head {
         // The fp8-weight head (N4): TWO records, both raw bytes of the checkpoint's per-channel
         // fp8 source -- the e4m3 matrix and its scale widened to f32 -- and nothing requantized.

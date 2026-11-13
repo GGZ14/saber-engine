@@ -610,11 +610,21 @@ impl ServerStateBuilder {
         self
     }
 
-    /// `--max-logprobs`: the cap on `logprobs`, `top_logprobs` and `prompt_logprobs`, checked at
-    /// validation with the reference server's 400. `-1` is the whole vocabulary.
+    /// `--max-logprobs`: the cap on `logprobs` and `top_logprobs` (and on `prompt_logprobs` when
+    /// it is above [`Self::max_prompt_logprobs`]), checked at validation with the reference
+    /// server's 400. `-1` is the whole vocabulary.
     #[must_use]
     pub fn max_logprobs(mut self, max: i32) -> Self {
         self.state.limits.max_logprobs = max;
+        self
+    }
+
+    /// The floor of the `prompt_logprobs` cap (default
+    /// [`crate::sampling::DEFAULT_MAX_PROMPT_LOGPROBS`] = 64, the seam's width). The cap a request
+    /// meets is the larger of this and `--max-logprobs`.
+    #[must_use]
+    pub fn max_prompt_logprobs(mut self, max: i32) -> Self {
+        self.state.limits.max_prompt_logprobs = max;
         self
     }
 

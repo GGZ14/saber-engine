@@ -1014,6 +1014,12 @@ pub struct EngineConfig {
     /// arena was zeroed and every graph captured, fill a set of device buffers with a byte, so a
     /// first request whose output moves names a read of memory it never wrote. Never a serving mode.
     pub poison_boot: Option<PoisonBoot>,
+    /// **GATE CONTROL** (`saber serve --engine-prefix-replay-poison leader|peer`, leader
+    /// only, never a serving mode): a prefix-cache SAVE / VERIFY is treated as if the session's GDN
+    /// base still owed a replay. `Leader` = the leader's own fail-closed refusal must fire (FATAL);
+    /// `Peer` = the leader skips its own check and tells rank 1 the base is owed, so rank 1's
+    /// mirror must refuse (the pair's FATAL). `Off` = the default.
+    pub prefix_replay_poison: PrefixReplayPoison,
     /// **GATE CONTROL** (T7, `saber engine --constant-seed-control`, forwarded to rank 1): the
     /// pre-T7 constant re-seed policy (`ConstantSeeds::SharedArenaOnly`) -- only the shared prefill
     /// arena's `.zero_resid` is re-seeded, every decode bucket reads its own arena's boot zeros.
@@ -1093,6 +1099,10 @@ pub struct EngineConfig {
     /// since N8 (2026-09-23, the user's decision); `false` (fp32, the HF config's
     /// `mamba_ssm_dtype`) is the pairing control. Forwarded to rank 1.
     pub gdn_state_f16: bool,
+    /// **MACaQ** (`--macaq-had on|off`): the MACaQ-W4A8 Hadamard producers
+    /// ([`Graph::with_macaq_had`]). `None` follows the pack's `macaq_had32` plan tag; an explicit
+    /// value that disagrees with the pack is refused by name ([`crate::macaq::resolve`]).
+    pub macaq_had: Option<bool>,
     /// Which `lm_head` the target plans. **The default is the EXACT head as the PACK carries it**
     /// (workstream N6, the user's law of 2026-09-22: the checkpoint's own precision, never
     /// requantized): [`crate::head_share::TargetHead::Exact`] resolves at [`spawn`] /
@@ -1133,6 +1143,49 @@ fn engine_graph(cfg: &EngineConfig, width: u32) -> Result<Graph, saber_model::Mo
     } else {
         g
     };
+    // the Hadamard producers follow the pack (or the explicit flag, which must agree).
+    let had =
+        crate::macaq::resolve(cfg.macaq_had, &cfg.pack).map_err(saber_model::ModelError::Config)?;
+    {
+        // say once which producers this rank runs (the stack's boot proof).
+        static SAID_HAD: std::sync::Once = std::sync::Once::new();
+        SAID_HAD.call_once(|| {
+            eprintln!(
+                "macaqhad rank {}: {} (flag {}; the pack {} the `macaq_had32` records)",
+                cfg.rank,
+                if had {
+                    "ON -- the block-32 Hadamard + t producer twins"
+                } else {
+                    "off -- the parent producers"
+                },
+                match cfg.macaq_had {
+                    None => "absent: follows the pack",
+                    Some(true) => "on",
+                    Some(false) => "off",
+                },
+                if had { "carries" } else { "has none of" }
+            );
+        });
+    }
+    let g = if had { g.with_macaq_had()? } else { g };
+    // the form-c W8 promotions are the PACK's (`<op>.w8` records); an ordinary pack has none.
+    let w8 = crate::macaq::pack_w8_ops(&cfg.pack).map_err(saber_model::ModelError::Config)?;
+    if !w8.is_empty() {
+        static SAID: std::sync::Once = std::sync::Once::new();
+        SAID.call_once(|| {
+            let n = |r: &str| w8.iter().filter(|o| o.ends_with(r)).count();
+            eprintln!(
+                "macaqw8  rank {}: {} form-c W8 promotions from the pack (gdn.out_proj {}, attn.o_proj {}, \
+                 mlp.down_proj {}); per-token W8A8 bodies, row-major A",
+                cfg.rank,
+                w8.len(),
+                n(".gdn.out_proj"),
+                n(".attn.o_proj"),
+                n(".mlp.down_proj")
+            );
+        });
+    }
+    let g = g.with_macaq_w8(&w8)?;
     // P27-W2-5: the replay arm runs the PAIR at every decode bucket (the fused update has no
     // replay form; the two are byte-identical, LEDGER 2026-09-19).
     let g = if cfg.gdn_replay {
@@ -8841,7 +8894,22 @@ fn run(
                     committed,
                     draft_first,
                     draft_pages,
+                    owed,
                 } => {
+                    // rank 1's mirror of the replay law, fail-closed: a save the leader
+                    // says owes a replay, or (under this rank's own arm) of a run whose last
+                    // writer was not a prefill (`committed != 1`), would image a base missing
+                    // replayed rows. The worker's Err is the pair's FATAL.
+                    if op == 0 && (owed || (cfg.gdn_replay && committed != 1)) {
+                        let why = format!(
+                            "FATAL: rank {} refuses a prefix snapshot of slot {slot} \
+                             (entry {entry}): the leader says its GDN base owes a replay ({owed}) \
+                             / committed {committed} under --engine-gdn-replay on -- fail-closed",
+                            cfg.rank
+                        );
+                        saber_serve::fatal::set(cfg.rank, why.clone());
+                        return Err(ForwardError::Peer(why));
+                    }
                     // FN52: THIS RANK'S HALF, by the numbers the leader used for its own.
                     let draft = match (drafter.as_ref(), draft_pages) {
                         (Some(res), p) if p > 0 => Some(draft_park_at(res, draft_first, p)?),
@@ -9530,6 +9598,11 @@ fn run(
                     seq,
                     entry,
                     tokens,
+                    PrefixReplay {
+                        rank: cfg.rank,
+                        arm: indices.replay.is_some(),
+                        poison: cfg.prefix_replay_poison,
+                    },
                 );
                 let _ = reply.send(r);
             }
@@ -16187,6 +16260,104 @@ fn copy_session_state(
     Ok(())
 }
 
+/// the prefix cache's replay-law poison ([`EngineConfig::prefix_replay_poison`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PrefixReplayPoison {
+    /// The default: no poison.
+    #[default]
+    Off,
+    /// The leader's SAVE / VERIFY sees an owed base (its own refusal must fire).
+    Leader,
+    /// The leader skips its own check and sends `owed` to rank 1 (rank 1's mirror must fire).
+    Peer,
+}
+
+impl PrefixReplayPoison {
+    /// `off` | `leader` | `peer`.
+    ///
+    /// # Errors
+    /// Any other word.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "off" => Ok(Self::Off),
+            "leader" => Ok(Self::Leader),
+            "peer" => Ok(Self::Peer),
+            other => Err(format!(
+                "--engine-prefix-replay-poison {other}: off | leader | peer"
+            )),
+        }
+    }
+}
+
+/// **the prefix snapshot's replay law, fail-closed.** Under the GDN replay arm a
+/// session's recurrent state is its BASE slot plus, after a decode step, the stash rows the next
+/// step's prologue replays (`replay.pending`). A prefix snapshot images the base only
+/// ([`prefix_image_save`] at `committed 1` = the base, every state), so it is sound only when the
+/// base owes nothing and the session's last writer was a prefill (`committed == 1`, H30) -- which
+/// is every served save: the scheduler snapshots at a prefill cut (`session.done == tokens`). A
+/// save / verify of any other session is refused by name and is the rank's FATAL
+/// (`saber_serve::fatal`): an image missing replayed rows would be adopted by every later
+/// turn of that prefix, silently. Off the arm this is a no-op (the per-row snapshot law places the
+/// live slot from `committed`).
+fn prefix_replay_ok(
+    rank: u32,
+    what: &str,
+    seq: SeqId,
+    session: &Session,
+    arm: bool,
+    forced_owed: bool,
+) -> Result<(), ForwardError> {
+    match prefix_replay_refusal(
+        arm,
+        session.replay.pending || forced_owed,
+        session.committed,
+    ) {
+        None => Ok(()),
+        Some(law) => {
+            let why = format!(
+                "FATAL: a prefix {what} of {seq} while its GDN base {law} \
+                 (--engine-gdn-replay on; committed {}, poison {forced_owed}): the snapshot \
+                 would image a base missing replayed rows -- refused fail-closed",
+                session.committed
+            );
+            saber_serve::fatal::set(rank, why.clone());
+            Err(ForwardError::Device(why))
+        }
+    }
+}
+
+/// the replay law of a prefix image as a pure question -- `None` = sound, `Some(why)` =
+/// refused. Off the arm every image is sound (the per-row snapshot law places the live slot).
+fn prefix_replay_refusal(arm: bool, owed: bool, committed: u32) -> Option<&'static str> {
+    if !arm {
+        None
+    } else if owed {
+        Some("owes the last step's replay")
+    } else if committed != 1 {
+        Some("is not a prefill's base (committed != 1)")
+    } else {
+        None
+    }
+}
+
+/// what [`leader_prefix`] needs of the replay law: the arm, the rank (whose fatal a
+/// refusal is) and the gate's poison.
+#[derive(Clone, Copy, Debug)]
+struct PrefixReplay {
+    rank: u32,
+    arm: bool,
+    poison: PrefixReplayPoison,
+}
+
+impl PrefixReplay {
+    /// `(the leader checks its own save, rank 1 is told the base is owed)`: the leader always
+    /// checks unless the `peer` poison asks rank 1's mirror to be the one that fires.
+    fn check(self, session: &Session) -> (bool, bool) {
+        let peer = self.poison == PrefixReplayPoison::Peer;
+        (!peer, self.arm && (peer || session.replay.pending))
+    }
+}
+
 /// FN52: which prefix-cache operation a [`Req::Prefix`] is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PrefixOp {
@@ -16404,6 +16575,7 @@ fn leader_prefix(
     seq: SeqId,
     entry: u32,
     tokens: u32,
+    replay: PrefixReplay,
 ) -> Result<(u64, bool), ForwardError> {
     if op == PrefixOp::Drop {
         store.remove(&entry);
@@ -16416,6 +16588,7 @@ fn leader_prefix(
                     committed: 0,
                     draft_first: 0,
                     draft_pages: 0,
+                    owed: false,
                 },
                 &[],
             )?;
@@ -16444,6 +16617,8 @@ fn leader_prefix(
         _ => None,
     };
     let (dfirst, dpages) = draft_run.unwrap_or((0, 0));
+    // the replay law's fail-closed check (Save / Verify), and what rank 1 is told.
+    let (check_here, owed_peer) = replay.check(&session);
     match op {
         PrefixOp::Save => {
             if session.done != tokens {
@@ -16451,6 +16626,16 @@ fn leader_prefix(
                     "{seq}: a prefix snapshot at {tokens} of a session at {}",
                     session.done
                 )));
+            }
+            if check_here {
+                prefix_replay_ok(
+                    replay.rank,
+                    "snapshot",
+                    seq,
+                    &session,
+                    replay.arm,
+                    replay.poison == PrefixReplayPoison::Leader,
+                )?;
             }
             let img = prefix_image_save(
                 hip,
@@ -16470,6 +16655,7 @@ fn leader_prefix(
                         committed: session.committed,
                         draft_first: dfirst,
                         draft_pages: if draft.is_some() { dpages } else { 0 },
+                        owed: owed_peer,
                     },
                     &[],
                 )?;
@@ -16482,6 +16668,14 @@ fn leader_prefix(
                 return Err(ForwardError::Device(format!(
                     "{seq}: a prefix restore into a session that has already fed {} tokens",
                     session.done
+                )));
+            }
+            // a load writes the BASE of a fresh admission (nothing owed, a fresh tag);
+            // anything else under the arm is refused (it cannot happen: `done == 0` above).
+            if replay.arm && session.replay.pending {
+                return Err(ForwardError::Device(format!(
+                    "{seq}: a prefix restore into a session whose GDN base owes a replay \
+                    "
                 )));
             }
             let img = store.get(&entry).ok_or_else(|| {
@@ -16497,6 +16691,7 @@ fn leader_prefix(
                         committed: 1,
                         draft_first: dfirst,
                         draft_pages: if draft.is_some() { dpages } else { 0 },
+                        owed: false,
                     },
                     &[],
                 )?;
@@ -16517,6 +16712,16 @@ fn leader_prefix(
                     session.done
                 )));
             }
+            // the fresh image is the same base read as a save's (rank 0 only: a
+            // verify reads no half of rank 1's).
+            prefix_replay_ok(
+                replay.rank,
+                "verify",
+                seq,
+                &session,
+                replay.arm,
+                replay.poison != PrefixReplayPoison::Off,
+            )?;
             let fresh = prefix_image_save(
                 hip,
                 stream,
@@ -16530,6 +16735,10 @@ fn leader_prefix(
             // The KV pages: the fresh session's own first pages against the entry's.
             let pages = (tokens / 16) as usize;
             let mut kv_diff = 0usize;
+            // WHERE the pages differ (first / last differing page over every KV
+            // buffer), so a chunk-class difference (pages past an earlier cut) reads apart
+            // from a stale or misplaced page.
+            let mut kv_span: Option<(usize, usize)> = None;
             for buf in state_bufs {
                 if buf.per_slot.is_some() {
                     continue;
@@ -16537,7 +16746,13 @@ fn leader_prefix(
                 let block_bytes = buf.ptr.len() / u64::from(kv_pool_blocks.max(1));
                 let mut a = vec![0u8; block_bytes as usize];
                 let mut b = vec![0u8; block_bytes as usize];
-                for (&mine, &theirs) in session.kv_blocks.iter().zip(&entry_blocks).take(pages) {
+                for (page, (&mine, &theirs)) in session
+                    .kv_blocks
+                    .iter()
+                    .zip(&entry_blocks)
+                    .take(pages)
+                    .enumerate()
+                {
                     hip.memcpy_d2h_at_blocking(
                         &mut a,
                         &buf.ptr,
@@ -16554,6 +16769,9 @@ fn leader_prefix(
                     .map_err(device_err("prefix verify: reading a KV page"))?;
                     if a != b {
                         kv_diff += 1;
+                        kv_span = Some(
+                            kv_span.map_or((page, page), |(lo, hi)| (lo.min(page), hi.max(page))),
+                        );
                     }
                 }
             }
@@ -16564,6 +16782,21 @@ fn leader_prefix(
                 .filter(|(x, y)| x != y)
                 .count();
             same = same && draft_same && kv_diff == 0;
+            if !same {
+                let gdn_same: Vec<usize> = fresh
+                    .gdn
+                    .iter()
+                    .zip(&img.gdn)
+                    .enumerate()
+                    .filter(|(_, (x, y))| x == y)
+                    .map(|(i, _)| i)
+                    .collect();
+                tracing::info!(
+                    %seq, entry, tokens, ?gdn_same, kv_first_page = kv_span.map(|s| s.0),
+                    kv_last_page = kv_span.map(|s| s.1),
+                    "prefix verify rank 0 detail: GDN buffers that MATCH, KV page span that differs"
+                );
+            }
             tracing::info!(
                 %seq, entry, tokens, gdn_buffers = img.gdn.len(), gdn_diff, draft_same,
                 draft_bytes = img.draft.len(), kv_pages = pages, kv_diff,
@@ -18739,6 +18972,11 @@ fn read_picks(
     Ok(out)
 }
 
+/// Diagnostic: keep every probed row's bytes RAW at every depth, not only under
+/// [`ProbeDepth::OpsRaw`] -- what `saber engine --macaq6-resid-dump` writes out of a prefill probe.
+/// Off by default; a probe is a diagnostic arm already, so this moves no served byte.
+pub static PROBE_KEEP_RAW: AtomicBool = AtomicBool::new(false);
+
 /// The dump points of a body plan: the step index after which each layer's INPUT residual stream
 /// is final, the edge that holds it, and the layer it belongs to.
 ///
@@ -18935,7 +19173,7 @@ fn probe_step(
         let have = span.rows(b.bytes);
         let mut digests = Vec::with_capacity(want.len());
         let mut row = vec![0u8; width];
-        let keep_raw = depth == ProbeDepth::OpsRaw;
+        let keep_raw = depth == ProbeDepth::OpsRaw || PROBE_KEEP_RAW.load(Ordering::Relaxed);
         let mut raw = Vec::new();
         if p.optional && want.iter().any(|&r| r as u64 >= have) {
             continue;
@@ -23246,7 +23484,47 @@ fn follow_proposals(
 mod tests {
     use super::*;
 
-    /// CMP27T: `--engine-c4-arms` reads back the word it was given; the flip's default is all.
+    /// a prefix image under the replay arm is sound only at a prefill's base with nothing
+    /// owed; off the arm every image passes (the control: the same owed session off the arm).
+    #[test]
+    fn macaq12_a_prefix_image_refuses_an_owed_base_under_the_replay_arm() {
+        assert_eq!(prefix_replay_refusal(true, false, 1), None);
+        assert!(prefix_replay_refusal(true, true, 1).is_some());
+        assert!(prefix_replay_refusal(true, false, 3).is_some());
+        assert_eq!(prefix_replay_refusal(false, true, 3), None);
+        // the leader checks itself unless the peer poison hands the refusal to rank 1
+        let off = PrefixReplay {
+            rank: 0,
+            arm: true,
+            poison: PrefixReplayPoison::Off,
+        };
+        let peer = PrefixReplay {
+            poison: PrefixReplayPoison::Peer,
+            ..off
+        };
+        assert_eq!(
+            PrefixReplayPoison::parse("peer"),
+            Ok(PrefixReplayPoison::Peer)
+        );
+        assert!(PrefixReplayPoison::parse("on").is_err());
+        let s = Session {
+            slot: 0,
+            kv_blocks: Vec::new(),
+            done: 0,
+            committed: 1,
+            images: None,
+            replay: ReplayFacts::admitted(),
+        };
+        assert_eq!(off.check(&s), (true, false));
+        assert_eq!(peer.check(&s), (false, true));
+        let mut owed = s.clone();
+        owed.replay.pending = true;
+        assert_eq!(off.check(&owed), (true, true));
+        let unarmed = PrefixReplay { arm: false, ..off };
+        assert_eq!(unarmed.check(&owed), (true, false));
+    }
+
+    /// CMP27T:`--engine-c4-arms` reads back the word it was given; the flip's default is all.
     #[test]
     fn cmp27x_step_arms_round_trip_and_default_is_all() {
         assert_eq!(

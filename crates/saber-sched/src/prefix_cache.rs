@@ -21,6 +21,16 @@
 //! snapshot is taken after that chunk. The reference server's align mode does the same: states kept at
 //! block-aligned positions of the computed tokens.
 //!
+//! **The cut lineage** (2026-11-12): an entry's state is the state of a prefill whose
+//! chunks RESTARTED at every cache cut its lineage passed through — the prefix it adopted (or, in
+//! the verify arm, compared at), that prefix's own lineage, and so on back to the conversation's
+//! first turn. A chunk boundary is a kernel-class input (the GDN chunk scan's cut, the GEMM row
+//! band), so `[0, c1) + [c1, c2)` and `[0, c2)` are different bytes past `c1`. Every entry keeps
+//! those positions ([`PrefixEntry::cuts`]) and the verify arm's fresh prefill cuts at ALL of them,
+//! which is exactly the schedule the adopted path ran: the reference a 3rd+ turn is compared with
+//! is the one its adoption reproduces, not a one-cut prefill (the pre-fix verify arm's reference,
+//! which differed on every turn >= 3 by the chunk class alone.
+//!
 //! **The key** is [`crate::prefix_key::prefix_block_keys`], chained, so block `i`'s key names the
 //! whole prefix — and a hit still compares the FULL token ids (no partial-block hits, no
 //! hash-collision hits: multi-tenant safety is an equality, not a probability). Image prompts
@@ -95,6 +105,9 @@ pub struct PrefixEntry {
     pub blocks: Vec<u32>,
     /// Host bytes the executor reported for the snapshot (per rank).
     pub host_bytes: u64,
+    /// The cut lineage: every position strictly below `tokens` at which the saving session's
+    /// prefill restarted a chunk for the cache (ascending; empty for a first turn).
+    pub cuts: Vec<u32>,
     last_used: u64,
 }
 
@@ -107,6 +120,19 @@ pub struct PrefixHit {
     pub tokens: u32,
     /// Its blocks.
     pub blocks: Vec<u32>,
+    /// The entry's cut lineage ([`PrefixEntry::cuts`]).
+    pub cuts: Vec<u32>,
+}
+
+impl PrefixHit {
+    /// The lineage a session that adopts (or verifies against) this hit carries: the entry's own
+    /// cuts and the hit's position.
+    #[must_use]
+    pub fn lineage(&self) -> Vec<u32> {
+        let mut v = self.cuts.clone();
+        v.push(self.tokens);
+        v
+    }
 }
 
 /// Which-path counters (`CLAUDE.md` rule 5).
@@ -256,6 +282,7 @@ impl PrefixCache {
                 entry: id,
                 tokens: at as u32,
                 blocks: e.blocks.clone(),
+                cuts: e.cuts.clone(),
             });
         }
         None
@@ -269,7 +296,8 @@ impl PrefixCache {
     }
 
     /// Retain `tokens` (block-aligned) under `id`, whose snapshot the executor holds at
-    /// `host_bytes`. Returns the entries evicted to stay inside the budget and the cap (oldest
+    /// `host_bytes`, computed by a prefill that restarted its chunks at `cuts` (the lineage; any
+    /// position at or past `tokens.len()` is dropped). Returns the entries evicted to stay inside the budget and the cap (oldest
     /// first) — the caller drops their snapshots and releases their blocks. The new entry is never
     /// among them unless it alone is over the budget, in which case it is returned too.
     pub fn insert(
@@ -278,7 +306,12 @@ impl PrefixCache {
         tokens: Vec<TokenId>,
         blocks: Vec<u32>,
         host_bytes: u64,
+        cuts: Vec<u32>,
     ) -> Vec<PrefixEntry> {
+        let mut cuts = cuts;
+        cuts.retain(|c| *c > 0 && (*c as usize) < tokens.len());
+        cuts.sort_unstable();
+        cuts.dedup();
         let key = prefix_block_keys(&tokens, self.block_tokens, &[])
             .last()
             .copied()
@@ -301,6 +334,7 @@ impl PrefixCache {
                 tokens,
                 blocks,
                 host_bytes,
+                cuts,
                 last_used: self.clock,
             },
         );
@@ -380,11 +414,16 @@ mod tests {
     fn the_longest_retained_prefix_wins_and_a_one_token_difference_misses() {
         let mut c = cache();
         let a = c.reserve_id();
-        assert!(c.insert(a, ids(32), vec![7, 8], 10).is_empty());
+        assert!(c.insert(a, ids(32), vec![7, 8], 10, vec![]).is_empty());
         let b = c.reserve_id();
-        assert!(c.insert(b, ids(64), vec![7, 8, 9, 10], 10).is_empty());
+        assert!(c
+            .insert(b, ids(64), vec![7, 8, 9, 10], 10, vec![32])
+            .is_empty());
         let hit = c.lookup(&ids(100)).expect("hit");
         assert_eq!((hit.entry, hit.tokens), (b, 64));
+        // the hit carries its entry's cut lineage, and a session on it adds the hit.
+        assert_eq!(hit.cuts, vec![32]);
+        assert_eq!(hit.lineage(), vec![32, 64]);
         // Strictly shorter than the prompt: a 64-token prompt adopts 32, never all 64.
         assert_eq!(c.lookup(&ids(64)).map(|h| h.tokens), Some(32));
         // One token different inside the first block: nothing.
@@ -406,7 +445,7 @@ mod tests {
                 let id = c.reserve_id();
                 let mut t = ids(32);
                 t[0] = 1000 + k;
-                assert!(c.insert(id, t, vec![k], 100).is_empty());
+                assert!(c.insert(id, t, vec![k], 100, vec![]).is_empty());
                 id
             })
             .collect();
@@ -415,11 +454,11 @@ mod tests {
         t[0] = 1000;
         assert!(c.lookup(&t).is_some());
         let id = c.reserve_id();
-        let ev = c.insert(id, ids(32), vec![9], 100);
+        let ev = c.insert(id, ids(32), vec![9], 100, vec![]);
         assert_eq!(ev.iter().map(|e| e.id).collect::<Vec<_>>(), vec![ids3[1]]);
         // Over the byte budget: the oldest go until it fits.
         let id = c.reserve_id();
-        let ev = c.insert(id, ids(48), vec![9, 10, 11], 900);
+        let ev = c.insert(id, ids(48), vec![9, 10, 11], 900, vec![]);
         assert_eq!(
             ev.len(),
             2,

@@ -3343,10 +3343,35 @@ pub const SIG_DFLASH_WALK: &[SigArg] = &[
 /// FN23: `fn23_offsets`, the card-side pre-flight of the argument offsets the walk unpacks.
 pub const SIG_FN23_OFFSETS: &[SigArg] = &[p("out", 4)];
 
+/// a `*_had32_*` producer twin's signature is its PARENT's (the name with the twin prefix
+/// mapped back, `crate::macaq::TWINS`) plus one trailing `had_t` f32 buffer. Built once per parent.
+fn macaq_twin_signature(kernel: &str) -> Option<&'static [SigArg]> {
+    use std::collections::BTreeMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<BTreeMap<String, &'static [SigArg]>>> = OnceLock::new();
+    let (_, pk, _, tk) = crate::macaq::TWINS
+        .iter()
+        .find(|(_, _, _, tk)| kernel.starts_with(tk))?;
+    let parent = format!("{pk}{}", &kernel[tk.len()..]);
+    let base = signature_for(&parent)?;
+    let mut map = CACHE
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Some(*map.entry(parent).or_insert_with(|| {
+        let mut v = base.to_vec();
+        v.push(p(crate::macaq::HAD_T, 4));
+        Vec::leak(v)
+    }))
+}
+
 /// The signature a kernel symbol must have, by name. The `.hsaco` metadata carries offsets but
 /// not meaning, so this is where an argument gets a NAME: `saber-kbuild` labels the manifest from
 /// here and refuses a kernel whose code-object layout does not pack the same way.
 pub fn signature_for(kernel: &str) -> Option<&'static [SigArg]> {
+    if let Some(sig) = macaq_twin_signature(kernel) {
+        return Some(sig);
+    }
     let sig = if kernel.starts_with("dflash_gemm_a8w8") {
         SIG_DFLASH_GEMM
     } else if kernel.starts_with("dflash_selector_walk") {
@@ -3468,6 +3493,8 @@ pub fn signature_for(kernel: &str) -> Option<&'static [SigArg]> {
         || kernel == "fn111_t8_a8w8_n64_ldc"
         || kernel == "fn141_t8_a8w8_n64_pf4_ldc"
         || (kernel.starts_with("fn_t8p_a8w8_") && kernel.ends_with("_ldc"))
+        // the per-token-scale twins (`macaq_w8`) take their parents' signature
+        || (kernel.starts_with("macaq_w8pt_") && kernel.ends_with("_ldc"))
     {
         // FN61e: the multi-row W8A8 tiles take FN61c's ldc signature
         SIG_FN_T8_A8W8_LDC

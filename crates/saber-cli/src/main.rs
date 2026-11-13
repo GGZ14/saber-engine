@@ -1689,9 +1689,11 @@ enum Cmd {
         /// --engine real, FN52: PREFIX (conversation) CACHING — `on` retains a request's KV
         /// pages + a GDN-state snapshot at its prompt's last whole block and lets a later prompt
         /// that extends it prefill only the tail (the reference server's `--enable-prefix-caching --mamba-cache-mode
-        /// align`). `off` = today's engine = the control, and the default.
+        /// align`). `on` is THE DEFAULT since 2026-11-11 (the user's word); `off` = the engine
+        /// before = the control. It composes with `--engine-gdn-replay` (the replay law: the snapshot
+        /// images the GDN base, refused fail-closed when a replay is owed).
         /// Prod's bare spelling (`--enable-prefix-caching` with no value) means `on`.
-        #[arg(long, value_parser = ["on", "off"], default_value = "off", num_args = 0..=1, default_missing_value = "on")]
+        #[arg(long, value_parser = ["on", "off"], default_value = "on", num_args = 0..=1, default_missing_value = "on")]
         enable_prefix_caching: String,
 
         /// --engine real, FN52's verify arm: a hit is not adopted; the prompt is prefilled fresh
@@ -2201,11 +2203,18 @@ enum Cmd {
         engine_spec_tree_sampled: String,
         /// --engine real (P27-W2-5 / CMP27G): the GDN decode update as BASE + STASH + REPLAY.
         /// `auto` (THE DEFAULT since CMP27G) = `on` unless the boot cannot carry it (the f32
-        /// state, `--engine-spec-tree best16`, the prefix cache, a park tier: then `off`, said
+        /// state, `--engine-spec-tree best16`, a park tier: then `off`, said
         /// on the `gdnreplay` boot line); `on` = the arm, refused by name where it cannot run;
         /// `off` = the per-row snapshot law (the control and the rollback). Bit-exact.
         #[arg(long, default_value = "auto", value_parser = ["off", "on", "auto"])]
         engine_gdn_replay: String,
+
+        /// --engine real, GATE CONTROL (never a serving mode): a prefix-cache snapshot
+        /// under the GDN replay arm is treated as if its GDN base still owed a replay -- `leader`
+        /// = the leader's own fail-closed refusal must fire, `peer` = rank 1's mirror must (the
+        /// pair's FATAL, exit 86, either way). `off` = the default.
+        #[arg(long, default_value = "off", value_parser = ["off", "leader", "peer"], hide = true)]
+        engine_prefix_replay_poison: String,
 
         /// --engine real (P27-14): the 27B's BIT-EXACT host levers, `none` or a comma list of
         /// `picks` (a sampled decode step's pick + seam in one frame), `table` (the compact
@@ -2228,6 +2237,25 @@ enum Cmd {
         /// byte-compare. --engine real: `saber engine --gdn-state-dtype`
         #[arg(long, default_value = "f16", value_parser = ["f32", "f16"])]
         engine_gdn_state_dtype: String,
+
+        /// A diagnostic ARM (hidden; TP = 1 only): the prefill attention's `fp8_mode`
+        /// (0 = the f16 legs over the fp8 KV cache, 1 = QK8, 2 = PV8, 3 = both = the default)
+        #[arg(long, default_value_t = 3, hide = true)]
+        macaq6_attn_fp8_mode: u32,
+
+        /// --engine real: the prefill GDN chunk scan's gate form, `exact` (the
+        /// exact-gate `fn_gdn_chunk_scan_xg2*` body: THE DEFAULT, -0.0065 nats KL) or
+        /// `split` (the certified split-and-clamped body, clamped at 80 nats about the chunk
+        /// midpoint: the control and the rollback). Both
+        /// ranks plan it (rank 1 is told by value). Decode / verify / the drafter never run the
+        /// scan. `--macaq6-gdn-scan` is the old spelling. `saber engine --gdn-scan`
+        #[arg(long, alias = "macaq6-gdn-scan", default_value = saber_kernels::saber::DEFAULT_GDN_SCAN, value_parser = ["split", "exact"])]
+        engine_gdn_scan: String,
+        /// the MACaQ-W4A8 Hadamard producers (`on` / `off`). ABSENT = follow the pack: a pack
+        /// whose plan carries the `macaq_had32` transform runs them, any other does not. An explicit
+        /// value that disagrees with the pack is REFUSED by name at boot. Forwarded to rank 1 by value
+        #[arg(long, value_parser = ["on", "off"])]
+        macaq_had: Option<String>,
 
         /// ACCEPTED, DOES NOTHING (N5, N6): the default `lm_head` is the checkpoint's own, as the
         /// pack carries it. Kept so older command lines still parse; it prints what the default
@@ -2306,9 +2334,10 @@ enum Cmd {
         #[arg(long, default_value = "prod")]
         parser_defaults: String,
 
-        /// The reference server's `--max-logprobs`: the cap on `logprobs`, `top_logprobs` and `prompt_logprobs`,
+        /// The reference server's `--max-logprobs`: the cap on `logprobs` and `top_logprobs`,
         /// refused at validation with the reference server's 400. -1 is the whole vocabulary. The reference server's default, 20,
-        /// is what the prod unit runs
+        /// is what the prod unit runs. `prompt_logprobs` is capped at the larger of this and 64
+        /// (the seam's width: a teacher-forced top-64 scorer needs no flag)
         #[arg(long, default_value_t = 20, allow_negative_numbers = true)]
         max_logprobs: i32,
 
@@ -2682,6 +2711,38 @@ enum Cmd {
         /// byte-compare. Forwarded to rank 1 by value
         #[arg(long, default_value = "f16", value_parser = ["f32", "f16"])]
         gdn_state_dtype: String,
+
+        /// A diagnostic ARM (hidden; TP = 1 only): the prefill attention's `fp8_mode`
+        /// (0 = the f16 legs over the fp8 KV cache, 1 = QK8, 2 = PV8, 3 = both = the default)
+        #[arg(long, default_value_t = 3, hide = true)]
+        macaq6_attn_fp8_mode: u32,
+
+        /// The prefill GDN chunk scan's gate form, `exact` (the exact-gate
+        /// `fn_gdn_chunk_scan_xg2*` body, THE DEFAULT) or `split` (the certified split-and-clamped
+        /// body: the control); at
+        /// TP = 2 rank 1 is told by value. `--macaq6-gdn-scan` is the old spelling
+        #[arg(long, alias = "macaq6-gdn-scan", default_value = saber_kernels::saber::DEFAULT_GDN_SCAN, value_parser = ["split", "exact"])]
+        gdn_scan: String,
+
+        /// A diagnostic (hidden; TP = 1 only): RUN ONLY the residual dump -- every prompt of
+        /// `--macaq6-resid-ids` (a JSON array of token-id arrays) is prefilled as ONE bucket and the
+        /// residual stream at every layer's input (`l{n}.resid.a`, the embedding as layer -1) is
+        /// written RAW (bf16) here at every `--macaq6-resid-stride`-th row plus the last
+        #[arg(long, hide = true)]
+        macaq6_resid_dump: Option<PathBuf>,
+
+        /// the prompts the residual dump prefills (a JSON array of token-id arrays)
+        #[arg(long, hide = true)]
+        macaq6_resid_ids: Option<PathBuf>,
+
+        /// the residual dump keeps rows 0, stride, 2 * stride, .. and the last
+        #[arg(long, default_value_t = 16, hide = true)]
+        macaq6_resid_stride: u32,
+        /// the MACaQ-W4A8 Hadamard producers (`on` / `off`). ABSENT = follow the pack: a pack
+        /// whose plan carries the `macaq_had32` transform runs them, any other does not. An explicit
+        /// value that disagrees with the pack is REFUSED by name at boot. Forwarded to rank 1 by value
+        #[arg(long, value_parser = ["on", "off"])]
+        macaq_had: Option<String>,
 
         /// ACCEPTED, DOES NOTHING (N5, N6): the default `lm_head` is the checkpoint's own, as the
         /// pack carries it. Kept so older command lines still parse; it prints what the default
@@ -3439,6 +3500,16 @@ enum Cmd {
         #[arg(long, value_parser = ["f32", "f16"])]
         gdn_state_dtype: String,
 
+        /// The leader's prefill GDN chunk scan form, `split` or `exact`, forwarded so
+        /// both ranks plan the same scan. No default: the leader always says which
+        #[arg(long, value_parser = ["split", "exact"])]
+        gdn_scan: String,
+        /// the MACaQ-W4A8 Hadamard producers (`on` / `off`). ABSENT = follow the pack: a pack
+        /// whose plan carries the `macaq_had32` transform runs them, any other does not. An explicit
+        /// value that disagrees with the pack is REFUSED by name at boot. Forwarded to rank 1 by value
+        #[arg(long, value_parser = ["on", "off"])]
+        macaq_had: Option<String>,
+
         /// The leader's head (N2, N4, N5: `exact`, `fp8` or `mxfp4`), forwarded so both ranks plan
         /// the same graph. No default: the leader always says which
         #[arg(long, value_parser = parse_target_head)]
@@ -3563,8 +3634,8 @@ fn serve_parsers(
 /// `--served-model-name`: the reference server takes a list, Saber serves one name.
 /// **CMP27G: the GDN replay arm's default** (`--engine-gdn-replay` / `--gdn-replay`): `auto` = `on`
 /// unless the boot cannot carry it -- the f32 stored state (the replay form is the f16 state's),
-/// the 16-row best16 tree (its flush is not composed), or a `blockers` entry (the prefix cache, a
-/// park tier) -- then `off`, said on one `gdnreplay` line (never silent). `on` / `off` pass
+/// the 16-row best16 tree (its flush is not composed), or a `blockers` entry (a park tier;
+/// the prefix cache composes and is not one) -- then `off`, said on one `gdnreplay` line (never silent). `on` / `off` pass
 /// through: an explicit `on` the boot cannot carry is refused by name downstream.
 fn gdn_replay_resolve(
     flag: &str,
@@ -3588,7 +3659,7 @@ fn gdn_replay_resolve(
     };
     match why {
         None => {
-            println!("gdnreplay  {flag} auto -> on (CMP27G: the default)");
+            println!("gdnreplay  {flag} auto -> on (CMP27G: the default; it composes with the prefix cache)");
             "on".to_owned()
         }
         Some(w) => {
@@ -4876,9 +4947,13 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
             engine_spec_tree,
             engine_spec_tree_sampled,
             engine_gdn_replay,
+            engine_prefix_replay_poison,
             engine_host_levers,
             engine_device_step,
             engine_gdn_state_dtype,
+            macaq6_attn_fp8_mode,
+            engine_gdn_scan,
+            macaq_had,
             engine_bf16_head,
             mxfp4_head,
             engine_fp8_head,
@@ -4931,6 +5006,7 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
             // implementation choice comes from `saber-exec`'s own rule tables and not from a bound
             // plan (a divergence recorded in the branch report, not a decision hidden here).
             "real" => {
+                macaq6_arms(macaq6_attn_fp8_mode, &engine_gdn_scan, engine_tp)?;
                 let parsers = serve_parsers(
                     enable_auto_tool_choice,
                     no_enable_auto_tool_choice,
@@ -4939,28 +5015,22 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
                     &parser_defaults,
                 )?;
                 let served_model_name = one_served_name(served_model_name)?;
-                // P27-W2-5: the GDN replay arm is refused by name beside the prefix cache (its
-                // host snapshot / reload is not gated under the arm) and beside parking (a park
-                // of a session whose base owes a replay is refused at run time).
+                // P27-W2-5: the GDN replay arm is refused by name beside parking (a park of a
+                // session whose base owes a replay is refused at run time).
                 // CMP27G: the replay arm COMPOSES with the tree default (`ancestor9`): the tree
                 // reads the sequence's base (materialized first when it owes a chain step's rows)
                 // and its flush advances the base in place. The 16-row form is refused at boot.
+                // it composes with the prefix cache: a snapshot is taken at a
+                // prefill cut (the base, nothing owed) and a load writes a fresh admission's
+                // base; a save / verify of an owed base is refused fail-closed (FATAL) on both
+                // ranks.
                 let engine_gdn_replay = gdn_replay_resolve(
                     "--engine-gdn-replay",
                     &engine_gdn_replay,
                     engine_gdn_state_dtype == "f16",
                     &engine_spec_tree,
-                    &[
-                        (enable_prefix_caching == "on", "--enable-prefix-caching on"),
-                        (park_ram_gib > 0.0 || park_nvme_gib > 0.0, "a park tier"),
-                    ],
+                    &[(park_ram_gib > 0.0 || park_nvme_gib > 0.0, "a park tier")],
                 );
-                if engine_gdn_replay == "on" && enable_prefix_caching == "on" {
-                    anyhow::bail!(
-                        "--engine-gdn-replay on with --enable-prefix-caching on: the prefix \
-                         cache's GDN snapshot is not gated under the replay arm (P27-W2-5)"
-                    );
-                }
                 if engine_gdn_replay == "on" && (park_ram_gib > 0.0 || park_nvme_gib > 0.0) {
                     anyhow::bail!(
                         "--engine-gdn-replay on with a park tier: parking is refused under the \
@@ -5163,6 +5233,10 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
                             .map_err(anyhow::Error::msg)?
                             .1,
                         poison_boot: None,
+                        prefix_replay_poison: saber_engine::device::PrefixReplayPoison::parse(
+                            &engine_prefix_replay_poison,
+                        )
+                        .map_err(anyhow::Error::msg)?,
                         constant_seed_control: false,
                         gather_per_row: engine_gather_per_row,
                         propose_in_step,
@@ -5173,6 +5247,8 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
                         host_wait: engine::host_wait_27b(host_wait.as_deref())
                             .map_err(anyhow::Error::msg)?,
                         gdn_state_f16: engine_gdn_state_dtype == "f16",
+                        gdn_scan_exact: engine_gdn_scan == "exact",
+                        macaq_had: macaq_had.as_deref().map(|v| v == "on"),
                         head: target_head(
                             mxfp4_head,
                             &[
@@ -5343,6 +5419,12 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
             fixed_step_wait,
             host_wait,
             gdn_state_dtype,
+            macaq6_attn_fp8_mode,
+            gdn_scan,
+            macaq6_resid_dump,
+            macaq6_resid_ids,
+            macaq6_resid_stride,
+            macaq_had,
             bf16_head,
             mxfp4_head,
             fp8_head,
@@ -5445,6 +5527,15 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
                 );
             }
             fnx.refuse_on_27b()?;
+            macaq6_arms(macaq6_attn_fp8_mode, &gdn_scan, tp)?;
+            if macaq6_resid_dump.is_some() {
+                anyhow::ensure!(
+                    tp == 1,
+                    "--macaq6-resid-dump is a TP=1 diagnostic: the prefill probe is TP=1 only"
+                );
+                saber_engine::device::PROBE_KEEP_RAW
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             let prompt_ids = prompt_ids.ok_or_else(|| {
                 anyhow::anyhow!(
                     "--prompt-ids is required (only a Flash-Next --fn-serve boot may omit it)"
@@ -5580,6 +5671,7 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
                         .map_err(anyhow::Error::msg)?
                         .1,
                     poison_boot,
+                    prefix_replay_poison: Default::default(),
                     constant_seed_control,
                     gather_per_row,
                     propose_in_step,
@@ -5588,6 +5680,8 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
                     host_wait: engine::host_wait_27b(host_wait.as_deref())
                         .map_err(anyhow::Error::msg)?,
                     gdn_state_f16: gdn_state_dtype == "f16",
+                    gdn_scan_exact: gdn_scan == "exact",
+                    macaq_had: macaq_had.as_deref().map(|v| v == "on"),
                     head: target_head(
                         mxfp4_head,
                         &[(fp8_head, "--fp8-head"), (bf16_head, "--bf16-head")],
@@ -5627,6 +5721,9 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
                 sample_dump,
                 chunk_bisect,
                 no_attribute,
+                macaq6_resid_dump,
+                macaq6_resid_ids,
+                macaq6_resid_stride,
             })?;
             // The engine's own thread owns every HIP handle and is joined when `gate` returns, so
             // the exit below happens with no live HIP thread (a `process::exit` with one is a
@@ -5708,138 +5805,149 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
             fail_after_steps,
             host_wait,
             gdn_state_dtype,
+            gdn_scan,
+            macaq_had,
             head,
             deadline_s,
             hip_lib,
-        } => engine::worker(&engine::WorkerArgs {
-            engine: engine::EngineArgs {
-                vision_max_patches,
-                vision_lazy,
-                // Leader-only (the drafter's positions are in the leader's frames).
-                drafter_rope_index: false,
-                pack,
-                world: 2,
-                rank,
-                peer_port,
-                follower: true,
-                // Rank 1 never spawns anything, so this is its own device and not a peer's.
-                peer_device: device,
-                prebuilt,
-                hip_lib,
-                device,
-                budget_mib,
-                max_seqs,
-                max_ctx,
-                prefill_rows,
-                decode_batches,
-                decode_widths,
-                // The row bands are PLANS, so rank 1 plans rank 0's (forwarded on this argv).
-                decode_bands: if rectangular_widths {
-                    Vec::new()
-                } else {
-                    row_bands
+        } => {
+            gdn_scan_arm(&gdn_scan, rank, 2)?;
+            engine::worker(&engine::WorkerArgs {
+                engine: engine::EngineArgs {
+                    vision_max_patches,
+                    vision_lazy,
+                    // Leader-only (the drafter's positions are in the leader's frames).
+                    drafter_rope_index: false,
+                    pack,
+                    world: 2,
+                    rank,
+                    peer_port,
+                    follower: true,
+                    // Rank 1 never spawns anything, so this is its own device and not a peer's.
+                    peer_device: device,
+                    prebuilt,
+                    hip_lib,
+                    device,
+                    budget_mib,
+                    max_seqs,
+                    max_ctx,
+                    prefill_rows,
+                    decode_batches,
+                    decode_widths,
+                    // The row bands are PLANS, so rank 1 plans rank 0's (forwarded on this argv).
+                    decode_bands: if rectangular_widths {
+                        Vec::new()
+                    } else {
+                        row_bands
+                    },
+                    // Rank 1 has no scheduler, so no ceiling of its own.
+                    ragged_ceiling: saber_sched::RaggedCeiling::Table,
+                    // Rank 1 has no scheduler: the width rule picks a step's shape and rank 1 is
+                    // TOLD its shape, frame by frame. The default is carried so the struct is whole.
+                    width_rule: saber_sched::WidthRule::default(),
+                    mixed_prefill: saber_sched::MixedPrefill::OFF,
+                    prefill_fill_above: 0,
+                    deadline_s,
+                    capture: !no_capture,
+                    // There is no device feed above TP=1: the argmax is over half a vocabulary and the
+                    // token is decided on the host.
+                    device_feed: false,
+                    live_row_attn: true,
+                    // PARKING AT TWO RANKS (ws-t2): a session's KV and state are half on each card,
+                    // so an image is two halves and this rank makes its own — on the leader's command,
+                    // over the same regions, into its own staging buffer. The size is rank 0's,
+                    // forwarded on this argv by the spawn; 0 (the default, and what a worker started
+                    // by hand gets) means this rank cannot park and the leader's first park says so
+                    // by name instead of imaging half a session.
+                    park_staging_mib,
+                    park_ram_gib: 0.0,
+                    park_staging_slots,
+                    park_image_base,
+                    park_probe,
+                    kv_headroom_mib,
+                    kv_pool_blocks: 0,
+                    draft_block,
+                    draft_pack,
+                    draft_replay: None,
+                    draft_chain_dump: None,
+                    draft_seq: None,
+                    draft_seq_out: None,
+                    ar_exact,
+                    draft_batch_check: false,
+                    draft_store_narrow: false,
+                    draft_store_natural_off: false,
+                    draft_store_check: false,
+                    draft_store_deferred: false,
+                    draft_kv_paged: draft_kv == "paged",
+                    draft_embed_share: draft_embed_share == "on",
+                    host_levers: saber_engine::host_levers::HostLevers::parse(&host_levers)
+                        .unwrap_or_default(),
+                    device_step: saber_engine::device_step::DeviceStep::parse(&device_step)
+                        .unwrap_or_default(),
+                    selector_rank: saber_engine::selector_rank::SelectorRank::parse(&selector_rank)
+                        .unwrap_or_default(),
+                    spec_tree: saber_engine::spec_tree::SpecTreeForm::parse(&spec_tree)
+                        .unwrap_or_default(),
+                    spec_tree_sampled: spec_tree_sampled != "off",
+                    spec_tree_sampled_control: false,
+                    gdn_replay: gdn_replay_resolve(
+                        "--gdn-replay",
+                        &gdn_replay,
+                        gdn_state_dtype == "f16",
+                        &spec_tree,
+                        &[],
+                    ) == "on",
+                    prefill_ar_overlap,
+                    prefill_ar_push_blocks: ar_push_blocks_of(&ar_form, ar_push_blocks),
+                    small_chunk_gemm,
+                    small_chunk_band,
+                    shared_prefill_arena: on_unless_off(
+                        shared_prefill_arena,
+                        no_shared_prefill_arena,
+                    ),
+                    shared_head_arena: on_unless_off(shared_head_arena, no_shared_head_arena),
+                    mid_chunk_gemm: mid_chunk_gemm_law(mid_chunk_gemm, no_mid_chunk_gemm),
+                    mid_chunk_atiled: on_unless_off(mid_chunk_atiled, no_mid_chunk_atiled),
+                    skinny_gate: on_unless_off(skinny_gate, no_skinny_gate),
+                    decode_pf: on_unless_off(decode_pf, no_decode_pf),
+                    head_m64: on_unless_off(head_m64, no_head_m64),
+                    drafter_gateup_m64: drafter_gateup_m64
+                        .unwrap_or(saber_engine::device::DEFAULT_DRAFTER_GATEUP_M64),
+                    ar_wpar: ar_wpar == "on",
+                    ar_fuse: ar_fuse == "on",
+                    b1_arms: saber_engine::device::B1Arms::parse(&b1_arms)
+                        .map_err(anyhow::Error::msg)?,
+                    c4_arms: saber_engine::device::C4Arms::parse(&c4_arms)
+                        .map_err(anyhow::Error::msg)?,
+                    step_arms: saber_engine::device::StepArms::parse(&step_arms)
+                        .map_err(anyhow::Error::msg)?,
+                    mixed_class_proxy,
+                    decode_fusion,
+                    host_trace,
+                    whole_step_frame,
+                    frame_digest,
+                    race_check: engine::race_mode(race_check.as_deref())
+                        .map_err(anyhow::Error::msg)?
+                        .0,
+                    race_shadow: engine::race_mode(race_check.as_deref())
+                        .map_err(anyhow::Error::msg)?
+                        .1,
+                    poison_boot,
+                    prefix_replay_poison: Default::default(),
+                    constant_seed_control,
+                    gather_per_row,
+                    // Rank 1 is TOLD the order, step by step (`Command::Step`'s `defer_proposals`).
+                    propose_in_step: false,
+                    fixed_step_wait,
+                    fail_after_steps,
+                    host_wait: host_wait.parse().map_err(anyhow::Error::msg)?,
+                    gdn_state_f16: gdn_state_dtype == "f16",
+                    gdn_scan_exact: gdn_scan == "exact",
+                    macaq_had: macaq_had.as_deref().map(|v| v == "on"),
+                    head,
                 },
-                // Rank 1 has no scheduler, so no ceiling of its own.
-                ragged_ceiling: saber_sched::RaggedCeiling::Table,
-                // Rank 1 has no scheduler: the width rule picks a step's shape and rank 1 is
-                // TOLD its shape, frame by frame. The default is carried so the struct is whole.
-                width_rule: saber_sched::WidthRule::default(),
-                mixed_prefill: saber_sched::MixedPrefill::OFF,
-                prefill_fill_above: 0,
-                deadline_s,
-                capture: !no_capture,
-                // There is no device feed above TP=1: the argmax is over half a vocabulary and the
-                // token is decided on the host.
-                device_feed: false,
-                live_row_attn: true,
-                // PARKING AT TWO RANKS (ws-t2): a session's KV and state are half on each card,
-                // so an image is two halves and this rank makes its own — on the leader's command,
-                // over the same regions, into its own staging buffer. The size is rank 0's,
-                // forwarded on this argv by the spawn; 0 (the default, and what a worker started
-                // by hand gets) means this rank cannot park and the leader's first park says so
-                // by name instead of imaging half a session.
-                park_staging_mib,
-                park_ram_gib: 0.0,
-                park_staging_slots,
-                park_image_base,
-                park_probe,
-                kv_headroom_mib,
-                kv_pool_blocks: 0,
-                draft_block,
-                draft_pack,
-                draft_replay: None,
-                draft_chain_dump: None,
-                draft_seq: None,
-                draft_seq_out: None,
-                ar_exact,
-                draft_batch_check: false,
-                draft_store_narrow: false,
-                draft_store_natural_off: false,
-                draft_store_check: false,
-                draft_store_deferred: false,
-                draft_kv_paged: draft_kv == "paged",
-                draft_embed_share: draft_embed_share == "on",
-                host_levers: saber_engine::host_levers::HostLevers::parse(&host_levers)
-                    .unwrap_or_default(),
-                device_step: saber_engine::device_step::DeviceStep::parse(&device_step)
-                    .unwrap_or_default(),
-                selector_rank: saber_engine::selector_rank::SelectorRank::parse(&selector_rank)
-                    .unwrap_or_default(),
-                spec_tree: saber_engine::spec_tree::SpecTreeForm::parse(&spec_tree)
-                    .unwrap_or_default(),
-                spec_tree_sampled: spec_tree_sampled != "off",
-                spec_tree_sampled_control: false,
-                gdn_replay: gdn_replay_resolve(
-                    "--gdn-replay",
-                    &gdn_replay,
-                    gdn_state_dtype == "f16",
-                    &spec_tree,
-                    &[],
-                ) == "on",
-                prefill_ar_overlap,
-                prefill_ar_push_blocks: ar_push_blocks_of(&ar_form, ar_push_blocks),
-                small_chunk_gemm,
-                small_chunk_band,
-                shared_prefill_arena: on_unless_off(shared_prefill_arena, no_shared_prefill_arena),
-                shared_head_arena: on_unless_off(shared_head_arena, no_shared_head_arena),
-                mid_chunk_gemm: mid_chunk_gemm_law(mid_chunk_gemm, no_mid_chunk_gemm),
-                mid_chunk_atiled: on_unless_off(mid_chunk_atiled, no_mid_chunk_atiled),
-                skinny_gate: on_unless_off(skinny_gate, no_skinny_gate),
-                decode_pf: on_unless_off(decode_pf, no_decode_pf),
-                head_m64: on_unless_off(head_m64, no_head_m64),
-                drafter_gateup_m64: drafter_gateup_m64
-                    .unwrap_or(saber_engine::device::DEFAULT_DRAFTER_GATEUP_M64),
-                ar_wpar: ar_wpar == "on",
-                ar_fuse: ar_fuse == "on",
-                b1_arms: saber_engine::device::B1Arms::parse(&b1_arms)
-                    .map_err(anyhow::Error::msg)?,
-                c4_arms: saber_engine::device::C4Arms::parse(&c4_arms)
-                    .map_err(anyhow::Error::msg)?,
-                step_arms: saber_engine::device::StepArms::parse(&step_arms)
-                    .map_err(anyhow::Error::msg)?,
-                mixed_class_proxy,
-                decode_fusion,
-                host_trace,
-                whole_step_frame,
-                frame_digest,
-                race_check: engine::race_mode(race_check.as_deref())
-                    .map_err(anyhow::Error::msg)?
-                    .0,
-                race_shadow: engine::race_mode(race_check.as_deref())
-                    .map_err(anyhow::Error::msg)?
-                    .1,
-                poison_boot,
-                constant_seed_control,
-                gather_per_row,
-                // Rank 1 is TOLD the order, step by step (`Command::Step`'s `defer_proposals`).
-                propose_in_step: false,
-                fixed_step_wait,
-                fail_after_steps,
-                host_wait: host_wait.parse().map_err(anyhow::Error::msg)?,
-                gdn_state_f16: gdn_state_dtype == "f16",
-                head,
-            },
-        }),
+            })
+        }
 
         Cmd::Tune {
             manifest,
@@ -6153,6 +6261,35 @@ mod cmp27g_tests {
         assert_eq!(r("off", true, "ancestor9", &[]), "off");
         assert_eq!(r("on", false, "best16", &[(true, "x")]), "on");
     }
+
+    /// the serve plane's blockers are the park tier only -- the prefix cache (on by
+    /// default since 2026-11-11) no longer makes `auto` stand down, and an explicit
+    /// `--engine-gdn-replay on` beside it is not refused. Read from the source, the control
+    /// being the park tier's entry that must stay.
+    #[test]
+    fn macaq12_the_prefix_cache_is_not_a_replay_blocker() {
+        let src = include_str!("main.rs");
+        let at = src
+            .find("let engine_gdn_replay = gdn_replay_resolve(")
+            .expect("the serve resolve");
+        let call = &src[at..at + src[at..].find(");").expect("end of the call")];
+        assert!(
+            call.contains("\"a park tier\""),
+            "the park tier stays a blocker"
+        );
+        assert!(
+            !call.contains("enable_prefix_caching"),
+            "the prefix cache is not a blocker"
+        );
+        let bail = concat!("engine_gdn_replay == \"on\" && enable_prefix", "_caching");
+        assert!(
+            !src.contains(bail),
+            "no explicit-on refusal beside the cache"
+        );
+        let r = |b: &[(bool, &str)]| gdn_replay_resolve("--x", "auto", true, "ancestor9", b);
+        assert_eq!(r(&[(false, "a park tier")]), "on");
+        assert_eq!(r(&[(true, "a park tier")]), "off");
+    }
 }
 
 #[cfg(test)]
@@ -6370,10 +6507,10 @@ mod prod_argv_tests {
         });
     }
 
-    /// FN52: prefix caching reaches `saber serve` OFF by default (the 27B's served bytes never
-    /// move without the user's word) and on by name.
+    /// prefix caching reaches `saber serve` ON by default (the user's word, 2026-11-11) and
+    /// `off` (the control) stays selectable by name.
     #[test]
-    fn prefix_caching_is_a_serve_flag_off_by_default() {
+    fn prefix_caching_is_a_serve_flag_on_by_default() {
         on_a_big_stack(|| {
             let read = |extra: &[&str]| {
                 let mut argv = vec!["saber", "serve"];
@@ -6388,8 +6525,10 @@ mod prod_argv_tests {
                 };
                 (enable_prefix_caching, prefix_cache_verify)
             };
-            assert_eq!(read(&[]), ("off".to_owned(), false));
+            assert_eq!(read(&[]), ("on".to_owned(), false));
             assert_eq!(read(&["--enable-prefix-caching", "on"]).0, "on");
+            assert_eq!(read(&["--enable-prefix-caching"]).0, "on");
+            assert_eq!(read(&["--enable-prefix-caching", "off"]).0, "off");
             assert!(read(&["--prefix-cache-verify"]).1);
             // FN66: `--warm-prompts FILE` parses on `saber serve` (it turns the cache on)
             let Cmd::Serve { warm_prompts, .. } =
@@ -7010,4 +7149,48 @@ fn mixed_prefill_of(
              schedule, the control)"
         ),
     }
+}
+
+/// the diagnostic numerics arms + the GDN scan form, set once before any plan is
+/// built. The scan form is a plan input of BOTH ranks (the leader forwards it to rank 1 by value,
+/// [`engine::Worker::command`]), so it runs at any TP; the attention arm is OFF at its default and
+/// a non-default value is TP = 1 only, because rank 1 of a TP = 2 tier is a separate process that
+/// would plan with the default and silently run a mixed pair.
+fn macaq6_arms(attn_fp8_mode: u32, gdn_scan: &str, tp: u32) -> anyhow::Result<()> {
+    gdn_scan_arm(gdn_scan, 0, tp)?;
+    if attn_fp8_mode == 3 {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        attn_fp8_mode <= 3,
+        "--macaq6-attn-fp8-mode {attn_fp8_mode}: the `[[attn_prefill]]` rows are 0..=3"
+    );
+    anyhow::ensure!(
+        tp == 1,
+        "--macaq6-attn-fp8-mode is a TP=1 diagnostic arm (rank 1 would plan the default)"
+    );
+    saber_exec::layer::ATTN_PREFILL_FP8_MODE
+        .store(attn_fp8_mode, std::sync::atomic::Ordering::Relaxed);
+    println!(
+        "macaq6    the prefill attention runs fp8_mode {attn_fp8_mode} (a diagnostic ARM; 3 = the \
+         default, QK8 + PV8)"
+    );
+    Ok(())
+}
+
+/// set this process's prefill GDN chunk scan form (`split` | `exact`) before any plan is
+/// built and say so on the boot line `gdnscan rank R:` -- rank 0 from its own flag, rank 1 from the
+/// value its leader forwarded.
+fn gdn_scan_arm(gdn_scan: &str, rank: u32, tp: u32) -> anyhow::Result<()> {
+    let exact = saber_kernels::saber::set_gdn_scan(gdn_scan)?;
+    println!(
+        "gdnscan   rank {rank} (tp {tp}): {} -- the prefill GDN chunk scan on {}",
+        saber_kernels::saber::gdn_scan_form(),
+        if exact {
+            "the EXACT-GATE body fn_gdn_chunk_scan_xg2[_f16s]_* (`--gdn-scan split` = the control)"
+        } else {
+            "the certified split-and-clamped body saber_gdn_chunk_scan[_f16s]_* (`--gdn-scan exact` = the exact-gate form)"
+        }
+    );
+    Ok(())
 }

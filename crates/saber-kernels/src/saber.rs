@@ -22,6 +22,55 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// **The 27B prefill GDN chunk scan's gate form** (at every TP):
+/// `exact` routes every `gdn_chunk_scan` to the EXACT-GATE body (`fn_gdn_chunk_scan_xg2[_f16s]_*`
+/// in `flashnext_gdn`, the Flash-Next scan: the same `SGDN_SCAN_KERNEL` parameter list and launch shape,
+/// `sgdn::kGateExactW`: every gate a difference of chunk cumsums, never above 0 nats), `split` to
+/// the certified split-and-clamped body (`saber_gdn_chunk_scan[_f16s]_*`), whose gates clamp at
+/// 80 nats about the chunk midpoint and attenuate any chunk whose decay spans more than 160 nats
+/// (30 of the 27B's 2,304 GDN heads at a = 0). A process-wide knob because the planner carries no
+/// per-boot GDN option: set ONCE by `--engine-gdn-scan` (serve) / `--gdn-scan` (engine, and the
+/// worker, which the leader tells BY VALUE) before any plan is built ([`set_gdn_scan`]).
+pub static GDN_SCAN_EXACT: AtomicBool = AtomicBool::new(false);
+
+/// The gate form a boot plans with no flag (`split` | `exact`). **`exact` is the default**
+/// (-0.0065 nats top-5 KL vs BF16 at TP = 2, prefill / step / BetterBench tied);
+/// `split` is the control and the rollback.
+pub const DEFAULT_GDN_SCAN: &str = "exact";
+
+/// The exact-gate scan's symbols, f32 and f16 stored state (`hip/flashnext_gdn.hip` rows).
+pub const GDN_SCAN_EXACT_PLUGIN: &str = "flashnext_gdn";
+/// f32 h0 / ht.
+pub const GDN_SCAN_EXACT_F32: &str = "fn_gdn_chunk_scan_xg2_k128_v128_c64";
+/// f16 h0 / ht.
+pub const GDN_SCAN_EXACT_F16S: &str = "fn_gdn_chunk_scan_xg2_f16s_k128_v128_c64";
+
+/// Set the process's scan form from its flag value; returns `true` for `exact`. Refuses any other
+/// spelling by name (the parsers already restrict it; this is the one place the string is read).
+pub fn set_gdn_scan(form: &str) -> Result<bool> {
+    let exact = match form {
+        "exact" => true,
+        "split" => false,
+        other => {
+            return Err(Error::Rule(format!(
+                "--gdn-scan {other}: the forms are `split` and `exact`"
+            )))
+        }
+    };
+    GDN_SCAN_EXACT.store(exact, Ordering::Relaxed);
+    Ok(exact)
+}
+
+/// The form this process plans (`split` | `exact`), for boot lines and the worker's argv.
+pub fn gdn_scan_form() -> &'static str {
+    if GDN_SCAN_EXACT.load(Ordering::Relaxed) {
+        "exact"
+    } else {
+        "split"
+    }
+}
 
 use serde::{Deserialize, Serialize};
 
@@ -2296,10 +2345,20 @@ fn gdn_chunk_scan(
         .i32(s.hg as i64)
         .f32(f32::from_bits(s.scale_bits))
         .finish()?;
+    let (plugin, kernel) = if GDN_SCAN_EXACT.load(Ordering::Relaxed) {
+        let k = if s.state_f16 {
+            GDN_SCAN_EXACT_F16S
+        } else {
+            GDN_SCAN_EXACT_F32
+        };
+        (GDN_SCAN_EXACT_PLUGIN.to_owned(), k.to_owned())
+    } else {
+        (plugin_for(&sym.symbol)?.to_owned(), sym.symbol.clone())
+    };
     Ok(LaunchDescriptor {
         op: "gdn_chunk_scan".into(),
-        plugin: plugin_for(&sym.symbol)?.into(),
-        kernel: sym.symbol.clone(),
+        plugin,
+        kernel,
         grid: [s.head_v / gd.scan_bv, s.h, s.n_seqs],
         block: [gd.scan_block, 1, 1],
         shared_bytes: 0,
