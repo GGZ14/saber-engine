@@ -935,6 +935,334 @@ async fn the_wizard_from_an_empty_config_to_ready() {
     sup.stop().await.unwrap();
 }
 
+/// A second gfx1201 card in the fake sysfs (`fake_sys` makes the first).
+fn fake_second_card(root: &Path) {
+    let w = |p: &str, s: &str| {
+        let f = root.join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, s).unwrap();
+    };
+    let n = "sys/class/kfd/kfd/topology/nodes";
+    w(
+        &format!("{n}/2/properties"),
+        "gfx_target_version 120001\ndrm_render_minor 129\n",
+    );
+    w(
+        &format!("{n}/2/mem_banks/0/properties"),
+        "size_in_bytes 34208743424\n",
+    );
+    w("dev/dri/renderD129", "");
+}
+
+/// A catalog with one dense model hosted at TP=2 and TP=1 (its packs pre-installed as empty
+/// directories: no download in this test) and a TP=2-only MoE model.
+fn tp_catalog() -> String {
+    let comp = |id: &str, name: &str, flag: &str| {
+        json!({"id": id, "dest": "packs", "name": name, "flag": flag,
+               "source": {"hf_repo": "o/r", "path": name}})
+    };
+    json!({"version": 1, "models": [
+        {"id": "dense", "name": "Dense", "kind": "27B", "preset": "qwen27b",
+         "fit": {"min_gpus": 2, "arch_prefixes": ["gfx12"], "tp": [2]},
+         "components": [comp("target", "dense-pack", "--pack"), comp("drafter", "dense-drafter", "--engine-draft-pack")],
+         "tp1": {"container": "saber-27b-tp1-serve", "note": "one card",
+                 "fit": {"min_gpus": 1, "arch_prefixes": ["gfx12"], "tp": [1]},
+                 "components": [comp("target", "dense-pack-tp1", "--pack"), comp("drafter", "dense-drafter-tp1", "--engine-draft-pack")]}},
+        {"id": "moe", "name": "MoE", "kind": "Flash-Next", "preset": "flashnext",
+         "fit": {"min_gpus": 2}, "components": []}
+    ]})
+    .to_string()
+}
+
+/// A console (no engine started) over a fake sysfs with `cards` gfx1201 cards.
+async fn tp_console(dir: &Path, cards: u32) -> (u16, PathBuf) {
+    let sysroot = dir.join("sys-root");
+    fake_sys(&sysroot);
+    if cards == 2 {
+        fake_second_card(&sysroot);
+    }
+    let nvme = dir.join("nvme");
+    for p in [
+        "dense-pack",
+        "dense-drafter",
+        "dense-pack-tp1",
+        "dense-drafter-tp1",
+    ] {
+        std::fs::create_dir_all(nvme.join("saber-packs").join(p)).unwrap();
+    }
+    let cat = dir.join("models.json");
+    std::fs::write(&cat, tp_catalog()).unwrap();
+    let engine_port = free_port();
+    let mut cfg = Config::mock(engine_port);
+    cfg.engine.autostart = false;
+    cfg.engine.paths.repo = dir.join("repo");
+    cfg.engine.paths.nvme = nvme;
+    cfg.console.data_dir = dir.join("data");
+    cfg.usage.enabled = false;
+    cfg.downloads.catalog = cat;
+    let cfg_path = dir.join("config.toml");
+    let (sup, _rx) = Supervisor::new(
+        cfg,
+        cfg_path.clone(),
+        dir.to_path_buf(),
+        dir.join("no-binary"),
+        Arc::new(LogRing::new(100)),
+    );
+    let metrics = Arc::new(MetricsStore::new(10, 5));
+    let schema = schema();
+    let console_port = free_port();
+    let mut console = Console::new(sup.clone(), metrics.clone(), &schema, console_port);
+    console.sys_root = sysroot;
+    console.host_facts = Some(HostFacts {
+        runtime: "podman".into(),
+        runtime_version: Some("podman version 5.8.2".into()),
+        image: "localhost/saber-dev:latest".into(),
+        image_present: Some(true),
+        conflicts: vec![],
+        engine_port,
+        port_busy: false,
+        engine_ours: false,
+    });
+    let state = AppState {
+        console: Arc::new(console),
+        sup,
+        metrics,
+        schema: Arc::new(schema),
+        auth: Arc::new(saber_console::auth::Auth::open()),
+        loopback: true,
+        proxy: Arc::new(Proxy::new(None)),
+        usage: None,
+    };
+    let l = tokio::net::TcpListener::bind(("127.0.0.1", console_port))
+        .await
+        .unwrap();
+    tokio::spawn(async move { axum::serve(l, router(state)).await.unwrap() });
+    (console_port, cfg_path)
+}
+
+fn model_of(cat: &Value, id: &str) -> Value {
+    cat["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == id)
+        .unwrap()
+        .clone()
+}
+
+fn check_of(sys: &Value, id: &str) -> Value {
+    sys["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == id)
+        .unwrap()
+        .clone()
+}
+
+/// The wizard's TP choice on a one-card and a two-card machine (fake sysfs): the recommendation,
+/// the refusal of TP=2 on one card, the TP=1 form's packs in the composed config, the card pick,
+/// Flash-Next TP=2 only, and the Settings page's TP switch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_wizard_offers_tp1_and_tp2_by_the_gpu_count() {
+    // ---- one card ----
+    let dir = saber_test_scratch::ScratchDir::new("console-wizard-tp1");
+    let (p, cfg_path) = tp_console(dir.path(), 1).await;
+    let cat = get(p, "/api/catalog").await;
+    assert_eq!(cat["gpus"], 1);
+    let dense = model_of(&cat, "dense");
+    assert_eq!(dense["tp_choices"], json!([1, 2]));
+    assert_eq!(dense["recommended_tp"], 1);
+    assert_eq!(dense["tp"], 1, "{dense}");
+    let forms = dense["tp_forms"].as_array().unwrap();
+    assert_eq!(forms[0]["tp"], 2);
+    assert_eq!(forms[0]["possible"], false);
+    assert_eq!(forms[0]["fit"]["verdict"], "no-fit");
+    assert_eq!(forms[1]["tp"], 1);
+    assert_eq!(forms[1]["possible"], true);
+    assert_eq!(forms[1]["fit"]["verdict"], "fits");
+    assert_eq!(dense["components"][0]["id"], "target");
+    assert!(dense["components"][0]["target"]
+        .as_str()
+        .unwrap()
+        .ends_with("dense-pack-tp1"));
+    assert_eq!(model_of(&cat, "moe")["tp_choices"], json!([2]));
+
+    let (c, v) = post(p, "/api/setup/goto", json!({"step": "model"})).await;
+    assert_eq!(c, 200, "{v}");
+    // picking TP=2 on one card is refused with the way out named
+    let (c, v) = post(p, "/api/setup/model", json!({"id": "dense", "tp": 2})).await;
+    assert_eq!(c, 409, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("pick TP=1"), "{v}");
+    // the default pick is the recommendation: TP=1, its packs composed (installed)
+    let (c, v) = post(p, "/api/setup/model", json!({"id": "dense"})).await;
+    assert_eq!(c, 200, "{v}");
+    assert_eq!(v["state"]["tp"], 1);
+    assert_eq!(v["facts"]["tp"], 1);
+    assert_eq!(v["facts"]["gpus"], 1);
+    assert_eq!(v["facts"]["tp_unfit"], false);
+    let saved = Config::load(&cfg_path).unwrap().unwrap();
+    assert_eq!(
+        (saved.engine.preset, saved.engine.tp, saved.engine.device),
+        (saber_console::config::Preset::Qwen27b, 1, 0)
+    );
+    assert_eq!(
+        saved
+            .engine
+            .flags
+            .get("--pack")
+            .and_then(|v| v.arg())
+            .as_deref(),
+        Some("/packs/dense-pack-tp1")
+    );
+    let (c, v) = post(p, "/api/setup/tp", json!({"tp": 2})).await;
+    assert_eq!(c, 409, "{v}");
+    let (c, v) = post(p, "/api/setup/tp", json!({"tp": 1, "device": 1})).await;
+    assert_eq!(c, 409, "card 1 does not exist here: {v}");
+    // the system check passes the one card for the TP=1 pick
+    let sys = get(p, "/api/system").await;
+    assert_eq!(check_of(&sys, "gpus")["status"], "pass", "{sys}");
+    // forward: the profile step lists the TP=1 profiles and applies one at TP=1
+    let (c, v) = post(p, "/api/setup/goto", json!({"step": "profile"})).await;
+    assert_eq!(c, 200, "{v}");
+    let pr = get(p, "/api/profiles").await;
+    let long1 = pr["builtin_tp1"]["serve"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["name"] == "Long context")
+        .unwrap()
+        .clone();
+    assert_eq!(long1["flags"]["--engine-max-seqs"], 1);
+    let (c, v) = post(p, "/api/setup/profile", json!({"name": "Long context"})).await;
+    assert_eq!(c, 200, "{v}");
+    let saved = Config::load(&cfg_path).unwrap().unwrap();
+    assert_eq!(saved.engine.tp, 1);
+    assert_eq!(
+        saved.engine.flags.get("--engine-max-seqs"),
+        Some(&saber_console::config::FlagValue::Int(1))
+    );
+    // the estimate is labelled for one card
+    let chk = post(p, "/api/config/validate", json!({"config": saved}))
+        .await
+        .1;
+    assert_eq!(chk["estimate"]["tp"], 1);
+    assert!(chk["estimate"]["label"]
+        .as_str()
+        .unwrap()
+        .contains("ONE card"));
+    assert!(
+        chk["command_line"]
+            .as_str()
+            .unwrap()
+            .contains("--engine-tp 1 --engine-device 0"),
+        "{chk}"
+    );
+    // TP=2 in a draft on this machine: the validator says why
+    let mut two = saved.clone();
+    two.engine.tp = 2;
+    let chk = post(p, "/api/config/validate", json!({"config": two}))
+        .await
+        .1;
+    assert!(
+        chk["report"]["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["field"] == "engine.tp"),
+        "{chk}"
+    );
+    // Flash-Next is TP=2 only, at the wizard and at the Settings switch
+    let (c, v) = post(p, "/api/setup/goto", json!({"step": "model"})).await;
+    assert_eq!(c, 200, "{v}");
+    let (c, v) = post(p, "/api/setup/model", json!({"id": "moe", "tp": 1})).await;
+    assert_eq!(c, 409, "{v}");
+    assert!(
+        v["error"].as_str().unwrap().contains("two cards only"),
+        "{v}"
+    );
+    let (c, v) = post(
+        p,
+        "/api/config/tp",
+        json!({"config": Config::default(), "tp": 1}),
+    )
+    .await;
+    assert_eq!(c, 400, "{v}");
+    assert!(
+        v["error"].as_str().unwrap().contains("two cards only"),
+        "{v}"
+    );
+
+    // ---- two cards ----
+    let dir2 = saber_test_scratch::ScratchDir::new("console-wizard-tp2");
+    let (p, cfg_path) = tp_console(dir2.path(), 2).await;
+    let cat = get(p, "/api/catalog").await;
+    assert_eq!(cat["gpus"], 2);
+    let dense = model_of(&cat, "dense");
+    assert_eq!(dense["recommended_tp"], 2);
+    assert_eq!(dense["tp"], 2);
+    assert!(dense["tp_forms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["possible"] == true && f["fit"]["verdict"] == "fits"));
+    post(p, "/api/setup/goto", json!({"step": "model"})).await;
+    let (c, v) = post(p, "/api/setup/model", json!({"id": "dense"})).await;
+    assert_eq!(c, 200, "{v}");
+    assert_eq!(v["state"]["tp"], 2);
+    let saved = Config::load(&cfg_path).unwrap().unwrap();
+    assert_eq!(saved.engine.tp, 2);
+    assert_eq!(
+        saved
+            .engine
+            .flags
+            .get("--pack")
+            .and_then(|v| v.arg())
+            .as_deref(),
+        Some("/packs/dense-pack")
+    );
+    // one card of the two: the TP=1 packs on card 1
+    let (c, v) = post(p, "/api/setup/tp", json!({"tp": 1, "device": 1})).await;
+    assert_eq!(c, 200, "{v}");
+    assert_eq!(v["state"]["tp"], 1);
+    let saved = Config::load(&cfg_path).unwrap().unwrap();
+    assert_eq!((saved.engine.tp, saved.engine.device), (1, 1));
+    assert_eq!(
+        saved
+            .engine
+            .flags
+            .get("--engine-draft-pack")
+            .and_then(|v| v.arg())
+            .as_deref(),
+        Some("/packs/dense-drafter-tp1")
+    );
+    let cat = get(p, "/api/catalog").await;
+    assert_eq!(model_of(&cat, "dense")["tp"], 1);
+    assert_eq!(cat["device"], 1);
+    // the Settings switch: back to TP=2 moves the catalog's packs to their TP=2 twins
+    let (c, v) = post(p, "/api/config/tp", json!({"config": saved, "tp": 2})).await;
+    assert_eq!(c, 200, "{v}");
+    assert_eq!(v["config"]["engine"]["tp"], 2);
+    assert_eq!(
+        v["config"]["engine"]["flags"]["--pack"],
+        "/packs/dense-pack"
+    );
+    assert_eq!(
+        v["config"]["engine"]["flags"]["--engine-draft-pack"],
+        "/packs/dense-drafter"
+    );
+    let chk = post(p, "/api/config/validate", json!({"config": v["config"]}))
+        .await
+        .1;
+    assert!(chk["command_line"]
+        .as_str()
+        .unwrap()
+        .contains("--engine-tp 2 --engine-device 0 --engine-peer-device 1"));
+    assert_eq!(chk["estimate"]["tp"], 2);
+    let (c, _) = post(p, "/api/setup/goto", json!({"step": "profile"})).await;
+    assert_eq!(c, 200);
+}
+
 /// The terminal wizard (`tools/saber-setup`) and the console share config.toml: what the
 /// Python tool writes (migrating a legacy setup.json) parses and validates here, and what the
 /// console writes reads back in the Python tool.
@@ -1004,21 +1332,28 @@ fn the_terminal_wizard_and_the_console_share_config_toml() {
         c3.engine.flags.get("--fn-max-ctx"),
         Some(&saber_console::config::FlagValue::Int(65536))
     );
-    // the 27B on one card: the Python tool's TP=1 overrides load and validate here
-    py("c = s.default_cfg('27b'); s.set_tp(c, '1'); s.save_cfg(c)");
+    // the 27B on one card: the Python tool writes engine.tp / engine.device (version 5), the
+    // console composes the launcher's TP=1 boot from it, and prefix caching off is spelled out
+    py("c = s.default_cfg('27b'); s.set_tp(c, '1'); c['gpu1'] = '1'; c['prefix'] = False; s.save_cfg(c)");
     let c4 = Config::load(&dir.path().join("config.toml"))
         .unwrap()
         .unwrap();
     assert_eq!(c4.engine.preset, saber_console::config::Preset::Qwen27b);
+    assert_eq!((c4.engine.tp, c4.engine.device), (1, 1));
     assert_eq!(
-        c4.engine.flags.get("--engine-tp"),
-        Some(&saber_console::config::FlagValue::Int(1))
+        c4.engine.flags.get("--enable-prefix-caching"),
+        Some(&saber_console::config::FlagValue::Str("off".into()))
     );
-    assert_eq!(
-        c4.engine.flags.get("--engine-peer-device"),
-        Some(&saber_console::config::FlagValue::Bool(false))
-    );
+    assert!(!c4.engine.flags.contains_key("--engine-tp"));
     c4.validate().unwrap();
+    // the console switches it back to TP=2; the Python tool reads that
+    let mut c5 = c4.clone();
+    c5.engine.tp = 2;
+    c5.engine.device = 0;
+    c5.save(&dir.path().join("config.toml")).unwrap();
+    let out =
+        py("c = s.load_cfg(); print(json.dumps([c['model'], c['tp'], c['prefix'], c['ctx27']]))");
+    assert_eq!(out.trim(), r#"["27b", "2", false, "262144"]"#);
 }
 
 /// The download list survives a console restart. A finished download comes back as

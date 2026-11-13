@@ -33,7 +33,7 @@ CONF_DIR = os.environ.get("SABER_SETUP_DIR", os.path.expanduser("~/.config/saber
 CONF = os.path.join(CONF_DIR, "setup.json")  # the pre-console settings file (migrated)
 CONSOLE_CONF = os.environ.get("SABER_CONSOLE_CONFIG", os.path.join(CONF_DIR, "config.toml"))
 CATALOG = os.path.join(REPO, "tools", "models.json")
-CONSOLE_CONFIG_VERSION = 4  # saber_console::config::CONFIG_VERSION
+CONSOLE_CONFIG_VERSION = 5  # saber_console::config::CONFIG_VERSION (5: engine.tp / engine.device)
 
 GIB = 1024**3
 
@@ -205,39 +205,57 @@ MODEL_OF = {v: k for k, v in PRESET_OF.items()}
 DEFAULT_NVME = "/mnt/nvme"
 
 
+def _off(f):
+    """An on/off flag's option value: off is the string "off" or a bare false (a toggle)."""
+    return f is False or str(f) == "off"
+
+
 def _flag_rules():
-    """(option key, flag, to_flag(value) -> flag value or None = no override, from_flag(flag value)
-    -> option value). Only these flags are owned (read and written) by this tool. An absent flag
-    is the preset's own value: the option's default (at TP=1, the single-card default)."""
+    """(option key, flag, to_flag(value, cfg) -> flag value or None = no override,
+    from_flag(flag value) -> option value). Only these flags are owned (read and written) by this
+    tool. An absent flag is the preset's own value: the option's default (at TP=1, the single-card
+    default, which the console's TP=1 preset carries itself)."""
+    def at_default(key):
+        def to(v, c):
+            o = next(o for o in OPTIONS if o["key"] == key)
+            return None if str(v) == str(default_of(o, c)) else int(v)
+        return to
     return [
-        ("prefix", "--enable-prefix-caching", lambda v: None if v else "off", lambda f: str(f) != "off"),
-        ("vision27", "--vision", lambda v: None if v == "off" else v, str),
-        # (at TP=1 these two are always written: the console's 27B preset is TP=2's boot)
-        ("ctx27", "--engine-max-ctx", lambda v: None if str(v) == "262144" else int(v), str),
-        ("seqs", "--engine-max-seqs", lambda v: None if str(v) == "8" else int(v), str),
-        ("visionfn", "--fn-vision", lambda v: None if v == "lazy" else v, str),
-        ("thinking", "--fn-thinking", lambda v: None if v else "off", lambda f: str(f) != "off"),
-        ("ptree", "--fn-prefix-tree", lambda v: None if v else "off", lambda f: str(f) != "off"),
-        ("ctxfn", "--fn-max-ctx", lambda v: None if str(v) == "262144" else int(v), str),
+        # the engine's prefix caching is ON by default: off must be written, on needs nothing
+        ("prefix", "--enable-prefix-caching", lambda v, c: None if v else "off", lambda f: not _off(f)),
+        ("vision27", "--vision", lambda v, c: None if v == "off" else v, str),
+        ("ctx27", "--engine-max-ctx", at_default("ctx27"), str),
+        ("seqs", "--engine-max-seqs", at_default("seqs"), str),
+        ("visionfn", "--fn-vision", lambda v, c: None if v == "lazy" else v, str),
+        ("thinking", "--fn-thinking", lambda v, c: None if v else "off", lambda f: not _off(f)),
+        ("ptree", "--fn-prefix-tree", lambda v, c: None if v else "off", lambda f: not _off(f)),
+        ("ctxfn", "--fn-max-ctx", lambda v, c: None if str(v) == "262144" else int(v), str),
     ]
 
 
-# The 27B on one card, in the console's terms: the TP=2 preset with these flags replaced (the
-# launcher's `--tp 1` boot: one device, the -tp1 packs, its batch ladder). The console then composes
-# the same single-card command line the launcher runs.
-TP1_OWNED = ("--engine-tp", "--engine-device", "--engine-peer-device", "--engine-decode-batches")
+# Config version 4 wrote the 27B on one card as flag overrides of the TP=2 preset (these, plus the
+# -tp1 packs). Version 5 has `engine.tp` / `engine.device`: the console's TP=1 preset carries the
+# launcher's single-card boot itself, so a save drops these overrides (the console migrates them
+# the same way when it reads a version-4 file).
+TP1_LEGACY = ("--engine-tp", "--engine-device", "--engine-peer-device", "--engine-decode-batches")
 
 
-def tp1_flags(cfg):
-    packs = model_info(cfg)["packs"]
-    return {
-        "--engine-tp": 1,
-        "--engine-device": int(cfg.get("gpu1", "0")),
-        "--engine-peer-device": False,  # removed from the preset's command line
-        "--engine-decode-batches": "1,2,4",
-        "--pack": "/packs/" + packs[0],
-        "--engine-draft-pack": "/packs/" + packs[1],
-    }
+def _legacy_tp1(flags):
+    return str(flags.get("--engine-tp", "2")) == "1"
+
+
+def tp_of(doc):
+    """(tp, device) of a parsed config.toml: engine.tp (version 5), else a version-4 file's
+    `--engine-tp 1` overrides."""
+    eng = doc.get("engine", {})
+    flags = eng.get("flags", {})
+    if eng.get("preset", "flashnext") != "qwen27b":
+        return "2", "0"
+    if "tp" in eng:
+        return str(eng["tp"]), str(eng.get("device", 0))
+    if _legacy_tp1(flags):
+        return "1", str(flags.get("--engine-device", 0))
+    return "2", "0"
 
 
 def cfg_from_console(doc, base=None):
@@ -249,9 +267,10 @@ def cfg_from_console(doc, base=None):
     if model:
         cfg["model"] = model
     flags = eng.get("flags", {})
-    cfg["tp"] = "1" if cfg["model"] == "27b" and str(flags.get("--engine-tp", "2")) == "1" else "2"
+    tp, dev = tp_of(doc)
+    cfg["tp"] = tp if cfg["model"] == "27b" else "2"
     if cfg["tp"] == "1":
-        cfg["gpu1"] = str(flags.get("--engine-device", "0"))
+        cfg["gpu1"] = dev
     for key, flag, _to, frm in _flag_rules():
         o = next(o for o in OPTIONS if o["key"] == key)
         if cfg["model"] not in o["models"]:
@@ -283,24 +302,31 @@ def console_from_cfg(cfg, doc=None):
     eng["port"] = int(cfg["port"])
     flags = eng.setdefault("flags", {})
     tp1 = cfg["model"] == "27b" and cfg.get("tp") == "1"
+    legacy = cfg["model"] == "27b" and "tp" not in eng and _legacy_tp1(flags)
+    if cfg["model"] == "27b":
+        eng["tp"] = 1 if tp1 else 2
+        eng["device"] = int(cfg.get("gpu1", "0")) if tp1 else 0
+    else:
+        eng["tp"] = 2
+        eng.pop("device", None)
+    if legacy or (cfg["model"] == "27b" and not tp1):
+        # a version-4 file's single-card overrides, or a switch back to TP=2: the TP's preset
+        # names its own packs, batches and cards (a pack the console picked for this TP stays)
+        if legacy:
+            for f in TP1_LEGACY:
+                flags.pop(f, None)
+        for f in ("--pack", "--engine-draft-pack"):
+            if str(flags.get(f, "")).endswith("-tp1") and (legacy or not tp1):
+                flags.pop(f)
     for key, flag, to, _frm in _flag_rules():
         o = next(o for o in OPTIONS if o["key"] == key)
         if cfg["model"] not in o["models"]:
             continue
-        v = int(cfg[key]) if tp1 and key in ("ctx27", "seqs") else to(cfg[key])
+        v = to(cfg[key], cfg)
         if v is None:
             flags.pop(flag, None)
         else:
             flags[flag] = v
-    if tp1:
-        flags.update(tp1_flags(cfg))
-    elif cfg["model"] == "27b" and str(flags.get("--engine-tp", "2")) == "1":
-        # back to TP=2: drop the single-card overrides (a pack the console picked stays)
-        for f in TP1_OWNED:
-            flags.pop(f, None)
-        for f in ("--pack", "--engine-draft-pack"):
-            if str(flags.get(f, "")).endswith("-tp1"):
-                flags.pop(f)
     paths = eng.setdefault("paths", {})
     if cfg["model"] == "27b":
         packs = str(cfg["packs"]).rstrip("/")

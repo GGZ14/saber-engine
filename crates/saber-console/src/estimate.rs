@@ -8,10 +8,14 @@
 //! head dim, the GDN state shape) where readable; what is not readable is named in `notes`.
 //!
 //! Two laws, one per serving path:
-//! - **27B** (`saber serve --engine real`): the device budget per rank (`--engine-budget-mib`,
-//!   capped by the card's VRAM) less the target and drafter weights, the GDN state slots
-//!   (`--engine-max-seqs` of them), a fixed arena allowance and `--engine-kv-headroom-mib` is
-//!   the KV pool; its tokens / the context = the sequences that fit at full context.
+//! - **27B** (`saber serve --engine real`): the device budget per rank (the engine's ledger law:
+//!   `lean` replaces `--engine-budget-mib` / `--engine-kv-headroom-mib` with its measured pair,
+//!   [`LEAN_BUDGET_MIB`] / [`LEAN_HEADROOM_MIB`]; capped by the card's VRAM) less the target and
+//!   drafter weights, the GDN state slots (`--engine-max-seqs` of them), a fixed arena allowance
+//!   and the headroom is the KV pool; its tokens / the context = the sequences that fit at full
+//!   context. At **TP=1** the one card is the only rank: it holds every weight (the `-tp1`
+//!   packs' single `rank0.pack`), every KV head and the whole GDN state of each sequence, so the
+//!   same law runs with the unsplit shapes and the pool is far smaller than TP=2's.
 //! - **Flash-Next** (`saber engine --fn-serve`): the KV lives in pinned host RAM behind a VRAM
 //!   hot pool (the tiered KV); the admission slab (`--fn-kv-admit-slab-tokens`, else one
 //!   max-context request + one 10,240-token request) is the token capacity, the engine holds 8
@@ -327,6 +331,10 @@ pub struct Estimate {
     /// Always true: the UI labels this an estimate.
     pub is_estimate: bool,
     pub law: Option<Law>,
+    /// The tensor-parallel width estimated and the cards it uses (1 or 2).
+    pub tp: u32,
+    /// What the figures are, in words (shown with them): per card of two, or the one card.
+    pub label: String,
     /// Per card (rank 0).
     pub vram_bytes: Option<u64>,
     pub budget_bytes: Option<u64>,
@@ -352,6 +360,12 @@ pub struct Estimate {
     pub warnings: Vec<String>,
 }
 
+/// The engine's `lean` ledger law (`saber_cli::ledger_law`, the default): the
+/// fence and the KV headroom it uses in place of the two flags. A `saber-cli` test keeps these
+/// equal to the engine's.
+pub const LEAN_BUDGET_MIB: u64 = 31_744;
+pub const LEAN_HEADROOM_MIB: u64 = 848;
+
 /// Fixed per-rank allowance for the arenas, graph pools and heads the estimate does not model.
 pub const ARENA_ALLOWANCE_MIB: u64 = 2_048;
 /// The Flash-Next engine's sequence slots.
@@ -369,6 +383,19 @@ pub fn estimate(i: &Inputs) -> Estimate {
     let mut e = Estimate {
         is_estimate: true,
         law: Some(i.law),
+        tp: i.tp.max(1),
+        label: match (i.law, i.tp) {
+            (Law::Mock, _) => "Estimate: the mock engine (no GPU memory is used)".into(),
+            (Law::Dense27b, 1) => {
+                "Estimate for TP=1: ONE card holds the whole model (all of its weights, the KV \
+                 cache and every sequence's GDN state)"
+                    .into()
+            }
+            (_, tp) => format!(
+                "Estimate per card, TP={tp}: each of the {tp} cards holds 1/{tp} of the weights and \
+                 of the KV cache"
+            ),
+        },
         max_ctx: i.max_ctx,
         requested_seqs: i.max_seqs,
         fits: true,
@@ -467,8 +494,16 @@ pub fn estimate(i: &Inputs) -> Estimate {
             let kv = budget as i64 - (weights + drafter + state + reserved) as i64;
             e.kv_bytes = Some(kv);
             e.notes.push(format!(
-                "reserved = {ARENA_ALLOWANCE_MIB} MiB arena allowance + the KV headroom flag"
+                "reserved = {ARENA_ALLOWANCE_MIB} MiB arena allowance + the KV headroom ({} MiB)",
+                i.kv_headroom_mib
             ));
+            if i.tp == 1 {
+                e.notes.push(
+                    "TP=1: one card, so the single-card packs' whole weights, every KV head and \
+                     each sequence's full GDN state come out of one budget"
+                        .into(),
+                );
+            }
             if kv <= 0 {
                 e.fits = false;
                 e.kv_capacity_tokens = Some(0);
@@ -649,6 +684,47 @@ mod tests {
         let e = estimate(&i);
         assert_eq!(e.budget_bytes, Some(16 * 1024 * MIB));
         assert!(e.warnings.iter().any(|w| w.contains("VRAM binds")));
+    }
+
+    #[test]
+    fn tp1_one_card_holds_everything() {
+        // the NVFP4 TP=1 pair (rank0.pack bytes of the -tp1 packs) at the launcher's TP=1 defaults
+        let mut i = inputs();
+        i.tp = 1;
+        i.max_ctx = 65_536;
+        i.max_seqs = 4;
+        i.budget_mib = Some(LEAN_BUDGET_MIB);
+        i.kv_headroom_mib = LEAN_HEADROOM_MIB;
+        i.target = Some(PackInfo {
+            rank_weight_bytes: Some(18_534_289_408),
+            ..PackInfo::default()
+        });
+        i.drafter = Some(PackInfo {
+            rank_weight_bytes: Some(6_397_935_616),
+            ..PackInfo::default()
+        });
+        let e = estimate(&i);
+        assert_eq!(e.tp, 1);
+        assert!(e.label.contains("ONE card"), "{}", e.label);
+        // every KV head on the one card: twice TP=2's bytes a token; the whole GDN state
+        assert_eq!(e.kv_bytes_per_token, Some(16 * 4 * 256 * 2));
+        assert_eq!(e.state_bytes, Some(4 * 48 * 48 * 128 * 128 * 2));
+        let kv = LEAN_BUDGET_MIB * MIB
+            - 18_534_289_408
+            - 6_397_935_616
+            - 4 * 48 * 48 * 128 * 128 * 2
+            - (ARENA_ALLOWANCE_MIB + LEAN_HEADROOM_MIB) * MIB;
+        assert_eq!(e.kv_bytes, Some(kv as i64));
+        // (the measured pool of this pair at these defaults: 168,768 tokens, README "One card")
+        let tokens = e.kv_capacity_tokens.unwrap();
+        assert!((120_000..=180_000).contains(&tokens), "{tokens}");
+        assert_eq!(e.seqs_at_ctx, Some(tokens / 65_536));
+        assert!(e.fits);
+        assert!(e.notes.iter().any(|n| n.starts_with("TP=1")));
+        // TP=2 reads per card
+        let e2 = estimate(&inputs());
+        assert_eq!(e2.tp, 2);
+        assert!(e2.label.contains("per card"), "{}", e2.label);
     }
 
     #[test]

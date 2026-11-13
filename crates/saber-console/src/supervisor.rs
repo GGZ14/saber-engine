@@ -340,25 +340,22 @@ impl Supervisor {
             .clone();
         cfg.validate()?;
         let e = &cfg.engine;
-        // The guards are blocking probes (systemctl, podman ps, flock): off the async workers.
-        let (ctr, lock_dir, preset, port) = (
+        // The guards are blocking probes (podman ps, flock): off the async workers.
+        let (ctr, lock_dir, preset, port, card) = (
             e.container.runtime.clone(),
             self.home.join("saber/.cache"),
             e.preset,
             e.port,
+            e.single_card(),
         );
         let name = if e.runtime == Runtime::Container {
-            Some(if e.container.name.is_empty() {
-                crate::compose::default_container_name(preset).to_string()
-            } else {
-                e.container.name.clone()
-            })
+            Some(crate::compose::container_name_for(e))
         } else {
             None
         };
         let guard_res = tokio::task::spawn_blocking(move || -> Result<(), guard::Refusal> {
             if preset.uses_gpus() {
-                guard::check_cards(&ctr, &lock_dir)?;
+                guard::check_cards(&ctr, &lock_dir, card)?;
             }
             if let Some(n) = &name {
                 guard::check_name_free(&ctr, n)?;

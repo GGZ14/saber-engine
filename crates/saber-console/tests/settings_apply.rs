@@ -362,7 +362,10 @@ async fn apply_restart_rollback_and_the_settings_api() {
     assert_eq!(entries[0]["origin"], "auto-rollback");
     assert_eq!(entries[0]["outcome"], "ready");
     let e = get(p, &format!("/api/history/{first_id}")).await;
-    assert!(e["toml"].as_str().unwrap().contains("version = 4"));
+    assert!(e["toml"].as_str().unwrap().contains(&format!(
+        "version = {}",
+        saber_console::config::CONFIG_VERSION
+    )));
 
     // ---- one-click (manual) rollback to the first config ----
     let (c, v) = post(p, &format!("/api/history/{first_id}/rollback"), &json!({})).await;

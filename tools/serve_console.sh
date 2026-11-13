@@ -8,6 +8,8 @@
 #   tools/serve_console.sh --preset flashnext    # first run only: seed config.toml with this preset (autostart on,
 #                                                #   the wizard skipped); later runs use config.toml as the Settings page left it
 #   SABER_CONSOLE=1 tools/serve_flashnext.sh     # the same, from a launcher (`--preset flashnext` / `--preset qwen27b`)
+#   tools/serve_console.sh --preset qwen27b --tp 1   # first run only: the 27B on ONE card (engine.tp = 1; DEVICE=N picks
+#                                                #   the card, default 0); `SABER_CONSOLE=1 tools/serve_27b.sh --tp 1` does the same
 #   HOST=0.0.0.0 tools/serve_console.sh          # reachable from other machines: needs an admin token, made once with
 #                                                #   `.cache/target-container/release/saber ui --gen-admin-token`
 #   tools/serve_console.sh -- --admin-token X    # anything after `--` goes to `saber ui`
@@ -30,6 +32,7 @@ CONFIG=${CONFIG:-$HOME/.config/saber/config.toml}
 BUILD=1
 MOCK=0
 PRESET=""
+TP=""
 ENGINE_ARGS=()
 UI_ARGS=()
 while [ $# -gt 0 ]; do
@@ -38,11 +41,19 @@ while [ $# -gt 0 ]; do
     --mock) MOCK=1; shift ;;
     --preset) PRESET=${2:-}; shift; [ $# -gt 0 ] && shift ;;
     --preset=*) PRESET=${1#*=}; shift ;;
+    --tp) TP=${2:-}; shift; [ $# -gt 0 ] && shift ;;
+    --tp=*) TP=${1#*=}; shift ;;
     --) shift; UI_ARGS+=("$@"); break ;;
     *) ENGINE_ARGS+=("$1"); shift ;;
   esac
 done
 case "$PRESET" in ""|flashnext|qwen27b) ;; 27b) PRESET=qwen27b ;; *) echo "--preset: flashnext or qwen27b" >&2; exit 2 ;; esac
+case "${TP:-2}" in 1|2) ;; *) echo "--tp: 1 (one card) or 2 (two cards)" >&2; exit 2 ;; esac
+if [ "${TP:-2}" = 1 ] && [ "$PRESET" != qwen27b ]; then
+  echo "--tp 1: only the 27B serves on one card (--preset qwen27b); Flash-Next is TP=2 only" >&2; exit 2
+fi
+DEVICE=${DEVICE:-0}
+[[ "$DEVICE" =~ ^[0-9]+$ ]] || { echo "DEVICE=$DEVICE: one HIP device index" >&2; exit 2; }
 
 if [ "$BUILD" = 1 ]; then
   mkdir -p "$REPO/.cache/target-container" "$REPO/.cache/cargo-registry"
@@ -66,10 +77,12 @@ if [ -n "$PRESET" ] && [ "$MOCK" = 0 ]; then
     umask 077
     cat > "$CONFIG" <<EOF
 # Seeded by tools/serve_console.sh --preset $PRESET; the console's Settings page edits it from here.
-version = 4
+version = 5
 
 [engine]
 preset = "$PRESET"
+tp = ${TP:-2}
+device = $DEVICE
 port = ${PORT:-8080}
 autostart = true
 extra_args = [${extra%, }]
@@ -82,7 +95,7 @@ completed = true
 skipped = true
 step = "done"
 EOF
-    echo "== seeded $CONFIG (preset $PRESET, engine port ${PORT:-8080}, autostart on)"
+    echo "== seeded $CONFIG (preset $PRESET, TP=${TP:-2}$([ "${TP:-2}" = 1 ] && echo " on HIP device $DEVICE"), engine port ${PORT:-8080}, autostart on)"
   fi
 fi
 

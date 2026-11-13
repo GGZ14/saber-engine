@@ -27,6 +27,13 @@
 
   // bool: effective on/off
   const boolOn = $derived(overridden ? override === true : !!eff);
+  // an on/off flag whose `false` means `off` (the engine default is on): no "remove" choice
+  const onOff = $derived(!!S.schema?.on_off_flags?.includes(flag.name));
+  const enumValue = $derived.by(() => {
+    if (!overridden) return '';
+    if (typeof override === 'boolean') return onOff ? (override ? 'on' : 'off') : override ? '' : '__off';
+    return String(override);
+  });
 
   function onText(e) {
     const v = parseValue(flag, e.currentTarget.value);
@@ -69,10 +76,10 @@
         <span>{boolOn ? 'on' : 'off'}</span>
       </label>
     {:else if flag.kind === 'enum'}
-      <select {id} value={overridden ? (override === false ? '__off' : override === true ? '' : String(override)) : ''} onchange={onEnum}>
+      <select {id} value={enumValue} onchange={onEnum}>
         <option value="">{inherited ? `${inherited.text} (${inherited.src})` : '(engine default)'}</option>
         {#each flag.choices as c}<option value={c}>{c}</option>{/each}
-        <option value="__off">(remove the flag)</option>
+        {#if !onOff}<option value="__off">(remove the flag)</option>{/if}
       </select>
     {:else}
       <input

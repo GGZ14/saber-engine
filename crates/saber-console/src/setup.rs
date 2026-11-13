@@ -32,6 +32,12 @@ pub struct Facts {
     pub config_errors: Vec<String>,
     /// The engine reached ready since the wizard launched it.
     pub engine_ready: bool,
+    /// The TP the picked model runs at (the Model step's choice, else the recommendation).
+    pub tp: u32,
+    /// The supported GPUs the system probe sees.
+    pub gpus: u32,
+    /// The machine lacks the cards that TP needs (never for the mock).
+    pub tp_unfit: bool,
 }
 
 #[must_use]
@@ -48,6 +54,17 @@ pub fn blocker(step: &str, st: &SetupState, f: &Facts) -> Option<String> {
             "The model `{}` is not in the catalog any more: pick another.",
             st.model
         )),
+        "model" if f.tp_unfit => Some(if f.gpus == 1 {
+            format!(
+                "TP={} needs two cards and this machine has one supported GPU: pick TP=1 (one card).",
+                f.tp
+            )
+        } else {
+            format!(
+                "TP={} needs {} supported GPUs; this machine has {}.",
+                f.tp, f.tp, f.gpus
+            )
+        }),
         "model" if !f.model_installed => {
             Some("Download the model first (or pick one that is installed).".into())
         }
@@ -202,6 +219,47 @@ mod tests {
         f.engine_ready = true;
         s = goto(&s, "done", &f).unwrap();
         assert!(s.completed && !s.skipped);
+    }
+
+    #[test]
+    fn the_model_step_refuses_a_tp_the_machine_cannot_run() {
+        let mut s = st("model");
+        s.model = "27b".into();
+        // one supported card, TP=2 picked: refused with the way out named
+        let mut f = Facts {
+            model_known: true,
+            model_installed: true,
+            tp: 2,
+            gpus: 1,
+            tp_unfit: true,
+            ..Facts::default()
+        };
+        let e = goto(&s, "profile", &f).unwrap_err();
+        assert!(e.contains("pick TP=1"), "{e}");
+        assert!(!view(&s, &f)[1].complete);
+        // TP=1 on the one card passes
+        f.tp = 1;
+        f.tp_unfit = false;
+        assert_eq!(goto(&s, "profile", &f).unwrap().step, "profile");
+        // no card at all: the count is named
+        let f0 = Facts {
+            model_known: true,
+            model_installed: true,
+            tp: 1,
+            gpus: 0,
+            tp_unfit: true,
+            ..Facts::default()
+        };
+        assert!(goto(&s, "profile", &f0).unwrap_err().contains("has 0"));
+        // the TP gate comes before the download gate (the TP picks the packs to download)
+        let f2 = Facts {
+            model_known: true,
+            tp: 2,
+            gpus: 1,
+            tp_unfit: true,
+            ..Facts::default()
+        };
+        assert!(goto(&s, "profile", &f2).unwrap_err().contains("TP=1"));
     }
 
     #[test]

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 /// The schema version this build writes. A file with a newer version is refused by name, an
 /// older one is migrated in [`Config::from_toml`].
-pub const CONFIG_VERSION: u32 = 4;
+pub const CONFIG_VERSION: u32 = 5;
 
 /// The stock engine presets. Each one reproduces a launcher's default boot exactly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,7 +21,8 @@ pub const CONFIG_VERSION: u32 = 4;
 pub enum Preset {
     /// `tools/serve_flashnext.sh` (Qwen3.8 Flash-Next, `saber engine --fn-serve`, TP=2).
     Flashnext,
-    /// `tools/serve_27b.sh` (Qwen3.8-27B, `saber serve --engine real`, TP=2).
+    /// `tools/serve_27b.sh` (Qwen3.8-27B, `saber serve --engine real`): TP=2 on two cards, or
+    /// `tools/serve_27b.sh --tp 1` on one ([`EngineConfig::tp`]).
     Qwen27b,
     /// `saber serve --engine mock`: the real serving plane over a scripted executor, no GPU.
     Mock,
@@ -32,6 +33,16 @@ impl Preset {
     #[must_use]
     pub fn uses_gpus(self) -> bool {
         !matches!(self, Preset::Mock)
+    }
+
+    /// The tensor-parallel widths the preset serves: the 27B on one card or two, Flash-Next on
+    /// two only (no single-card Flash-Next pack exists), the mock at either (it opens no GPU).
+    #[must_use]
+    pub fn tp_choices(self) -> &'static [u32] {
+        match self {
+            Preset::Flashnext => &[2],
+            Preset::Qwen27b | Preset::Mock => &[1, 2],
+        }
     }
 
     /// The `saber` subcommand the preset boots (the flag schema's section).
@@ -189,6 +200,13 @@ impl Default for ContainerConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct EngineConfig {
     pub preset: Preset,
+    /// Tensor parallelism: 2 = both cards (every preset's default), 1 = ONE card (the 27B only:
+    /// `tools/serve_27b.sh --tp 1`'s boot: the `-tp1` packs, its context / sequence / batch
+    /// defaults, the container `saber-27b-tp1-serve`). Flash-Next is TP=2 only.
+    pub tp: u32,
+    /// TP=1: the HIP device (card index) the engine runs on (the container sees only it).
+    /// Ignored at TP=2 (both cards, 0 and 1).
+    pub device: u32,
     /// The engine's HTTP port (`--fn-serve` / `--port`).
     pub port: u16,
     pub runtime: Runtime,
@@ -212,6 +230,8 @@ impl Default for EngineConfig {
     fn default() -> Self {
         EngineConfig {
             preset: Preset::Flashnext,
+            tp: 2,
+            device: 0,
             port: 8080,
             runtime: Runtime::Container,
             autostart: false,
@@ -222,6 +242,81 @@ impl Default for EngineConfig {
             container: ContainerConfig::default(),
             flags: BTreeMap::new(),
             extra_args: Vec::new(),
+        }
+    }
+}
+
+impl EngineConfig {
+    /// The TP=1 card the engine runs on, or `None` at TP=2 (both cards).
+    #[must_use]
+    pub fn single_card(&self) -> Option<u32> {
+        (self.tp == 1 && self.preset.uses_gpus()).then_some(self.device)
+    }
+
+    /// The cards (HIP devices) this config's engine opens.
+    #[must_use]
+    pub fn devices(&self) -> Vec<u32> {
+        match self.single_card() {
+            Some(d) => vec![d],
+            None => vec![0, 1],
+        }
+    }
+
+    /// Migrate a version-4 engine section to version 5 (called by [`Config::from_toml`]):
+    ///
+    /// - TP=1 used to be written as flag overrides of the TP=2 27B preset (`tools/saber-setup
+    ///   --tp 1`: `--engine-tp 1`, `--engine-device N`, `--engine-peer-device false`, the `-tp1`
+    ///   packs and the single-card context / sequence / batch values). It is now `tp = 1` +
+    ///   `device = N`; an override that only restates the TP=1 preset's own value is dropped, one
+    ///   that differs (another pack, another context) stays an override.
+    /// - An on/off flag set to a bare `false` (a toggle) is written as its `off` value
+    ///   ([`crate::compose::ON_OFF_FLAGS`]): `false` used to drop the flag, which left the
+    ///   engine's default (on) in place.
+    pub fn migrate_v4(&mut self) {
+        for k in crate::compose::ON_OFF_FLAGS {
+            if let Some(FlagValue::Bool(b)) = self.flags.get(*k) {
+                let v = if *b { "on" } else { "off" };
+                self.flags
+                    .insert((*k).to_string(), FlagValue::Str(v.into()));
+            }
+        }
+        if self.preset != Preset::Qwen27b {
+            return;
+        }
+        let int = |v: Option<&FlagValue>| -> Option<i64> {
+            match v? {
+                FlagValue::Int(n) => Some(*n),
+                FlagValue::Str(s) => s.trim().parse().ok(),
+                _ => None,
+            }
+        };
+        if int(self.flags.get("--engine-tp")) != Some(1) {
+            return;
+        }
+        self.tp = 1;
+        self.flags.remove("--engine-tp");
+        if let Some(d) = int(self.flags.get("--engine-device")) {
+            if let Ok(d) = u32::try_from(d) {
+                self.device = d;
+                self.flags.remove("--engine-device");
+            }
+        }
+        if self.flags.get("--engine-peer-device") == Some(&FlagValue::Bool(false)) {
+            self.flags.remove("--engine-peer-device");
+        }
+        use crate::compose::tp1;
+        let same =
+            |v: Option<&FlagValue>, want: &str| v.and_then(FlagValue::arg).as_deref() == Some(want);
+        for (k, want) in [
+            ("--engine-decode-batches", tp1::BATCHES.to_string()),
+            ("--engine-max-ctx", tp1::MAX_CTX.to_string()),
+            ("--engine-max-seqs", tp1::MAX_SEQS.to_string()),
+            ("--pack", format!("/packs/{}", tp1::PACK)),
+            ("--engine-draft-pack", format!("/packs/{}", tp1::DRAFT_PACK)),
+        ] {
+            if same(self.flags.get(k), &want) {
+                self.flags.remove(k);
+            }
         }
     }
 }
@@ -422,6 +517,9 @@ pub struct SetupState {
     pub model: String,
     /// The built-in profile picked in the Profile step.
     pub profile: String,
+    /// The TP picked in the Model step (0 = none yet: the machine's recommendation, TP=2 with
+    /// two supported cards, TP=1 with one, for a model hosted at both).
+    pub tp: u32,
 }
 
 impl Default for SetupState {
@@ -432,6 +530,7 @@ impl Default for SetupState {
             step: "system".into(),
             model: String::new(),
             profile: String::new(),
+            tp: 0,
         }
     }
 }
@@ -562,6 +661,11 @@ impl Config {
             c.setup.completed = true;
             c.setup.step = "done".into();
         }
+        if v.version.is_some_and(|n| n < 5) {
+            c.engine.migrate_v4();
+        }
+        // migrated: the next save writes this build's version
+        c.version = CONFIG_VERSION;
         c.validate()?;
         Ok(c)
     }
@@ -590,6 +694,27 @@ impl Config {
             if !k.starts_with("--") {
                 anyhow::bail!("engine.flags key `{k}` must be a long flag (`--name`)");
             }
+        }
+        if !e.preset.tp_choices().contains(&e.tp) {
+            anyhow::bail!(
+                "engine.tp = {} is not served by the {:?} preset (it serves TP={}){}",
+                e.tp,
+                e.preset,
+                e.preset
+                    .tp_choices()
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" or TP="),
+                if e.preset == Preset::Flashnext {
+                    ": Flash-Next runs on two cards only"
+                } else {
+                    ""
+                }
+            );
+        }
+        if e.device > 15 {
+            anyhow::bail!("engine.device = {} is not a card index (0..15)", e.device);
         }
         if self.metrics.interval_s == 0 {
             anyhow::bail!("metrics.interval_s must be at least 1");
@@ -643,6 +768,9 @@ impl Config {
                 "console.port and engine.port are both {}: pick two different ports",
                 self.engine.port
             );
+        }
+        if !matches!(self.setup.tp, 0..=2) {
+            anyhow::bail!("setup.tp = {} is not 0 (not picked), 1 or 2", self.setup.tp);
         }
         if !matches!(
             self.setup.step.as_str(),
@@ -905,7 +1033,7 @@ mod tests {
 
     #[test]
     fn refuses_newer_version_unknown_keys_and_bad_combos() {
-        assert!(Config::from_toml("version = 5").is_err());
+        assert!(Config::from_toml("version = 6").is_err());
         // a version-2 file (before the settings plane) reads with the console section at its defaults
         assert_eq!(
             Config::from_toml("version = 2").unwrap().console,
@@ -922,7 +1050,13 @@ mod tests {
         assert!(Config::from_toml("version = 1\n[engine]\nruntime = \"direct\"").is_err());
         assert!(Config::from_toml("version = 1\n[engine.flags]\nfn-max-ctx = 1").is_err());
         // a minimal file is the defaults
+        assert_eq!(Config::from_toml("version = 5").unwrap(), Config::default());
         assert_eq!(Config::from_toml("version = 4").unwrap(), Config::default());
+        // the TP: the 27B at 1 or 2, Flash-Next at 2 only
+        assert!(Config::from_toml("version = 5\n[engine]\npreset = \"qwen27b\"\ntp = 1").is_ok());
+        assert!(Config::from_toml("version = 5\n[engine]\npreset = \"qwen27b\"\ntp = 3").is_err());
+        let e = Config::from_toml("version = 5\n[engine]\ntp = 1").unwrap_err();
+        assert!(format!("{e:#}").contains("two cards only"), "{e:#}");
         // a version-3 file (before the wizard) counts as set up
         let v3 = Config::from_toml("version = 3").unwrap();
         assert!(v3.setup.completed);
@@ -942,6 +1076,82 @@ mod tests {
                 .is_err()
         );
         assert!(Config::from_toml("version = 2\n[usage]\nraw_retention_days = 0").is_err());
+    }
+
+    /// A version-4 file (`tools/saber-setup --tp 1` wrote TP=1 as flag overrides of the TP=2
+    /// preset) reads as `tp = 1` on its card, the overrides that restate the TP=1 preset dropped.
+    #[test]
+    fn a_version_4_tp1_override_set_migrates_to_the_tp_field() {
+        let v4 = r#"version = 4
+[engine]
+preset = "qwen27b"
+port = 8081
+
+[engine.flags]
+"--engine-tp" = 1
+"--engine-device" = 1
+"--engine-peer-device" = false
+"--engine-decode-batches" = "1,2,4"
+"--engine-max-ctx" = 65536
+"--engine-max-seqs" = 2
+"--pack" = "/packs/qwen38-27b-macaq7-bc3-tp1"
+"--engine-draft-pack" = "/packs/qwen38-dflash2-drafter-quarkhead-tp1"
+"--enable-prefix-caching" = false
+"--vision" = "lazy"
+
+[setup]
+completed = true
+step = "done"
+model = "27b"
+"#;
+        let c = Config::from_toml(v4).unwrap();
+        assert_eq!((c.engine.tp, c.engine.device), (1, 1));
+        let keys: Vec<&str> = c.engine.flags.keys().map(String::as_str).collect();
+        // a differing value (2 sequences) and the unrelated flags stay overrides
+        assert_eq!(
+            keys,
+            ["--enable-prefix-caching", "--engine-max-seqs", "--vision"]
+        );
+        assert_eq!(
+            c.engine.flags["--enable-prefix-caching"],
+            FlagValue::Str("off".into())
+        );
+        assert_eq!(c.engine.flags["--engine-max-seqs"], FlagValue::Int(2));
+        // it saves as version 5 and reads back the same
+        let t = c.to_toml().unwrap();
+        assert!(t.contains("version = 5") && t.contains("tp = 1"), "{t}");
+        assert_eq!(Config::from_toml(&t).unwrap(), c);
+        // another pack than the preset's stays an override (the validator checks its tp_size)
+        let other = v4.replace(
+            "/packs/qwen38-27b-macaq7-bc3-tp1",
+            "/packs/qwen38-27b-nvfp4-devfinal-tp1-fp8head",
+        );
+        let c = Config::from_toml(&other).unwrap();
+        assert_eq!(c.engine.tp, 1);
+        assert_eq!(
+            c.engine.flags["--pack"],
+            FlagValue::Str("/packs/qwen38-27b-nvfp4-devfinal-tp1-fp8head".into())
+        );
+        // a TP=2 file is untouched (but its prefix toggle is spelled out)
+        let c = Config::from_toml(
+            "version = 4\n[engine]\npreset = \"qwen27b\"\n[engine.flags]\n\"--engine-max-ctx\" = 65536\n\"--enable-prefix-caching\" = true",
+        )
+        .unwrap();
+        assert_eq!(c.engine.tp, 2);
+        assert_eq!(c.engine.flags["--engine-max-ctx"], FlagValue::Int(65536));
+        assert_eq!(
+            c.engine.flags["--enable-prefix-caching"],
+            FlagValue::Str("on".into())
+        );
+        // a version-5 file is not migrated: an explicit --engine-tp override stays (the
+        // validator refuses one that disagrees with engine.tp)
+        let c = Config::from_toml(
+            "version = 5\n[engine]\npreset = \"qwen27b\"\n[engine.flags]\n\"--engine-tp\" = 1",
+        )
+        .unwrap();
+        assert_eq!(c.engine.tp, 2);
+        assert!(c.engine.flags.contains_key("--engine-tp"));
+        assert_eq!(c.engine.devices(), [0, 1]);
     }
 
     #[test]

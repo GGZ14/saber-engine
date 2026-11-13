@@ -80,6 +80,7 @@ pub fn router(state: AppState) -> Router {
         .route("/metrics", get(console_metrics))
         // the settings plane
         .route("/api/config/validate", post(config_validate))
+        .route("/api/config/tp", post(config_tp))
         .route("/api/config/apply", post(config_apply))
         .route("/api/apply", get(apply_status))
         .route("/api/history", get(history_list))
@@ -317,7 +318,12 @@ async fn put_config(State(st): State<AppState>, Json(c): Json<Config>) -> Respon
 }
 
 async fn schema(State(st): State<AppState>) -> impl IntoResponse {
-    Json(st.schema.as_ref().clone())
+    let mut v = st.schema.as_ref().clone();
+    if let Some(o) = v.as_object_mut() {
+        // the on/off flags whose `false` composes as `off` (the Settings toggle's meaning)
+        o.insert("on_off_flags".into(), json!(crate::compose::ON_OFF_FLAGS));
+    }
+    Json(v)
 }
 
 async fn command(State(st): State<AppState>) -> Response {
@@ -717,6 +723,43 @@ async fn config_validate(State(st): State<AppState>, Json(d): Json<Draft>) -> Re
     }
 }
 
+#[derive(Deserialize)]
+struct TpReq {
+    config: Config,
+    tp: u32,
+    /// TP=1: the card (default: keep the config's).
+    #[serde(default)]
+    device: Option<u32>,
+}
+
+/// The Settings page's TP switch: the draft with `engine.tp` (and the card) set and its pack
+/// flags moved to the packs cut for that TP ([`crate::catalog::with_tp`]). Nothing is saved.
+async fn config_tp(State(st): State<AppState>, Json(b): Json<TpReq>) -> Response {
+    let c = st.console.clone();
+    let r = blocking(move || -> anyhow::Result<Config> {
+        let p = b.config.engine.preset;
+        if !p.tp_choices().contains(&b.tp) {
+            anyhow::bail!(
+                "the {p:?} preset does not serve TP={}{}",
+                b.tp,
+                if p == crate::config::Preset::Flashnext {
+                    ": Flash-Next runs on two cards only (TP=2)"
+                } else {
+                    ""
+                }
+            );
+        }
+        let cat = crate::wizard::load_catalog(&c, &b.config)?;
+        Ok(crate::catalog::with_tp(&b.config, b.tp, b.device, &cat))
+    })
+    .await;
+    match r {
+        Ok(Ok(cfg)) => Json(json!({"config": cfg})).into_response(),
+        Ok(Err(e)) => bad(format!("{e:#}")),
+        Err(r) => r,
+    }
+}
+
 async fn config_apply(State(st): State<AppState>, Json(d): Json<Draft>) -> Response {
     let c = st.console.clone();
     let Draft { config, note } = d;
@@ -805,6 +848,8 @@ async fn profiles_list(State(st): State<AppState>) -> Response {
     match blocking(move || c.profiles.list()).await {
         Ok(Ok(user)) => Json(json!({
             "builtin": {"engine": crate::profiles::builtin("engine"), "serve": crate::profiles::builtin("serve")},
+            // the 27B on one card: the same names, sized for one card's KV pool
+            "builtin_tp1": {"serve": crate::profiles::builtin_for("serve", 1)},
             "user": user,
             "sticky": crate::profiles::STICKY,
         }))

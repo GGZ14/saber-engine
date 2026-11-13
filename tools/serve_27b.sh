@@ -86,11 +86,12 @@ fi
 # The console in front (docs/CONSOLE.md): `SABER_CONSOLE=1 tools/serve_27b.sh [--no-build] [args]` runs `saber ui`
 # (tools/serve_console.sh), which starts THIS preset's engine from ~/.config/saber/config.toml (seeded from
 # this launcher on a first run) and serves the dashboard on 127.0.0.1:8090. The headless path below is unchanged.
-# The console's 27B preset is the default boot (TP=2, the MACaQ pack); other packs are picked on its Settings page.
+# The console's 27B preset is the default weights (the MACaQ pack) at either TP: `--tp 1` seeds a single-card
+# config (engine.tp = 1, DEVICE = the card); other packs are picked on its Settings page.
 if [ "${SABER_CONSOLE:-0}" = 1 ]; then
-  [ "$TP" = 2 ] && [ "$WEIGHTS" = macaq ] || { echo "SABER_CONSOLE=1: the console's 27B preset is TP=2 with the default weights; run this launcher without SABER_CONSOLE for --tp 1 / --weights $WEIGHTS" >&2; exit 2; }
+  [ "$WEIGHTS" = macaq ] || { echo "SABER_CONSOLE=1: the console's 27B preset is the default weights; run this launcher without SABER_CONSOLE for --weights $WEIGHTS (or pick the pack on the console's Settings page)" >&2; exit 2; }
   NB=(); [ "$BUILD" = 0 ] && NB=(--no-build)
-  exec "$REPO/tools/serve_console.sh" --preset qwen27b "${NB[@]}" "$@"
+  DEVICE=${DEVICE:-0} exec "$REPO/tools/serve_console.sh" --preset qwen27b --tp "$TP" "${NB[@]}" "$@"
 fi
 
 case "$WEIGHTS" in
@@ -153,9 +154,6 @@ SERVE_CMD="$SABER serve --engine real $TP_ARGS \
 # boot -- the console's composition test (saber-console `launcher_parity`) compares against it.
 if [ "${SABER_PRINT_CMD:-0}" = 1 ]; then printf '%s\n' $SERVE_CMD; exit 0; fi
 
-if systemctl --user is-active --quiet qwen_prod_nvfp4; then
-  echo "prod's unit qwen_prod_nvfp4 is ACTIVE; refusing to boot a second server on the cards" >&2; exit 1
-fi
 if [ "$TP" = 2 ]; then
   if $CTR ps --format '{{.Names}}' | grep -qE '^saber-fn|^saber-flashnext-serve|^saber-27b-tp1-serve'; then
     echo "another saber server or an agent hold holds the cards; stop it or wait:" >&2

@@ -141,6 +141,8 @@ pub struct ProbeInput {
     pub need_disk_bytes: Option<u64>,
     /// The chosen model runs on the GPUs (the mock does not: GPU checks become info).
     pub needs_gpus: bool,
+    /// The supported cards the chosen model's form needs (2 at TP=2, 1 for the 27B at TP=1).
+    pub min_gpus: u32,
     pub host: HostFacts,
 }
 
@@ -445,6 +447,7 @@ pub fn probe(inp: &ProbeInput) -> SystemReport {
         .collect::<Vec<_>>()
         .join("; ");
     let (st, fix) = match usable.len() {
+        1 if inp.min_gpus <= 1 => (CheckStatus::Pass, None),
         0 => (
             CheckStatus::Fail,
             Some(
@@ -457,8 +460,9 @@ pub fn probe(inp: &ProbeInput) -> SystemReport {
         1 => (
             CheckStatus::Warn,
             Some(
-                "One supported card: the hosted models are built for two cards (TP=2). Install a \
-                 second card, or use the mock engine to try the console."
+                "One supported card: the 27B runs on it at TP=1 (pick \"One card\" in the Model \
+                 step); Flash-Next and the 27B's TP=2 need two cards. The mock engine runs without \
+                 a GPU."
                     .to_string(),
             ),
         ),
@@ -470,6 +474,8 @@ pub fn probe(inp: &ProbeInput) -> SystemReport {
         status: soft(st),
         detail: if gpus.is_empty() {
             "No GPU found in the KFD topology".into()
+        } else if usable.len() == 1 && inp.min_gpus <= 1 {
+            format!("1 supported (enough for the 27B on one card, TP=1): {listing}")
         } else {
             format!("{} supported: {listing}", usable.len())
         },
@@ -926,6 +932,7 @@ mod tests {
             kv_dir: root.join("nvme/saber-kv"),
             need_disk_bytes: Some(1),
             needs_gpus: true,
+            min_gpus: 2,
             host,
         }
     }
@@ -987,7 +994,7 @@ mod tests {
         let mut h = good_host();
         h.runtime_version = None;
         h.image_present = None;
-        h.conflicts = vec!["prod's unit qwen_prod_nvfp4 is active".into()];
+        h.conflicts = vec!["another saber server holds the cards (saber-27b-serve)".into()];
         h.port_busy = true;
         let r = probe(&input(dir.path(), h));
         assert_eq!(status(&r, "pcie"), CheckStatus::Warn);
@@ -997,7 +1004,7 @@ mod tests {
         let c = r.checks.iter().find(|c| c.id == "conflicts").unwrap();
         assert_eq!(c.status, CheckStatus::Fail);
         assert!(
-            c.detail.contains("qwen_prod_nvfp4") && c.detail.contains("port 8080"),
+            c.detail.contains("saber-27b-serve") && c.detail.contains("port 8080"),
             "{c:?}"
         );
         assert_eq!(r.overall, Some(CheckStatus::Fail));
@@ -1054,6 +1061,7 @@ mod tests {
             kv_dir: PathBuf::from("/mnt/nvme/saber-kv"),
             need_disk_bytes: None,
             needs_gpus: true,
+            min_gpus: 2,
             host: h,
         });
         println!("{}", serde_json::to_string_pretty(&r).unwrap());

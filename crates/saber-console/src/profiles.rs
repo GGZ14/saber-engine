@@ -1,8 +1,10 @@
 //! Profiles: named sets of flag overrides over the stock presets.
 //!
-//! - **Built-in** profiles ([`builtin`]): Balanced / Max throughput / Lowest latency / Long
-//!   context / Low power, one set per serving subcommand (`engine` = Flash-Next, `serve` = the
-//!   27B and the mock). Applying one keeps the config's model and server flags ([`STICKY`]) and
+//! - **Built-in** profiles ([`builtin`], [`builtin_for`]): Balanced / Max throughput / Lowest
+//!   latency / Long context / Low power, one set per serving subcommand (`engine` = Flash-Next,
+//!   `serve` = the 27B and the mock) and, for `serve`, per TP (one card's KV pool is far smaller
+//!   than two cards', so the TP=1 set asks for less). A profile never changes the TP: it is
+//!   `engine.tp`, chosen beside the model. Applying one keeps the config's model and server flags ([`STICKY`]) and
 //!   replaces every other override with the profile's. **No profile touches the GPU power cap**
 //!   (the host's own policy; the console never writes it): Low power only picks power-saving
 //!   arms such as the drive keep-awake OFF.
@@ -69,10 +71,57 @@ fn p(name: &str, section: &str, description: &str, flags: &[(&str, FlagValue)]) 
     }
 }
 
-/// The built-in profiles of `section`.
+/// The built-in profiles of `section` at TP=2.
 #[must_use]
 pub fn builtin(section: &str) -> Vec<Profile> {
+    builtin_for(section, 2)
+}
+
+/// The built-in profiles of `section` for a config at `tp` (the same five names at either TP;
+/// `serve` at TP=1 sizes them for one card).
+#[must_use]
+pub fn builtin_for(section: &str, tp: u32) -> Vec<Profile> {
     use FlagValue::{Int, Str};
+    if section == "serve" && tp == 1 {
+        return vec![
+            p(
+                "Balanced",
+                "serve",
+                "The single-card launcher's defaults, unchanged (tools/serve_27b.sh --tp 1): 4 \
+                 sequences at a 65,536-token context, decode batches 1,2,4.",
+                &[],
+            ),
+            p(
+                "Max throughput",
+                "serve",
+                "4 sequences at a 16,384-token context, so all four fit at full context in the one \
+                 card's KV pool.",
+                &[("--engine-max-ctx", Int(16_384))],
+            ),
+            p(
+                "Lowest latency",
+                "serve",
+                "2 sequences: each running request keeps a small decode batch, the rest queue.",
+                &[("--engine-max-seqs", Int(2))],
+            ),
+            p(
+                "Long context",
+                "serve",
+                "A 131,072-token context with 1 sequence: the longest conversation one card holds. \
+                 Check the memory estimate: a larger single-card pack leaves a smaller pool.",
+                &[
+                    ("--engine-max-ctx", Int(131_072)),
+                    ("--engine-max-seqs", Int(1)),
+                ],
+            ),
+            p(
+                "Low power",
+                "serve",
+                "2 sequences (less sustained load). The GPU power cap is never changed by the console.",
+                &[("--engine-max-seqs", Int(2))],
+            ),
+        ];
+    }
     match section {
         "engine" => vec![
             p(
@@ -167,6 +216,16 @@ pub fn apply_profile(cfg: &Config, profile: &Profile) -> anyhow::Result<Config> 
         );
     }
     let mut out = cfg.clone();
+    // a built-in is applied in its form for this config's TP (same name, the TP's flags)
+    let tp_form = profile
+        .builtin
+        .then(|| {
+            builtin_for(sec, cfg.engine.tp)
+                .into_iter()
+                .find(|b| b.name == profile.name)
+        })
+        .flatten();
+    let profile = tp_form.as_ref().unwrap_or(profile);
     if profile.builtin {
         out.engine.flags.retain(|k, _| STICKY.contains(&k.as_str()));
         for (k, v) in &profile.flags {
@@ -457,6 +516,36 @@ mod tests {
             out.engine.flags.get("--engine-max-ctx"),
             Some(&FlagValue::Int(32_768))
         );
+    }
+
+    #[test]
+    fn the_27b_profiles_follow_the_tp_and_never_change_it() {
+        let one = builtin_for("serve", 1);
+        let two = builtin_for("serve", 2);
+        let names = |v: &[Profile]| v.iter().map(|p| p.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&one), names(&two));
+        assert_eq!(builtin_for("engine", 1), builtin("engine"));
+        let mut c = Config::default();
+        c.engine.preset = Preset::Qwen27b;
+        c.engine.tp = 1;
+        c.engine.device = 1;
+        // the TP=2 list's entry applies in its TP=1 form
+        let long2 = two.iter().find(|p| p.name == "Long context").unwrap();
+        let out = apply_profile(&c, long2).unwrap();
+        assert_eq!(
+            out.engine.flags.get("--engine-max-seqs"),
+            Some(&FlagValue::Int(1))
+        );
+        assert_eq!(
+            out.engine.flags.get("--engine-max-ctx"),
+            Some(&FlagValue::Int(131_072))
+        );
+        assert_eq!((out.engine.tp, out.engine.device), (1, 1));
+        for p in &one {
+            assert!(!p.flags.contains_key("--engine-tp"), "{}", p.name);
+            let o = apply_profile(&c, p).unwrap();
+            assert_eq!(o.engine.tp, 1);
+        }
     }
 
     #[test]

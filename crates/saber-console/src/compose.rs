@@ -1,8 +1,8 @@
 //! The engine's command line, composed from the config.
 //!
 //! Each [`Preset`] reproduces its launcher's default boot argument for argument
-//! (`tools/serve_flashnext.sh`, `tools/serve_27b.sh`; the test `launcher_parity` runs both with
-//! `SABER_PRINT_CMD=1` and compares). Config overrides then replace a preset flag in place, remove
+//! (`tools/serve_flashnext.sh`, `tools/serve_27b.sh` at TP=2 and `tools/serve_27b.sh --tp 1` at
+//! TP=1; the test `launcher_parity` runs them with `SABER_PRINT_CMD=1` and compares). Config overrides then replace a preset flag in place, remove
 //! it (`false`) or append it, exactly where the launcher puts "any extra arguments". Everything
 //! the engine needs is an argument: the engine reads no environment variable. The container
 //! wrapper only sets the HIP runtime's variables the launchers set (`HIP_VISIBLE_DEVICES`,
@@ -29,6 +29,27 @@ pub const FN_AGENT_DEFAULTS: &[(&str, Option<&str>)] = &[
     ("--fn-kv-admit-slab-tokens", Some("338592")),
     ("--spec-couple", Some("on")),
 ];
+
+/// Flags whose values are `on` / `off` and whose engine default is `on`. A bare `false`
+/// override (a toggle switched off) composes as `<flag> off`, `true` as `<flag> on`: removing the
+/// flag would leave the engine's default, on, in place.
+pub const ON_OFF_FLAGS: &[&str] = &["--enable-prefix-caching"];
+
+/// The 27B on ONE card: `tools/serve_27b.sh --tp 1`'s defaults (the `-tp1` packs of the default
+/// weights, the single-card context / sequence / batch ladder, its container name).
+pub mod tp1 {
+    /// The single-card target pack (under `<nvme>/saber-packs`, mounted at `/packs`).
+    pub const PACK: &str = "qwen38-27b-macaq7-bc3-tp1";
+    /// The single-card DFlash2 drafter pack.
+    pub const DRAFT_PACK: &str = "qwen38-dflash2-drafter-quarkhead-tp1";
+    /// Per-sequence context (one card's KV pool is far smaller than two cards').
+    pub const MAX_CTX: u64 = 65_536;
+    pub const MAX_SEQS: u64 = 4;
+    /// The decode batch ladder (`BATCHES`).
+    pub const BATCHES: &str = "1,2,4";
+    /// The container the launcher names a TP=1 server.
+    pub const CONTAINER: &str = "saber-27b-tp1-serve";
+}
 
 /// What the composition may not compute by itself (it touches no file system).
 #[derive(Clone, Debug)]
@@ -82,7 +103,8 @@ fn p(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// The container name a preset's launcher uses (so the launchers' guards and `stop` see it).
+/// The container name a preset's launcher uses at TP=2 (so the launchers' guards and `stop` see
+/// it).
 #[must_use]
 pub fn default_container_name(preset: Preset) -> &'static str {
     match preset {
@@ -90,6 +112,18 @@ pub fn default_container_name(preset: Preset) -> &'static str {
         Preset::Qwen27b => "saber-27b-serve",
         Preset::Mock => "saber-mock-serve",
     }
+}
+
+/// The container name the launcher uses for this config (the 27B at TP=1 has its own).
+#[must_use]
+pub fn container_name_for(cfg: &EngineConfig) -> String {
+    if !cfg.container.name.is_empty() {
+        return cfg.container.name.clone();
+    }
+    if cfg.preset == Preset::Qwen27b && cfg.tp == 1 {
+        return tp1::CONTAINER.to_string();
+    }
+    default_container_name(cfg.preset).to_string()
 }
 
 /// Compose the command for `cfg`.
@@ -129,32 +163,48 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
             )
         }
         Preset::Qwen27b => {
-            let b: Flags = vec![
-                f("--engine", "real"),
-                f("--engine-tp", "2"),
-                f("--engine-device", "0"),
-                f("--engine-peer-device", "1"),
+            // TP=2: both cards; TP=1: one card (the container sees only `device`, so inside it
+            // the engine's device is 0), the `-tp1` packs and the single-card defaults.
+            let one = cfg.tp == 1;
+            let mut b: Flags = vec![f("--engine", "real")];
+            if one {
+                b.extend([f("--engine-tp", "1"), f("--engine-device", "0")]);
+            } else {
+                b.extend([
+                    f("--engine-tp", "2"),
+                    f("--engine-device", "0"),
+                    f("--engine-peer-device", "1"),
+                ]);
+            }
+            let (pack, draft) = if one {
+                (tp1::PACK, tp1::DRAFT_PACK)
+            } else {
+                ("qwen38-27b-macaq7-bc3", "qwen38-dflash2-drafter-quarkhead")
+            };
+            let max_ctx = if one { tp1::MAX_CTX } else { 262_144 }.to_string();
+            let max_seqs = if one { tp1::MAX_SEQS } else { 8 }.to_string();
+            b.extend([
                 f("--hip-lib", "/opt/rocm/lib/libamdhip64.so.7"),
-                f("--pack", "/packs/qwen38-27b-macaq7-bc3"),
+                f("--pack", format!("/packs/{pack}")),
                 f("--prebuilt", "prebuilt/gfx1201"),
                 f("--tokenizer", "/serve-tokenizer.json"),
                 f("--chat-template", "/serve-template.jinja"),
-                f("--engine-max-ctx", "262144"),
+                f("--engine-max-ctx", max_ctx),
                 f("--engine-prefill-rows", PREFILL_ROWS),
-                f("--engine-decode-batches", "1,2,3,4,8"),
-                f("--engine-decode-widths", "1,5,8"),
-                f("--engine-max-seqs", "8"),
-                f("--engine-draft-block", "8"),
                 f(
-                    "--engine-draft-pack",
-                    "/packs/qwen38-dflash2-drafter-quarkhead",
+                    "--engine-decode-batches",
+                    if one { tp1::BATCHES } else { "1,2,3,4,8" },
                 ),
+                f("--engine-decode-widths", "1,5,8"),
+                f("--engine-max-seqs", max_seqs),
+                f("--engine-draft-block", "8"),
+                f("--engine-draft-pack", format!("/packs/{draft}")),
                 f("--engine-budget-mib", "30500"),
                 sw("--engine-rectangular-widths"),
                 f("--served-model-name", "Qwen3.8-27B-MACaQ-MXFP4"),
                 f("--host", "0.0.0.0"),
                 f("--port", &port),
-            ];
+            ]);
             (".cache/target-container/release/saber".into(), "serve", b)
         }
         Preset::Mock => {
@@ -191,6 +241,14 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
     let mut user: Flags = Vec::new();
     let mut removed: Vec<&str> = Vec::new();
     for (k, v) in &cfg.flags {
+        let toggle;
+        let v = match v {
+            FlagValue::Bool(b) if ON_OFF_FLAGS.contains(&k.as_str()) => {
+                toggle = FlagValue::Str(if *b { "on" } else { "off" }.into());
+                &toggle
+            }
+            v => v,
+        };
         let pos = base.iter().position(|(bk, _)| bk == k);
         match (pos, v) {
             (Some(i), FlagValue::Bool(false)) => {
@@ -250,11 +308,7 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
             container_name: None,
         },
         Runtime::Container => {
-            let name = if cfg.container.name.is_empty() {
-                default_container_name(cfg.preset).to_string()
-            } else {
-                cfg.container.name.clone()
-            };
+            let name = container_name_for(cfg);
             let spawn = container_wrap(cfg, &paths, ctx, &name, &engine);
             EngineCommand {
                 engine,
@@ -436,6 +490,10 @@ fn container_wrap(
             }
         }
         Preset::Qwen27b | Preset::Mock => {
+            let hip = match cfg.single_card() {
+                Some(d) => format!("HIP_VISIBLE_DEVICES={d}"),
+                None => "HIP_VISIBLE_DEVICES=0,1".to_string(),
+            };
             let packs = p(&paths.nvme.join("saber-packs"));
             let cache = canon(&paths.repo.join(".cache"));
             for m in [
@@ -450,7 +508,7 @@ fn container_wrap(
                 v.extend(["-v".into(), m]);
             }
             for e in [
-                "HIP_VISIBLE_DEVICES=0,1",
+                hip.as_str(),
                 &q,
                 "CUDA_VISIBLE_DEVICES=",
                 "LD_LIBRARY_PATH=/opt/rocm/lib",
@@ -751,6 +809,52 @@ mod tests {
             compose(&c, &ctx0).engine,
             launcher_argv("tools/serve_27b.sh", &shared, &env, &[])
         );
+        // 27B at TP=1: `tools/serve_27b.sh --tp 1` (defaults, another port + a flag, the env
+        // knobs as overrides, the card)
+        let mut c = mk(Preset::Qwen27b);
+        c.tp = 1;
+        assert_eq!(
+            compose(&c, &ctx0).engine,
+            launcher_argv("tools/serve_27b.sh", &shared, &[], &["--tp", "1"])
+        );
+        c.port = 8100;
+        c.device = 1;
+        c.flags
+            .insert("--spec-lookup".into(), FlagValue::Str("on".into()));
+        c.flags
+            .insert("--engine-max-seqs".into(), FlagValue::Int(8));
+        c.flags.insert(
+            "--engine-decode-batches".into(),
+            FlagValue::Str("1,2,4,8".into()),
+        );
+        assert_eq!(
+            compose(&c, &ctx0).engine,
+            launcher_argv(
+                "tools/serve_27b.sh",
+                &shared,
+                &[
+                    ("PORT", "8100"),
+                    ("DEVICE", "1"),
+                    ("MAX_SEQS", "8"),
+                    ("BATCHES", "1,2,4,8")
+                ],
+                &["--tp", "1", "--spec-lookup", "on"]
+            )
+        );
+        // TP in the environment, the launcher's other spelling
+        let mut c = mk(Preset::Qwen27b);
+        c.tp = 1;
+        assert_eq!(
+            compose(&c, &ctx0).engine,
+            launcher_argv("tools/serve_27b.sh", &shared, &[("TP", "1")], &[])
+        );
+        // and `--tp 2` is the default boot
+        let c = mk(Preset::Qwen27b);
+        assert_eq!(
+            compose(&c, &ctx0).engine,
+            launcher_argv("tools/serve_27b.sh", &shared, &[], &["--tp", "2"])
+        );
+
         let mut c = mk(Preset::Flashnext);
         c.flags
             .insert("--fn-kv-dtype".into(), FlagValue::Str("bf16".into()));
@@ -772,6 +876,81 @@ mod tests {
             compose(&c, &ctx2).engine,
             launcher_argv("tools/serve_flashnext.sh", &shared, &[], &[])
         );
+    }
+
+    #[test]
+    fn tp1_wrapper_names_the_card_and_its_container() {
+        let mut c = Config::default().engine;
+        c.preset = Preset::Qwen27b;
+        let two = compose(&c, &ctx(Path::new("/h")));
+        assert_eq!(two.container_name.as_deref(), Some("saber-27b-serve"));
+        assert!(two.spawn.iter().any(|a| a == "HIP_VISIBLE_DEVICES=0,1"));
+        c.tp = 1;
+        c.device = 1;
+        let one = compose(&c, &ctx(Path::new("/h")));
+        assert_eq!(one.container_name.as_deref(), Some(tp1::CONTAINER));
+        assert!(one.spawn.iter().any(|a| a == "HIP_VISIBLE_DEVICES=1"));
+        assert!(!one.spawn.iter().any(|a| a == "HIP_VISIBLE_DEVICES=0,1"));
+        let line = one.engine_line();
+        // inside the container the one card is device 0, and there is no peer
+        assert!(
+            line.contains("--engine-tp 1 --engine-device 0 --hip-lib"),
+            "{line}"
+        );
+        assert!(!line.contains("--engine-peer-device"), "{line}");
+        assert!(
+            line.contains(&format!("--pack /packs/{}", tp1::PACK)),
+            "{line}"
+        );
+        assert!(line.contains(&format!("--engine-draft-pack /packs/{}", tp1::DRAFT_PACK)));
+        assert!(line.contains("--engine-max-ctx 65536") && line.contains("--engine-max-seqs 4"));
+        assert!(line.contains("--engine-decode-batches 1,2,4 "), "{line}");
+        // a named container wins
+        c.container.name = "mine".into();
+        assert_eq!(
+            compose(&c, &ctx(Path::new("/h"))).container_name.as_deref(),
+            Some("mine")
+        );
+        // Flash-Next ignores the field (its validate refuses tp 1)
+        let f = Config::default().engine;
+        assert_eq!(container_name_for(&f), "saber-flashnext-serve");
+    }
+
+    #[test]
+    fn an_on_off_toggle_switched_off_writes_off() {
+        let mut c = Config::mock(8099).engine;
+        // `false` used to drop the flag, which left the engine's default (on)
+        c.flags
+            .insert("--enable-prefix-caching".into(), FlagValue::Bool(false));
+        let line = compose(&c, &ctx(Path::new("/h"))).engine.join(" ");
+        assert!(line.ends_with("--enable-prefix-caching off"), "{line}");
+        c.flags
+            .insert("--enable-prefix-caching".into(), FlagValue::Bool(true));
+        let line = compose(&c, &ctx(Path::new("/h"))).engine.join(" ");
+        assert!(line.ends_with("--enable-prefix-caching on"), "{line}");
+        c.flags.insert(
+            "--enable-prefix-caching".into(),
+            FlagValue::Str("off".into()),
+        );
+        let cmd = compose(&c, &ctx(Path::new("/h")));
+        assert!(cmd
+            .engine
+            .join(" ")
+            .ends_with("--enable-prefix-caching off"));
+        let eff = effective_flags(&c, &cmd.engine);
+        let pc = eff
+            .iter()
+            .find(|e| e.name == "--enable-prefix-caching")
+            .unwrap();
+        assert_eq!(pc.values, [Some("off".to_string())]);
+        assert_eq!(pc.source, Source::Override);
+        // another flag's `false` still removes it
+        c.flags
+            .insert("--step-delay-ms".into(), FlagValue::Bool(false));
+        assert!(!compose(&c, &ctx(Path::new("/h")))
+            .engine
+            .iter()
+            .any(|a| a == "--step-delay-ms"));
     }
 
     #[test]

@@ -128,6 +128,8 @@ pub struct Facts {
     pub draft_pack: Option<PackFact>,
     pub model: Option<ModelInfo>,
     pub estimate: Option<Estimate>,
+    /// The supported (gfx12, not integrated) GPUs the system probe sees; `None` = not probed.
+    pub gpus: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -341,6 +343,64 @@ pub fn validate(cfg: &Config, schema: &SchemaIndex, cmd: &EngineCommand, facts: 
     let m = effective_map(cmd);
     let tp = effective_tp(preset, &m);
 
+    // ---- tensor parallelism (engine.tp) ----
+    if preset == Preset::Qwen27b {
+        if let Some(v) = e.flags.get("--engine-tp") {
+            if v.arg().as_deref() != Some(e.tp.to_string().as_str()) {
+                r.err(
+                    "--engine-tp",
+                    format!(
+                        "the TP is engine.tp ({}; the Engine panel's TP choice): a --engine-tp {} \
+                         override would boot the other preset's packs and batches on the wrong cards",
+                        e.tp,
+                        v.display()
+                    ),
+                );
+            }
+        }
+        for k in ["--engine-device", "--engine-peer-device"] {
+            if e.flags.contains_key(k) {
+                r.warn(
+                    k,
+                    format!(
+                        "{k} is set by the TP choice (TP=1 runs on engine.device inside a container \
+                         that sees only that card): an override is the gate harness's form"
+                    ),
+                );
+            }
+        }
+    }
+    if preset.uses_gpus() {
+        if let Some(n) = facts.gpus {
+            if e.tp > n {
+                r.err(
+                    "engine.tp",
+                    if n == 1 && preset == Preset::Qwen27b {
+                        "TP=2 needs two cards and this machine has one supported GPU: pick TP=1 \
+                         (the 27B on one card)"
+                            .to_string()
+                    } else {
+                        format!(
+                            "TP={} needs {} supported GPUs; this machine has {n}",
+                            e.tp, e.tp
+                        )
+                    },
+                );
+            } else if let Some(d) = e.single_card() {
+                if d >= n {
+                    r.err(
+                        "engine.device",
+                        format!(
+                            "card {d} does not exist: this machine has {n} supported GPU{} (0..{})",
+                            if n == 1 { "" } else { "s" },
+                            n.saturating_sub(1)
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     // ---- model / pack / parallelism ----
     if preset.uses_gpus() {
         match &facts.pack {
@@ -367,11 +427,20 @@ pub fn validate(cfg: &Config, schema: &SchemaIndex, cmd: &EngineCommand, facts: 
                 if let Some(pt) = info.tp_size {
                     if preset == Preset::Qwen27b && pt != tp {
                         r.err(
-                            "--engine-tp",
-                            format!(
-                                "--engine-tp {tp} does not match the pack's tp_size {pt} ({})",
-                                info.name
-                            ),
+                            "--pack",
+                            if tp == 1 {
+                                format!(
+                                    "TP=1 needs a single-card pack (a `-tp1` pack, tp_size 1); {} is \
+                                     cut for TP={pt}",
+                                    info.name
+                                )
+                            } else {
+                                format!(
+                                    "TP={tp} does not match the pack's tp_size {pt} ({}): pick the \
+                                     pack cut for TP={tp}",
+                                    info.name
+                                )
+                            },
                         );
                     }
                     if preset == Preset::Flashnext && tp == 1 && pt == 2 {
@@ -500,7 +569,11 @@ pub fn validate(cfg: &Config, schema: &SchemaIndex, cmd: &EngineCommand, facts: 
                         if pt != tp {
                             r.err(
                                 "--engine-draft-pack",
-                                format!("the drafter pack is tp_size {pt}; the target runs --engine-tp {tp}"),
+                                format!(
+                                    "the drafter pack {} is cut for TP={pt}; the engine runs TP={tp}{}",
+                                    info.name,
+                                    if tp == 1 { " (use the drafter's `-tp1` pack)" } else { "" }
+                                ),
                             );
                         }
                     }
@@ -558,6 +631,25 @@ pub fn validate(cfg: &Config, schema: &SchemaIndex, cmd: &EngineCommand, facts: 
         if !est.fits && est.seqs_at_ctx != Some(0) {
             for w in &est.warnings {
                 r.warn("estimate", format!("estimate: {w}"));
+            }
+        }
+    }
+    if preset == Preset::Qwen27b {
+        let top = val(&m, "--engine-decode-batches").map(|b| {
+            b.split(',')
+                .filter_map(|x| x.trim().parse::<u64>().ok())
+                .max()
+        });
+        if let (Some(Some(top)), Some(s)) = (top, num(&m, "--engine-max-seqs")) {
+            if s as u64 > top {
+                r.warn(
+                    "--engine-max-seqs",
+                    format!(
+                        "{s} sequences but the largest decode batch is {top}: a step of more live \
+                         sequences has no captured batch (the launcher pairs 8 sequences with \
+                         --engine-decode-batches ...,8)"
+                    ),
+                );
             }
         }
     }
@@ -850,7 +942,27 @@ mod tests {
             pack: Some(pack(1, "target", false)),
             ..Facts::default()
         };
-        assert_eq!(fields(&run(&c, &f).errors), ["--engine-tp"]);
+        assert_eq!(fields(&run(&c, &f).errors), ["--pack"]);
+        // TP=1 with a TP=2 pack (an override) names the single-card pack; with the -tp1 pack: ok
+        c.engine.tp = 1;
+        let f2 = Facts {
+            pack: Some(pack(2, "target", false)),
+            ..Facts::default()
+        };
+        let r = run(&c, &f2);
+        assert_eq!(fields(&r.errors), ["--pack"]);
+        assert!(r.errors[0].message.contains("-tp1"), "{r:?}");
+        assert!(run(&c, &f).ok, "{:?}", run(&c, &f).errors);
+        // the drafter follows the same law
+        let f3 = Facts {
+            pack: Some(pack(1, "target", false)),
+            draft_pack: Some(pack(2, "drafter", false)),
+            ..Facts::default()
+        };
+        let r = run(&c, &f3);
+        assert_eq!(fields(&r.errors), ["--engine-draft-pack"]);
+        assert!(r.errors[0].message.contains("-tp1"), "{r:?}");
+        c.engine.tp = 2;
         let f = Facts {
             pack: Some(pack(2, "drafter", false)),
             ..Facts::default()
@@ -882,6 +994,64 @@ mod tests {
             .flags
             .insert("--fn-kv-tier".into(), FlagValue::Str("on".into()));
         assert_eq!(fields(&run(&c, &f).errors), ["--fn-kv-tier"]);
+    }
+
+    #[test]
+    fn engine_tp_against_the_cards_overrides_and_batches() {
+        let mut c = Config::default();
+        c.engine.preset = Preset::Qwen27b;
+        // one supported GPU: TP=2 is refused with the way out; TP=1 on card 0 passes
+        let one = Facts {
+            gpus: Some(1),
+            ..Facts::default()
+        };
+        let r = run(&c, &one);
+        assert_eq!(fields(&r.errors), ["engine.tp"]);
+        assert!(r.errors[0].message.contains("pick TP=1"), "{r:?}");
+        c.engine.tp = 1;
+        assert!(run(&c, &one).ok);
+        c.engine.device = 1;
+        assert_eq!(fields(&run(&c, &one).errors), ["engine.device"]);
+        let two = Facts {
+            gpus: Some(2),
+            ..Facts::default()
+        };
+        assert!(run(&c, &two).ok);
+        // unknown GPU count: no card check
+        assert!(run(&c, &Facts::default()).ok);
+        // a --engine-tp override that disagrees with engine.tp is refused; the card flags warn
+        c.engine
+            .flags
+            .insert("--engine-tp".into(), FlagValue::Int(2));
+        c.engine
+            .flags
+            .insert("--engine-device".into(), FlagValue::Int(1));
+        let r = run(&c, &two);
+        assert!(fields(&r.errors).contains(&"--engine-tp"), "{r:?}");
+        assert!(fields(&r.warnings).contains(&"--engine-device"), "{r:?}");
+        c.engine.flags.clear();
+        // TP=1 with 8 sequences on the 1,2,4 ladder warns (the launcher pairs 8 with ...,8)
+        c.engine
+            .flags
+            .insert("--engine-max-seqs".into(), FlagValue::Int(8));
+        let r = run(&c, &two);
+        assert!(fields(&r.warnings).contains(&"--engine-max-seqs"), "{r:?}");
+        c.engine.flags.insert(
+            "--engine-decode-batches".into(),
+            FlagValue::Str("1,2,4,8".into()),
+        );
+        let r = run(&c, &two);
+        assert!(!fields(&r.warnings).contains(&"--engine-max-seqs"), "{r:?}");
+        // Flash-Next at TP=1 is a config error (no single-card pack)
+        let mut f = Config::default();
+        f.engine.tp = 1;
+        let r = run(&f, &two);
+        assert!(
+            r.errors
+                .iter()
+                .any(|i| i.message.contains("two cards only")),
+            "{r:?}"
+        );
     }
 
     #[test]

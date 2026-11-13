@@ -17,6 +17,8 @@
     ].filter((r) => r.v);
     return rows.map((r) => ({ ...r, pct: Math.max(0, Math.min(100, (r.v / b) * 100)) }));
   });
+  // TP=1: the one card holds everything; TP=2: each figure is one of the two cards
+  const card = $derived(e?.tp === 1 ? 'on the card' : 'per card');
   const law = $derived(e?.law === 'flashnext' ? 'Flash-Next (tiered KV)' : e?.law === 'dense27b' ? '27B (KV in VRAM)' : e?.law === 'mock' ? 'Mock engine' : '');
 </script>
 
@@ -31,6 +33,7 @@
   {#if !e}
     <p class="empty">Checking the draft…</p>
   {:else}
+    {#if e.label}<p class="lbl">{e.label}</p>{/if}
     <div class="big">
       <div>
         <div class="val">{e.seqs_at_ctx ?? '–'}<span class="unit"> / {e.requested_seqs} seqs</span></div>
@@ -45,7 +48,7 @@
       <p class="bad" role="alert">The estimate says this config does not fit.</p>
     {/if}
     {#if parts.length}
-      <div class="bar" role="img" aria-label="Per-card budget split">
+      <div class="bar" role="img" aria-label={e.tp === 1 ? 'The one card\'s budget split' : 'Per-card budget split'}>
         {#each parts as p}<span style:width="{p.pct}%" style:background="var({p.c})" title="{p.k}: {bytes(p.v)}"></span>{/each}
       </div>
       <div class="legend">
@@ -53,14 +56,14 @@
       </div>
     {/if}
     <dl class="kv">
-      {#if e.vram_bytes}<dt>VRAM per card</dt><dd>{bytes(e.vram_bytes)}</dd>{/if}
-      {#if e.budget_bytes}<dt>Budget per card</dt><dd>{bytes(e.budget_bytes)}</dd>{/if}
-      {#if e.weights_bytes != null}<dt>Weights per card</dt><dd>{bytes(e.weights_bytes)}</dd>{/if}
-      {#if e.drafter_bytes != null}<dt>Drafter per card</dt><dd>{bytes(e.drafter_bytes)}</dd>{/if}
+      {#if e.vram_bytes}<dt>VRAM {card}</dt><dd>{bytes(e.vram_bytes)}</dd>{/if}
+      {#if e.budget_bytes}<dt>Budget {card}</dt><dd>{bytes(e.budget_bytes)}</dd>{/if}
+      {#if e.weights_bytes != null}<dt>Weights {card}</dt><dd>{bytes(e.weights_bytes)}</dd>{/if}
+      {#if e.drafter_bytes != null}<dt>Drafter {card}</dt><dd>{bytes(e.drafter_bytes)}</dd>{/if}
       {#if e.state_bytes != null}<dt>GDN state</dt><dd>{bytes(e.state_bytes)}</dd>{/if}
       {#if e.kv_bytes != null}<dt>{e.law === 'flashnext' ? 'KV hot pool' : 'KV pool'}</dt><dd>{bytes(e.kv_bytes)}</dd>{/if}
       {#if e.kv_ram_bytes != null}<dt>KV in host RAM / card</dt><dd>{bytes(e.kv_ram_bytes)}</dd>{/if}
-      {#if e.kv_bytes_per_token != null}<dt>KV per token / card</dt><dd>{bytes(e.kv_bytes_per_token)}</dd>{/if}
+      {#if e.kv_bytes_per_token != null}<dt>KV per token {card}</dt><dd>{bytes(e.kv_bytes_per_token)}</dd>{/if}
       {#if e.expert_slots != null}<dt>Expert slots in VRAM</dt><dd>{int(e.expert_slots)}{e.expert_records ? ` of ${int(e.expert_records)}` : ''}</dd>{/if}
     </dl>
     {#each e.warnings as w}<p class="warn">{w}</p>{/each}
@@ -72,6 +75,7 @@
 </section>
 
 <style>
+  .lbl { margin: 0 0 6px; font-size: var(--fs-xs); color: var(--ink-2); }
   .tag { font-size: var(--fs-xs); font-weight: 600; padding: 2px 8px; border-radius: 9px; border: 1px dashed var(--axis); color: var(--ink-2); }
   .big { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 4px 0 10px; }
   .bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--surface-2); gap: 1px; }

@@ -242,6 +242,7 @@ usage history and per-label API keys.
 ```bash
 tools/serve_console.sh                              # build, then the console on 127.0.0.1:8090
 SABER_CONSOLE=1 tools/serve_27b.sh --no-build       # or: a launcher with the console in front
+SABER_CONSOLE=1 tools/serve_27b.sh --tp 1 --no-build  # the 27B on one card (the console's TP choice)
 tools/serve_console.sh --mock                       # try it without GPUs
 ```
 

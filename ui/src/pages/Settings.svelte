@@ -5,7 +5,7 @@
   // server's validation at each field, the live memory estimate, profiles, the model manager,
   // the config history, and the review-and-apply drawer (diff + command line + progress).
   import { onMount } from 'svelte';
-  import { S, TIERS, setTier, sectionOf, loadSettings, discard, setField, issuesFor, scheduleCheck } from '../lib/settings.svelte.js';
+  import { S, TIERS, setTier, sectionOf, loadSettings, discard, setField, issuesFor, scheduleCheck, setTp } from '../lib/settings.svelte.js';
   import { ui } from '../lib/store.svelte.js';
   import { api } from '../lib/api.js';
   import { loadSetup } from '../lib/setup.svelte.js';
@@ -27,13 +27,26 @@
   let q = $state('');
   let extraText = $state('');
 
-  onMount(() => { loadSettings(); });
+  // the supported cards (the TP=1 card choice); a failed probe offers cards 0 and 1
+  let cards = $state([]);
+  onMount(async () => {
+    loadSettings();
+    try {
+      const sys = await api('/api/system');
+      cards = (sys.gpus ?? []).filter((g) => g.supported && !g.integrated);
+    } catch (e) {}
+  });
+  const cardChoices = $derived(cards.length ? cards.map((g, i) => ({ i, label: `Card ${i}${g.name ? ` · ${g.name}` : ''}` })) : [{ i: 0, label: 'Card 0' }, { i: 1, label: 'Card 1' }]);
+  const tp = $derived(S.draft?.engine?.tp ?? 2);
+  const oneGpu = $derived(cards.length === 1);
   $effect(() => { if (S.draft) extraText = (S.draft.engine.extra_args ?? []).join(' '); });
 
   const section = $derived(sectionOf(S.draft?.engine?.preset));
   const rank = (t) => TIERS.indexOf(t);
   const portFlag = $derived(section === 'engine' ? '--fn-serve' : '--port');
-  const inSection = $derived((S.schema?.flags ?? []).filter((f) => (f.section === section || f.section === 'global') && f.name !== portFlag));
+  // the port is engine.port; the 27B's TP is the Parallelism choice above (engine.tp), not a flag
+  const owned = $derived(section === 'serve' ? [portFlag, '--engine-tp'] : [portFlag]);
+  const inSection = $derived((S.schema?.flags ?? []).filter((f) => (f.section === section || f.section === 'global') && !owned.includes(f.name)));
   const needle = $derived(q.trim().toLowerCase());
   const matches = (f) => !needle || f.name.toLowerCase().includes(needle) || f.help.toLowerCase().includes(needle) || f.group.toLowerCase().includes(needle);
   const shown = $derived(inSection.filter((f) => rank(f.tier) <= rank(S.tier) && matches(f)));
@@ -57,7 +70,8 @@
   const orphanErrors = $derived.by(() => {
     if (!report) return [];
     const shownNames = new Set(shown.map((f) => f.name));
-    return [...report.errors, ...report.warnings].filter((i) => i.field !== 'engine.port' && i.field !== 'config' && !shownNames.has(i.field));
+    const panel = ['engine.port', 'engine.tp', 'engine.device', 'config'];
+    return [...report.errors, ...report.warnings].filter((i) => !panel.includes(i.field) && !shownNames.has(i.field));
   });
 
   function review() { S.applyOpen = true; }
@@ -75,6 +89,8 @@
     const p = e.currentTarget.value;
     S.draft.engine.preset = p;
     S.draft.engine.runtime = p === 'mock' ? 'direct' : 'container';
+    // Flash-Next runs on two cards only
+    if (p === 'flashnext') { S.draft.engine.tp = 2; S.draft.engine.device = 0; }
     scheduleCheck(0);
   }
 </script>
@@ -113,7 +129,7 @@
             <label>Preset
               <select value={S.draft.engine.preset} onchange={setPreset}>
                 <option value="flashnext">Flash-Next (saber engine, TP=2)</option>
-                <option value="qwen27b">Qwen3.8-27B (saber serve, TP=2)</option>
+                <option value="qwen27b">Qwen3.8-27B (saber serve, one card or two)</option>
                 <option value="mock">Mock engine (no GPU)</option>
               </select>
             </label>
@@ -141,7 +157,35 @@
               <input type="text" bind:value={extraText} onchange={setExtra} spellcheck="false" placeholder="--fn-route-trace /tmp/x" />
             </label>
           </div>
-          {#each [...issuesFor('engine.port'), ...issuesFor('config')] as i}
+          {#if S.draft.engine.preset !== 'mock'}
+            <fieldset class="tp" aria-describedby="tp-help">
+              <legend>Parallelism (how many cards)</legend>
+              {#if S.draft.engine.preset === 'flashnext'}
+                <label class="opt"><input type="radio" name="tp" checked disabled /> <span><strong>Two cards (TP=2)</strong></span></label>
+                <p class="muted note" id="tp-help">Flash-Next runs on two cards only: no single-card Flash-Next pack exists.</p>
+              {:else}
+                <div class="tprow" role="radiogroup" aria-label="Tensor parallelism">
+                  <label class="opt" class:sel={tp === 2}>
+                    <input type="radio" name="tp" value="2" checked={tp === 2} disabled={running} onchange={() => setTp(2, 0)} />
+                    <span><strong>Two cards (TP=2)</strong> · each card holds half of the model: the full 262,144-token context and 8 sequences by default, the fastest decode.{oneGpu ? ' This machine has one supported card.' : ''}</span>
+                  </label>
+                  <label class="opt" class:sel={tp === 1}>
+                    <input type="radio" name="tp" value="1" checked={tp === 1} disabled={running} onchange={() => setTp(1, S.draft.engine.device ?? 0)} />
+                    <span><strong>One card (TP=1)</strong> · the whole model on one GPU (the single-card packs): 65,536 tokens and 4 sequences by default, and the other card stays free.</span>
+                  </label>
+                </div>
+                {#if tp === 1}
+                  <label class="card">Card
+                    <select value={S.draft.engine.device ?? 0} onchange={(e) => setTp(1, Number(e.currentTarget.value))}>
+                      {#each cardChoices as c}<option value={c.i}>{c.label}</option>{/each}
+                    </select>
+                  </label>
+                {/if}
+                <p class="muted note" id="tp-help">Switching moves the target and drafter packs to the ones cut for that TP (a pack is built for one TP). The memory estimate updates on the right.</p>
+              {/if}
+            </fieldset>
+          {/if}
+          {#each [...issuesFor('engine.port'), ...issuesFor('engine.tp'), ...issuesFor('engine.device'), ...issuesFor('config')] as i}
             <div class="issue {i.level}" role={i.level === 'error' ? 'alert' : undefined}><code>{i.field}</code> {i.message}</div>
           {/each}
         </section>
@@ -229,6 +273,14 @@
   .general label { display: grid; gap: 4px; font-size: var(--fs-sm); color: var(--ink-2); align-content: start; }
   .general label.chk { display: flex; align-items: center; gap: 6px; grid-column: span 1; }
   .general label.wide { grid-column: 1 / -1; }
+  .tp { border: 0; padding: 0; margin: 14px 0 0; display: grid; gap: 6px; min-width: 0; }
+  .tp legend { font-weight: 600; font-size: var(--fs-sm); margin-bottom: 4px; padding: 0; }
+  .tprow { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+  .tp .opt { display: flex; gap: 8px; align-items: flex-start; font-size: var(--fs-sm); color: var(--ink-2); border: 1px solid var(--ring); border-radius: var(--radius); padding: 8px 10px; cursor: pointer; min-width: 0; }
+  .tp .opt.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); color: var(--ink); }
+  .tp .opt input { margin-top: 3px; flex: none; }
+  .tp .card { display: grid; gap: 4px; font-size: var(--fs-sm); color: var(--ink-2); max-width: 280px; }
+  .tp .note { margin: 0; font-size: var(--fs-xs); }
   .filters-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; position: sticky; top: 96px; z-index: 2; }
   .filters-bar input[type="search"] { flex: 1 1 220px; }
   .cnt { font-size: var(--fs-sm); }

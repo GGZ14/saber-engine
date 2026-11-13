@@ -120,6 +120,28 @@ class SharedConfig(unittest.TestCase):
                 flags = tomllib.loads(text)["engine"].get("flags", {})
                 self.assertEqual(flags, {}, text)
 
+    def test_prefix_caching_off_is_written_and_read_back(self):
+        # the engine's default is ON: off must reach the command line, on needs no flag
+        cfg = S.default_cfg("27b")
+        cfg["prefix"] = False
+        doc, _ = S.console_from_cfg(cfg)
+        self.assertEqual(doc["engine"]["flags"], {"--enable-prefix-caching": "off"})
+        self.assertFalse(S.cfg_from_console(doc)["prefix"])
+        cfg["prefix"] = True
+        doc, _ = S.console_from_cfg(cfg, doc)
+        self.assertNotIn("flags", doc["engine"])
+        self.assertTrue(S.cfg_from_console(doc)["prefix"])
+        # a console toggle stored as a bare false reads as off (the console composes `off`)
+        doc["engine"]["flags"] = {"--enable-prefix-caching": False}
+        self.assertFalse(S.cfg_from_console(doc)["prefix"])
+        # the launcher command carries it too
+        cfg["prefix"] = False
+        _, argv = S.build_launch(cfg)
+        self.assertEqual(argv[-2:], ["--enable-prefix-caching", "off"])
+        cfg["prefix"] = True
+        _, argv = S.build_launch(cfg)
+        self.assertNotIn("--enable-prefix-caching", argv)
+
     def test_tp1_round_trip_and_back_to_tp2(self):
         cfg = S.default_cfg("27b")
         S.set_tp(cfg, "1")
@@ -127,21 +149,51 @@ class SharedConfig(unittest.TestCase):
         doc, notes = S.console_from_cfg(cfg)
         self.assertEqual(notes, [])
         text = S.dump_toml(doc)
-        flags = tomllib.loads(text)["engine"]["flags"]
-        self.assertEqual(flags["--engine-tp"], 1)
-        self.assertEqual(flags["--engine-device"], 1)
-        self.assertIs(flags["--engine-peer-device"], False)
-        self.assertEqual(flags["--engine-max-ctx"], int(S.TP1_CTX_DEFAULT))
-        self.assertEqual(flags["--engine-max-seqs"], int(S.TP1_SEQS_DEFAULT))
-        self.assertTrue(flags["--pack"].endswith("-tp1"), flags)
-        self.assertTrue(flags["--engine-draft-pack"].endswith("-tp1"), flags)
+        e = tomllib.loads(text)["engine"]
+        # version 5: the TP is the engine's field; the TP=1 preset carries its own packs,
+        # context, sequences and batches, so the defaults need no override
+        self.assertEqual((e["tp"], e["device"]), (1, 1))
+        self.assertEqual(e.get("flags", {}), {}, text)
+        self.assertEqual(tomllib.loads(text)["version"], S.CONSOLE_CONFIG_VERSION)
         back = S.cfg_from_console(tomllib.loads(text))
         self.assertEqual((back["tp"], back["gpu1"], back["ctx27"], back["seqs"]),
                          ("1", "1", S.TP1_CTX_DEFAULT, S.TP1_SEQS_DEFAULT))
-        # back to TP=2: the single-card overrides go, the preset's boot remains
+        # a TP=1 value other than the single-card default is an override
+        back["ctx27"] = "131072"
+        doc1, _ = S.console_from_cfg(back, tomllib.loads(text))
+        self.assertEqual(doc1["engine"]["flags"], {"--engine-max-ctx": 131072})
+        # back to TP=2: the field flips, the context goes back to the TP=2 default
         S.set_tp(back, "2")
-        doc2, _ = S.console_from_cfg(back, tomllib.loads(text))
+        back["ctx27"] = "262144"
+        doc2, _ = S.console_from_cfg(back, doc1)
+        self.assertEqual((doc2["engine"]["tp"], doc2["engine"]["device"]), (2, 0))
         self.assertEqual(doc2["engine"].get("flags", {}), {})
+        # the launcher command is `tools/serve_27b.sh --tp 1` on the card
+        cfg2 = S.default_cfg("27b")
+        S.set_tp(cfg2, "1")
+        cfg2["gpu1"] = "1"
+        env, argv = S.build_launch(cfg2)
+        self.assertEqual(argv[:3], ["tools/serve_27b.sh", "--tp", "1"])
+        self.assertEqual(env, {"DEVICE": "1"})
+
+    def test_a_version_4_tp1_file_migrates(self):
+        # what this tool wrote for TP=1 before config version 5: flag overrides of the TP=2 preset
+        v4 = {"version": 4, "engine": {"preset": "qwen27b", "port": 8080, "flags": {
+            "--engine-tp": 1, "--engine-device": 1, "--engine-peer-device": False,
+            "--engine-decode-batches": "1,2,4", "--engine-max-ctx": 65536, "--engine-max-seqs": 2,
+            "--pack": "/packs/qwen38-27b-macaq7-bc3-tp1",
+            "--engine-draft-pack": "/packs/qwen38-dflash2-drafter-quarkhead-tp1",
+            "--vision": "lazy"}}, "setup": {"model": "27b", "completed": True, "step": "done"}}
+        cfg = S.cfg_from_console(v4)
+        self.assertEqual((cfg["tp"], cfg["gpu1"], cfg["seqs"], cfg["vision27"]), ("1", "1", "2", "lazy"))
+        doc, _ = S.console_from_cfg(cfg, v4)
+        e = doc["engine"]
+        self.assertEqual(doc["version"], S.CONSOLE_CONFIG_VERSION)
+        self.assertEqual((e["tp"], e["device"]), (1, 1))
+        self.assertEqual(e["flags"], {"--engine-max-seqs": 2, "--vision": "lazy"})
+        # a version-5 file round-trips its TP without any override
+        self.assertEqual(S.tp_of(doc), ("1", "1"))
+        self.assertEqual(S.tp_of({"engine": {"preset": "flashnext", "tp": 2}}), ("2", "0"))
 
     def test_writes_back_only_the_keys_it_owns(self):
         with Paths():
@@ -186,7 +238,7 @@ class SharedConfig(unittest.TestCase):
             self.assertNotIn("--fn-kv-dtype", doc["engine"].get("flags", {}))
 
     def test_toml_writer_shapes(self):
-        doc = {"version": 4, "a": {"b": {"c": [1, 2]}, "s": "x\"y", "f": 1.5, "t": True},
+        doc = {"version": 5, "a": {"b": {"c": [1, 2]}, "s": "x\"y", "f": 1.5, "t": True},
                "k": [{"label": "a", "key": "b"}], "e": {}}
         back = tomllib.loads(S.dump_toml(doc))
         self.assertEqual(back, doc)

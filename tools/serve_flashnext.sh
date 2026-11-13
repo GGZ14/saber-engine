@@ -23,7 +23,7 @@
 #     prompt(s) once at boot (the prompt cache turns on; max ctx 10,240 unless --fn-max-ctx); see
 #     docs/HOWTO-SERVE.md "Warm prompts"
 # The server is OpenAI-compatible: /v1/models, /v1/chat/completions, /v1/completions.
-# Logs: podman logs -f saber-flashnext-serve. Refuses to start while prod's unit is active.
+# Logs: podman logs -f saber-flashnext-serve. Refuses to start while another Saber server holds the cards.
 # --prompt-ids is optional under --fn-serve (the serve plane does not run the set); passed only if $SHARED/ws-fn3/ref/run1 exists.
 # Expert tier (FN54c, 2026-10-05): second-chance insertion at b4/b8 (`--xtier-second-chance 4:8,8:8`) is the
 # DEFAULT -- conc-8 +5 %, link bytes -20 %, bit-exact; `--xtier-second-chance 0` = the pre-FN54c law.
@@ -156,9 +156,6 @@ ENGINE_CMD="$SABER engine --pack $PACK --fn-trunk $FN_TRUNK --fn-kv-dtype $FN_KV
 # boot -- the console's composition test (saber-console `launcher_parity`) compares against it.
 if [ "${SABER_PRINT_CMD:-0}" = 1 ]; then printf '%s\n' $ENGINE_CMD; exit 0; fi
 
-if systemctl --user is-active --quiet qwen_prod_nvfp4; then
-  echo "prod's unit qwen_prod_nvfp4 is ACTIVE; refusing to boot a second server on the cards" >&2; exit 1
-fi
 if $CTR ps --format '{{.Names}}' | grep -qE '^saber-fn'; then
   echo "a saber-fn* hold container is running (an agent holds the cards); stop it or wait" >&2
   $CTR ps --format '  {{.Names}} {{.Status}}' | grep saber-fn >&2; exit 1

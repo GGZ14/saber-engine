@@ -49,7 +49,18 @@
   async function pick(m) {
     await setupCall('/api/setup/model', { id: m.id });
     loadSystem();
+    loadCatalog();
   }
+  // one card or two (the 27B): the TP=1 form downloads its own single-card packs
+  async function pickTp(tp, device) {
+    const r = await setupCall('/api/setup/tp', device == null ? { tp } : { tp, device });
+    if (r.ok) { loadCatalog(); loadSystem(); }
+  }
+  const TP_TEXT = {
+    2: 'Each card holds half of the model: the full 262,144-token context, 8 sequences and the fastest decode.',
+    1: 'The whole model on one GPU: a 65,536-token context and 4 sequences by default (one card has less memory for the cache), and the other card stays free.',
+  };
+  const cardsText = (n) => `This machine has ${n} supported card${n === 1 ? '' : 's'}.`;
   const VERDICT = { fits: 'Fits this machine', tight: 'Fits, with a caveat', 'no-fit': 'Does not fit this machine' };
 
   // ---- profile ----
@@ -60,7 +71,9 @@
     try {
       const p = await guarded(() => api('/api/profiles'));
       const preset = model?.preset ?? 'flashnext';
-      profiles = p?.builtin?.[preset === 'flashnext' ? 'engine' : 'serve'] ?? [];
+      const sec = preset === 'flashnext' ? 'engine' : 'serve';
+      // the 27B on one card: the same five profiles, sized for one card's KV pool
+      profiles = (model?.tp === 1 && sec === 'serve' ? p?.builtin_tp1?.serve : p?.builtin?.[sec]) ?? [];
     } catch (e) { W.error = e.message; }
   }
   async function loadEstimate() {
@@ -293,6 +306,33 @@
               {#if m.fit.reasons.length}
                 <ul class="reasons">{#each m.fit.reasons as r}<li>{r}</li>{/each}</ul>
               {/if}
+              {#if sel && m.tp_choices.length > 1 && m.kind !== 'mock'}
+                <fieldset class="tpc">
+                  <legend>How many cards</legend>
+                  <div class="tpopts">
+                    {#each m.tp_forms as f (f.tp)}
+                      <label class="tpopt" class:sel={m.tp === f.tp} class:off={!f.possible}>
+                        <input type="radio" name="tp-{m.id}" checked={m.tp === f.tp} disabled={!f.possible || W.busy} onchange={() => pickTp(f.tp)} />
+                        <span>
+                          <span class="tph"><strong>{f.tp === 2 ? 'Two cards (TP=2)' : 'One card (TP=1)'}</strong>{#if f.tp === m.recommended_tp}<span class="rec">recommended here</span>{/if}</span>
+                          <span class="tpdesc">{TP_TEXT[f.tp]}{f.note ? ` Download: ${f.note}.` : ''}</span>
+                          {#if !f.possible}<span class="tpdesc why">{cardsText(W.catalog.gpus)} {f.tp === 2 ? 'Two cards are needed.' : ''}</span>{/if}
+                          {#if f.possible && f.installed}<span class="fit f-fits">Installed</span>{/if}
+                        </span>
+                      </label>
+                    {/each}
+                  </div>
+                  {#if m.tp === 1 && W.catalog.gpus > 1}
+                    <label class="card">Card
+                      <select value={W.catalog.device ?? 0} disabled={W.busy} onchange={(e) => pickTp(1, Number(e.currentTarget.value))}>
+                        {#each Array.from({ length: W.catalog.gpus }, (_, i) => i) as i}<option value={i}>Card {i}</option>{/each}
+                      </select>
+                    </label>
+                  {/if}
+                </fieldset>
+              {:else if sel && m.kind !== 'mock'}
+                <p class="note tpn">Runs on two cards (TP=2) only: no single-card pack is hosted for this model.{W.catalog.gpus < 2 ? ` ${cardsText(W.catalog.gpus)}` : ''}</p>
+              {/if}
               {#if sel && m.components.length}
                 <div class="comps">
                   {#each m.components as c (c.id)}<DownloadRow model={m} comp={c} />{/each}
@@ -311,6 +351,9 @@
           <div class="legend"><span class="muted">Profiles tune the engine for a goal. You can change any setting later in Settings.</span></div>
         </div>
       </div>
+      {#if model && model.kind !== 'mock'}
+        <p class="note tpline">Runs on <strong>{model.tp === 1 ? 'one card (TP=1)' : 'two cards (TP=2)'}</strong>{model.tp_choices?.length > 1 ? ' · change it in the Model step' : ''}.</p>
+      {/if}
       {#if !profiles.length}
         <p class="empty">Loading the profiles…</p>
       {:else}
@@ -331,10 +374,11 @@
           {#if !estimate}
             <p class="muted">Computing…</p>
           {:else}
+            {#if estimate.label}<p class="note">{estimate.label}</p>{/if}
             <div class="estrow">
               <div><div class="val">{estimate.seqs_at_ctx ?? '–'}<span class="unit"> / {estimate.requested_seqs}</span></div><div class="sub">requests at the full {int(estimate.max_ctx)}-token context</div></div>
               <div><div class="val">{estimate.kv_capacity_tokens != null ? int(estimate.kv_capacity_tokens) : '–'}</div><div class="sub">tokens of KV cache</div></div>
-              {#if estimate.vram_bytes}<div><div class="val">{bytes(estimate.vram_bytes, 0)}</div><div class="sub">VRAM per card</div></div>{/if}
+              {#if estimate.vram_bytes}<div><div class="val">{bytes(estimate.vram_bytes, 0)}</div><div class="sub">{estimate.tp === 1 ? 'VRAM on the card' : 'VRAM per card'}</div></div>{/if}
             </div>
             {#if !estimate.fits}<p class="t-fail" role="alert">The estimate says this does not fit: pick another profile or a smaller context in Settings.</p>{/if}
             {#each estimate.warnings ?? [] as w}<p class="note">{w}</p>{/each}
@@ -392,6 +436,7 @@
       <div class="c-head"><div><h2>Review and launch</h2></div></div>
       <dl class="kv review">
         <dt>Model</dt><dd>{model?.name ?? W.setup.state.model}</dd>
+        {#if model && model.kind !== 'mock'}<dt>Cards</dt><dd>{model.tp === 1 ? `one card (TP=1), card ${W.catalog?.device ?? 0}` : 'two cards (TP=2)'}</dd>{/if}
         <dt>Profile</dt><dd>{W.setup.state.profile}</dd>
         <dt>Console</dt><dd>{W.setup.network.console_host && W.setup.network.console_host !== '127.0.0.1' ? `every address, port ${W.setup.network.console_port || 8090} (admin token set)` : `this computer only, port ${W.setup.network.console_port || 8090}`}{(W.setup.network.console_port || 8090) !== W.setup.network.running_console_port || W.setup.network.console_host ? ` · from the next console start (now ${location.host})` : ''}</dd>
         <dt>API key</dt><dd>{W.setup.network.keys.length ? 'required' : 'not required'}</dd>
@@ -510,6 +555,22 @@
   .f-no-fit { background: color-mix(in srgb, var(--critical) 14%, transparent); color: var(--critical); }
   .reasons { margin: 0; padding-left: 18px; font-size: var(--fs-sm); color: var(--ink-2); }
   .comps { border-top: 1px solid var(--grid); margin-top: 4px; }
+  .tpc { border: 0; padding: 0; margin: 4px 0 0; display: grid; gap: 6px; min-width: 0; }
+  .tpc legend { font-weight: 600; font-size: var(--fs-sm); padding: 0; margin-bottom: 4px; }
+  .tpopts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+  .tpopt { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--ring); border-radius: var(--radius); padding: 8px 10px; cursor: pointer; font-size: var(--fs-sm); min-width: 0; }
+  .tpopt.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .tpopt.off { cursor: default; opacity: 0.7; }
+  .tpopt input { margin-top: 3px; flex: none; }
+  .tpopt > span { display: grid; gap: 3px; min-width: 0; }
+  .tpopt > span > .fit { justify-self: start; }
+  .tph { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; }
+  .tpdesc { font-size: var(--fs-xs); color: var(--ink-2); }
+  .tpdesc.why { color: var(--critical); }
+  .rec { margin-left: 6px; font-size: var(--fs-xs); font-weight: 600; padding: 1px 7px; border-radius: 9px; background: var(--accent-fill); color: var(--accent); }
+  .card { display: grid; gap: 4px; font-size: var(--fs-sm); max-width: 200px; }
+  .tpn { margin: 0; }
+  .tpline { margin: 0 0 10px; }
   .profiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
   .pcard { border: 1px solid var(--ring); border-radius: var(--radius); padding: 10px 12px; display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; cursor: pointer; align-content: start; }
   .pcard.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }

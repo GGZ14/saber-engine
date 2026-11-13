@@ -41,6 +41,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/setup", get(setup_get))
         .route("/api/setup/goto", post(setup_goto))
         .route("/api/setup/model", post(setup_model))
+        .route("/api/setup/tp", post(setup_tp))
         .route("/api/setup/profile", post(setup_profile))
         .route("/api/setup/network", post(setup_network))
         .route("/api/setup/keygen", post(setup_keygen))
@@ -99,6 +100,39 @@ fn remaining_bytes(m: &Model, r: &Roots) -> u64 {
         .sum()
 }
 
+/// The supported (gfx12, not integrated) GPUs in this machine's KFD topology.
+fn usable_gpus(c: &Console) -> u32 {
+    system::probe_gpus(&c.sys_root)
+        .iter()
+        .filter(|g| g.supported && !g.integrated)
+        .count() as u32
+}
+
+/// The TP `m` runs at for this config: the Model step's pick when the model is hosted at it,
+/// else the machine's recommendation (TP=2 with two cards, TP=1 with one).
+pub fn chosen_tp(cfg: &Config, m: &Model, gpus: u32) -> u32 {
+    let choices = m.tp_choices();
+    if m.preset == crate::config::Preset::Mock {
+        return 2;
+    }
+    if choices.contains(&cfg.setup.tp) {
+        return cfg.setup.tp;
+    }
+    // a config already set up at a TP (the Settings page, a seeded file) keeps it
+    if cfg.setup.tp == 0 && cfg.engine.preset == m.preset && choices.contains(&cfg.engine.tp) {
+        return cfg.engine.tp;
+    }
+    m.recommended_tp(gpus)
+}
+
+/// The catalog model the wizard picked, in its form at the chosen TP.
+fn picked(c: &Console, cfg: &Config) -> Option<(Model, u32)> {
+    let cat = load_catalog(c, cfg).ok()?;
+    let m = cat.model(&cfg.setup.model)?;
+    let tp = chosen_tp(cfg, m, usable_gpus(c));
+    Some((m.at_tp(tp), tp))
+}
+
 fn host_facts(c: &Console, cfg: &Config) -> system::HostFacts {
     if let Some(h) = &c.host_facts {
         return h.clone();
@@ -115,16 +149,15 @@ fn host_facts(c: &Console, cfg: &Config) -> system::HostFacts {
 
 fn probe_for(c: &Console, cfg: &Config, with_commands: bool) -> system::SystemReport {
     let r = roots(c, cfg);
-    let cat = load_catalog(c, cfg).ok();
-    let model = cat
-        .as_ref()
-        .and_then(|k| k.model(&cfg.setup.model).cloned());
+    let model = picked(c, cfg).map(|(m, _)| m);
     system::probe(&ProbeInput {
         root: c.sys_root.clone(),
         packs_dir: r.packs.clone(),
         kv_dir: kv_dir(c, cfg),
         need_disk_bytes: model.as_ref().map(|m| remaining_bytes(m, &r)),
         needs_gpus: model.as_ref().is_none_or(|m| m.preset.uses_gpus()),
+        // the picked form's cards (a TP=1 pick needs one); no pick: the hosted models' two
+        min_gpus: model.as_ref().map_or(2, |m| m.fit.min_gpus.max(1)),
         host: if with_commands {
             host_facts(c, cfg)
         } else {
@@ -148,10 +181,35 @@ fn catalog_json(c: &Console, cfg: &Config) -> anyhow::Result<Value> {
     let r = roots(c, cfg);
     let sys = probe_for(c, cfg, false);
     let jobs = c.downloads.list();
+    let gpus = usable_gpus(c);
+    let free = system::disk_space(&r.packs).1;
     let models: Vec<Value> = cat
         .models
         .iter()
-        .map(|m| {
+        .map(|entry| {
+            let tp = chosen_tp(cfg, entry, gpus);
+            let m = &entry.at_tp(tp);
+            // every TP the model is hosted at, with its own fit and download (the Model step's
+            // TP choice)
+            let forms: Vec<Value> = entry
+                .tp_choices()
+                .iter()
+                .rev()
+                .map(|&t| {
+                    let f = entry.at_tp(t);
+                    let need = remaining_bytes(&f, &r);
+                    json!({
+                        "tp": t,
+                        "cards": t,
+                        "note": f.note,
+                        "download_gb": f.download_gb,
+                        "fit": catalog::fit(&f.fit, &sys, free, need),
+                        "installed": f.components.iter().all(|x| x.installed_at(&r).is_some()),
+                        "remaining_bytes": need,
+                        "possible": entry.preset == crate::config::Preset::Mock || t <= gpus,
+                    })
+                })
+                .collect();
             let comps: Vec<Value> = m
                 .components
                 .iter()
@@ -178,7 +236,6 @@ fn catalog_json(c: &Console, cfg: &Config) -> anyhow::Result<Value> {
                 })
                 .collect();
             let need = remaining_bytes(m, &r);
-            let free = system::disk_space(&r.packs).1;
             let fit = catalog::fit(&m.fit, &sys, free, need);
             let installed = m.components.iter().all(|x| x.installed_at(&r).is_some());
             json!({
@@ -195,10 +252,16 @@ fn catalog_json(c: &Console, cfg: &Config) -> anyhow::Result<Value> {
                 "installed": installed,
                 "remaining_bytes": need,
                 "components": comps,
+                "tp": tp,
+                "tp_choices": entry.tp_choices(),
+                "recommended_tp": entry.recommended_tp(gpus),
+                "tp_forms": forms,
             })
         })
         .collect();
     Ok(json!({
+        "gpus": gpus,
+        "device": cfg.engine.device,
         "source": if cfg.downloads.catalog.as_os_str().is_empty() { "built in".to_string() } else { cfg.downloads.catalog.display().to_string() },
         "roots": r,
         "free_bytes": system::disk_space(&r.packs).1,
@@ -224,13 +287,23 @@ struct StartReq {
     /// One component (default: every component not installed yet).
     #[serde(default)]
     component: Option<String>,
+    /// The form to download (default: the TP the wizard picked, else the recommendation).
+    #[serde(default)]
+    tp: Option<u32>,
 }
 
 fn specs_for(c: &Console, cfg: &Config, req: &StartReq) -> anyhow::Result<Vec<Spec>> {
     let cat = load_catalog(c, cfg)?;
-    let m = cat
+    let entry = cat
         .model(&req.model)
         .ok_or_else(|| anyhow::anyhow!("no model `{}` in the catalog", req.model))?;
+    let tp = req
+        .tp
+        .unwrap_or_else(|| chosen_tp(cfg, entry, usable_gpus(c)));
+    if !entry.tp_choices().contains(&tp) {
+        anyhow::bail!("{} is not hosted for TP={tp}", entry.name);
+    }
+    let m = &entry.at_tp(tp);
     let r = roots(c, cfg);
     let home = c.sup.home();
     let token = if cfg.downloads.hf_token_file.as_os_str().is_empty() {
@@ -466,8 +539,10 @@ async fn pack_delete(
 
 /// The gates' inputs for `cfg`.
 pub fn facts(c: &Console, cfg: &Config) -> setup::Facts {
-    let cat = load_catalog(c, cfg).ok();
-    let m = cat.as_ref().and_then(|k| k.model(&cfg.setup.model));
+    let form = picked(c, cfg);
+    let m = form.as_ref().map(|(m, _)| m);
+    let tp = form.as_ref().map_or(cfg.engine.tp, |(_, t)| *t);
+    let gpus = usable_gpus(c);
     let r = roots(c, cfg);
     let mut config_errors: Vec<String> = Vec::new();
     if let Err(e) = cfg.validate() {
@@ -486,11 +561,14 @@ pub fn facts(c: &Console, cfg: &Config) -> setup::Facts {
         model_known: m.is_some(),
         model_installed: m
             .is_some_and(|m| m.components.iter().all(|x| x.installed_at(&r).is_some())),
-        profile_known: crate::profiles::builtin(cfg.engine.preset.subcommand())
+        profile_known: crate::profiles::builtin_for(cfg.engine.preset.subcommand(), tp)
             .iter()
             .any(|p| p.name == cfg.setup.profile),
         config_errors,
         engine_ready: c.sup.status().state == crate::supervisor::EngineState::Ready,
+        tp,
+        gpus,
+        tp_unfit: m.is_some_and(|m| m.preset.uses_gpus() && tp > gpus),
     }
 }
 
@@ -573,7 +651,8 @@ async fn setup_goto(State(st): State<AppState>, Json(b): Json<GotoReq>) -> Respo
             let cat = load_catalog(c, &cfg)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
             if let Some(m) = cat.model(&cfg.setup.model) {
-                cfg = catalog::config_for(&cfg, m, &roots(c, &cfg))
+                let tp = chosen_tp(&cfg, m, usable_gpus(c));
+                cfg = catalog::config_for_tp(&cfg, m, tp, &roots(c, &cfg))
                     .map_err(|e| (StatusCode::CONFLICT, format!("{e:#}")))?;
             }
         }
@@ -586,6 +665,53 @@ async fn setup_goto(State(st): State<AppState>, Json(b): Json<GotoReq>) -> Respo
 #[derive(Deserialize)]
 struct ModelReq {
     id: String,
+    /// The TP to run it at (default: the one picked before when the model is hosted at it,
+    /// else the machine's recommendation).
+    #[serde(default)]
+    tp: Option<u32>,
+}
+
+/// Compose the engine config for the picked model at `tp` when its form is installed (a form
+/// still downloading is composed when the step is left).
+fn compose_pick(
+    c: &Console,
+    mut next: Config,
+    m: &Model,
+    tp: u32,
+) -> Result<Config, (StatusCode, String)> {
+    let r = roots(c, &next);
+    let form = m.at_tp(tp);
+    if form.components.iter().all(|x| x.installed_at(&r).is_some()) {
+        let mut composed = catalog::config_for_tp(&next, m, tp, &r)
+            .map_err(|e| (StatusCode::CONFLICT, format!("{e:#}")))?;
+        composed.setup = next.setup.clone();
+        next = composed;
+    }
+    Ok(next)
+}
+
+/// Why this machine cannot run `m` at `tp` (`None` = it can).
+fn tp_refusal(m: &Model, tp: u32, gpus: u32) -> Option<String> {
+    if !m.tp_choices().contains(&tp) {
+        return Some(if m.preset == crate::config::Preset::Flashnext {
+            format!(
+                "{} runs on two cards only (TP=2): no single-card pack is hosted",
+                m.name
+            )
+        } else {
+            format!("{} is not hosted for TP={tp}", m.name)
+        });
+    }
+    (m.preset.uses_gpus() && tp > gpus).then(|| {
+        format!(
+            "TP={tp} needs {tp} supported GPUs and this machine has {gpus}{}",
+            if gpus == 1 && m.tp_choices().contains(&1) {
+                ": pick TP=1 (one card)"
+            } else {
+                ""
+            }
+        )
+    })
 }
 
 async fn setup_model(State(st): State<AppState>, Json(b): Json<ModelReq>) -> Response {
@@ -598,19 +724,61 @@ async fn setup_model(State(st): State<AppState>, Json(b): Json<ModelReq>) -> Res
                 format!("no model `{}` in the catalog", b.id),
             )
         })?;
+        let gpus = usable_gpus(c);
+        if let Some(t) = b.tp {
+            if let Some(why) = tp_refusal(m, t, gpus) {
+                return Err((StatusCode::CONFLICT, why));
+            }
+        }
         let same = cfg.engine.preset.subcommand() == m.preset.subcommand();
         let mut next = cfg.clone();
         next.setup = setup::pick_model(&cfg.setup, &m.id, same);
-        let r = roots(c, &cfg);
-        if m.components.iter().all(|x| x.installed_at(&r).is_some()) {
-            let mut composed = catalog::config_for(&next, m, &r)
-                .map_err(|e| (StatusCode::CONFLICT, format!("{e:#}")))?;
-            composed.setup = next.setup.clone();
-            next = composed;
+        let tp = b.tp.unwrap_or_else(|| chosen_tp(&next, m, gpus));
+        next.setup.tp = if m.preset == crate::config::Preset::Mock {
+            0
+        } else {
+            tp
+        };
+        compose_pick(c, next, m, tp)
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct TpPick {
+    tp: u32,
+    /// TP=1: the card (default: keep the config's).
+    #[serde(default)]
+    device: Option<u32>,
+}
+
+/// The Model step's TP choice for the picked model (one card or two).
+async fn setup_tp(State(st): State<AppState>, Json(b): Json<TpPick>) -> Response {
+    mutate(&st, move |c, cfg| {
+        let cat = load_catalog(c, &cfg)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+        let m = cat
+            .model(&cfg.setup.model)
+            .ok_or_else(|| (StatusCode::CONFLICT, "Pick a model first.".to_string()))?;
+        let gpus = usable_gpus(c);
+        if let Some(why) = tp_refusal(m, b.tp, gpus) {
+            return Err((StatusCode::CONFLICT, why));
         }
-        // not installed yet: the engine config is composed when the step is left (after the
-        // download)
-        Ok(next)
+        let mut next = cfg.clone();
+        next.setup.tp = b.tp;
+        if let Some(d) = b.device {
+            if gpus > 0 && d >= gpus {
+                return Err((
+                    StatusCode::CONFLICT,
+                    format!("card {d} does not exist: this machine has {gpus} supported GPU(s)"),
+                ));
+            }
+            next.engine.device = d;
+        }
+        if b.tp == 2 {
+            next.engine.device = 0;
+        }
+        compose_pick(c, next, m, b.tp)
     })
     .await
 }
@@ -626,13 +794,14 @@ async fn setup_profile(State(st): State<AppState>, Json(b): Json<ProfileReq>) ->
         let mut base = cfg.clone();
         if let Ok(cat) = load_catalog(c, &cfg) {
             if let Some(m) = cat.model(&cfg.setup.model) {
-                if let Ok(x) = catalog::config_for(&cfg, m, &roots(c, &cfg)) {
+                let tp = chosen_tp(&cfg, m, usable_gpus(c));
+                if let Ok(x) = catalog::config_for_tp(&cfg, m, tp, &roots(c, &cfg)) {
                     base = x;
                 }
             }
         }
         let sec = base.engine.preset.subcommand();
-        let p = crate::profiles::builtin(sec)
+        let p = crate::profiles::builtin_for(sec, base.engine.tp)
             .into_iter()
             .find(|p| p.name == b.name)
             .ok_or_else(|| {

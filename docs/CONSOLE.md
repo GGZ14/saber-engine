@@ -47,15 +47,22 @@ saber ui --dump-schema                                       # the flag schema t
 ```
 
 The console refuses to start an engine while another Saber server or a GPU lock file holds the
-cards (the launchers' guard) and never changes the GPU power cap.
+cards (the launchers' guard) and never changes the GPU power cap. A one-card (TP=1) engine is
+refused only by what holds its card: a Saber container whose `HIP_VISIBLE_DEVICES` names that card
+(or is unset), or the shared or that card's lock file.
 
-The console's presets are the launchers' default boots: `tools/serve_flashnext.sh` and
-`tools/serve_27b.sh` at TP=2 with the MACaQ pack (a test runs both launchers in their
-`SABER_PRINT_CMD=1` mode and compares the command lines). Another 27B pack, or the single-card
-(TP=1) form, is a set of flag overrides on the Settings page; `tools/saber-setup --tp 1` writes
-them for you. If your clone is not at `~/saber`, the console finds it from the binary's location
-(`<repo>/.cache/target-container/release/saber`); otherwise set `[engine.paths] repo` in
-`config.toml`.
+The console's presets are the launchers' default boots: `tools/serve_flashnext.sh`, and
+`tools/serve_27b.sh` with the MACaQ pack at TP=2 or, with `--tp 1`, on one card (a test runs the
+launchers in their `SABER_PRINT_CMD=1` mode and compares the command lines). The TP is a choice of
+its own (the wizard's Model step, the Settings Engine panel, `tools/saber-setup --tp 1`); another
+27B pack is a flag override on the Settings page. If your clone is not at `~/saber`, the console
+finds it from the binary's location (`<repo>/.cache/target-container/release/saber`); otherwise set
+`[engine.paths] repo` in `config.toml`.
+
+```bash
+SABER_CONSOLE=1 tools/serve_27b.sh --tp 1 --no-build    # first run: seed config.toml with the 27B on one card
+DEVICE=1 tools/serve_console.sh --preset qwen27b --tp 1  # the same on card 1
+```
 
 ## First run: the setup wizard
 
@@ -65,15 +72,21 @@ While `config.toml` is absent or the setup is unfinished, the console opens the 
    runtime and image, disk free on the pack and KV volumes, a conflicting server.
 2. **Model**: the catalog (`tools/models.json`), size and fit for this machine; packs download
    with resume, sha256 verification and progress (the list survives a console restart: a running
-   download comes back paused, resume continues from its `.part` files).
+   download comes back paused, resume continues from its `.part` files). The 27B asks **how many
+   cards**: two (TP=2, each card holds half of the model: the full 262,144-token context and 8
+   sequences) or one (TP=1, the whole model on one GPU with the single-card `-tp1` packs: 65,536
+   tokens and 4 sequences by default, the other card stays free), and which card. The console
+   counts the supported GPUs and recommends TP=2 with two, TP=1 with one; with one GPU TP=2 is
+   refused. Flash-Next runs on two cards only (no single-card pack exists).
 3. **Profile**: Balanced / Max throughput / Lowest latency / Long context / Low power, with the
-   memory budget computed before anything boots.
+   memory budget computed before anything boots. At TP=1 the same five profiles are sized for
+   one card's KV pool; a profile never changes the TP.
 4. **Network and security**: ports, LAN exposure (needs an admin token), an API key.
 5. **Review and launch**: the exact command line, the boot log streaming, then a ready screen with
    curl and OpenAI-SDK snippets and a link to the playground.
 
 "I'll configure manually" skips it; Settings > Setup runs it again. `tools/saber-setup` (the text
-wizard) reads and writes the same `config.toml`.
+wizard) reads and writes the same `config.toml`, the TP field included (`tools/saber-setup --tp 1`).
 
 ## Pages
 
@@ -100,6 +113,21 @@ layout" at the bottom of the page forgets it).
 
 - Every change is validated (ranges, cross-flag rules such as tp/ep or a KV tier without a KV
   dir) and shows the diff and the new command line before it is applied.
+- **Parallelism** (the Engine panel, the 27B): Two cards (TP=2) or One card (TP=1) and the card.
+  It is `engine.tp` / `engine.device` in `config.toml`, not a flag override: TP=1 composes exactly
+  `tools/serve_27b.sh --tp 1`'s boot (`--engine-tp 1 --engine-device 0`, no peer, the `-tp1` target
+  and drafter packs, `--engine-max-ctx 65536 --engine-max-seqs 4 --engine-decode-batches 1,2,4`) in
+  the container `saber-27b-tp1-serve` with `HIP_VISIBLE_DEVICES=<card>` (inside it the card is
+  device 0). Switching moves a target / drafter pack that names one of the catalog's packs to the
+  same pack cut for the other TP (a pack is cut for one TP; the validator refuses a mismatch by
+  name). Flash-Next shows TP=2 only. A `--engine-tp` override that disagrees with the choice is
+  refused; TP=2 on a machine with one supported GPU, or a card that does not exist, too.
+- The memory estimate is labelled per card at TP=2 and "one card holds the whole model" at TP=1
+  (the unsplit weights of the `-tp1` packs, every KV head, each sequence's whole GDN state), and
+  uses the engine's own ledger law (`lean`: budget 31,744 MiB, KV headroom 848 MiB, in place of
+  `--engine-budget-mib` / `--engine-kv-headroom-mib`; `--engine-ledger today` keeps the flags).
+- On/off flags whose engine default is on (`--enable-prefix-caching`) are toggles: off writes
+  `--enable-prefix-caching off` (a bare `false` in `config.toml` means the same), on needs no flag.
 - Apply = save, drain (running + waiting requests reach 0, `engine.drain_timeout_s`), stop,
   start, wait for ready (`console.ready_timeout_s`, default 900 s). A field that does not reach the
   command line saves without a restart.
@@ -188,6 +216,7 @@ Every route needs the admin token when one is set; every non-GET needs `X-Saber-
 | `GET/PUT /api/config` | the config (secrets redacted as `(set)`) / save it |
 | `POST /api/config/validate`, `POST /api/config/apply`, `GET /api/apply` | check / apply (drain-and-restart) / the apply job |
 | `GET /api/history`, `GET /api/history/{id}`, `POST /api/history/{id}/rollback` | config history |
+| `POST /api/config/tp` | `{config, tp, device?}`: the draft switched to that TP (the packs moved), not saved |
 | `GET/POST /api/profiles`, `PUT/DELETE /api/profiles/{name}`, `POST .../duplicate`, `GET .../export`, `POST /api/profiles/import`, `POST /api/profiles/compose` | profiles |
 | `GET /api/schema`, `GET /api/command` | the flag schema / the composed command line |
 | `POST /api/engine/start`, `/stop`, `/restart` | engine control |
@@ -197,7 +226,7 @@ Every route needs the admin token when one is set; every non-GET needs `X-Saber-
 | `GET /metrics` | the console's Prometheus export |
 | `GET /api/packs`, `DELETE /api/packs/{name}`, `GET /api/catalog`, `GET /api/system` | model manager, catalog, system check |
 | `GET/POST /api/downloads`, `/api/downloads/stream` (SSE), `POST /api/downloads/{id}/pause\|resume\|cancel`, `POST /api/downloads/clear` | downloads |
-| `GET /api/setup`, `POST /api/setup/{goto,model,profile,network,keygen,launch,finish,skip,rerun}` | the wizard |
+| `GET /api/setup`, `POST /api/setup/{goto,model,tp,profile,network,keygen,launch,finish,skip,rerun}` | the wizard (`model` takes an optional `tp`; `tp` = `{tp, device?}`) |
 | `GET /api/auth` | who this session is, the token's source, the keys (labels only) |
 | `POST /api/auth/admin-token` (rotate, returns the token once), `DELETE /api/auth/admin-token` (loopback only) | the admin token |
 | `GET/POST /api/auth/keys`, `POST /api/auth/keys/{label}/revoke`, `DELETE /api/auth/keys/{label}` | API keys (a new key is returned once) |
@@ -208,7 +237,7 @@ Every route needs the admin token when one is set; every non-GET needs `X-Saber-
 
 | Path | What |
 |---|---|
-| `~/.config/saber/config.toml` | the config (0600; `.prev` = the previous save) |
+| `~/.config/saber/config.toml` | the config (0600; `.prev` = the previous save). Version 5 added `engine.tp` / `engine.device`; a version-4 file is migrated when read (its `--engine-tp 1` overrides from `tools/saber-setup --tp 1` become `tp = 1`, and a prefix-caching `false` becomes `"off"`) |
 | `~/.local/share/saber/console/history/` | applied configs |
 | `~/.local/share/saber/console/profiles.toml` | user profiles |
 | `~/.local/share/saber/console/audit.jsonl` | the audit log |

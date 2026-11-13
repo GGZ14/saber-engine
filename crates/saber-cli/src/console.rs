@@ -114,6 +114,20 @@ mod tests {
             .unwrap();
     }
 
+    /// The console's memory estimate uses the engine's own `lean` ledger pair (the default law).
+    #[test]
+    fn the_console_estimate_mirrors_the_engines_ledger_law() {
+        assert_eq!(crate::ledger_law::DEFAULT_LEDGER, "lean");
+        assert_eq!(
+            saber_console::estimate::LEAN_BUDGET_MIB,
+            crate::ledger_law::LEAN_BUDGET_MIB
+        );
+        assert_eq!(
+            saber_console::estimate::LEAN_HEADROOM_MIB,
+            crate::ledger_law::LEAN_HEADROOM_MIB
+        );
+    }
+
     fn covers_every_flag() {
         let s = schema();
         assert!(
@@ -137,6 +151,17 @@ mod tests {
                 !f.group.is_empty() && !f.help.is_empty() || f.hidden,
                 "{f:?}"
             );
+        }
+        // the console composes a toggled-off `false` of these as `<flag> off`: each is an on/off
+        // choice whose engine default is on
+        for k in saber_console::compose::ON_OFF_FLAGS {
+            let f = s
+                .flags
+                .iter()
+                .find(|f| f.name == *k)
+                .unwrap_or_else(|| panic!("{k} is not a flag"));
+            assert_eq!(f.choices, ["on", "off"], "{k}");
+            assert_eq!(f.default.as_deref(), Some("on"), "{k}");
         }
         // both serving boots are in it, with the big ones
         for (sec, name) in [

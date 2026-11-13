@@ -59,6 +59,96 @@ pub struct Model {
     pub packs: Vec<String>,
     #[serde(default)]
     pub extra_files: Vec<String>,
+    /// `tools/fetch_packs.sh`'s target for this model (the terminal wizard's install step).
+    #[serde(default)]
+    pub fetch: String,
+    /// The single-card (TP=1) form: what differs from the TP=2 entry above (the `-tp1` packs,
+    /// their sizes and fit). A model without it is TP=2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tp1: Option<Tp1Form>,
+}
+
+/// A model's TP=1 form: the fields that differ from its TP=2 entry (absent = the same).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Tp1Form {
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub container: String,
+    #[serde(default)]
+    pub packs: Vec<String>,
+    #[serde(default)]
+    pub download_gb: Option<f64>,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub fetch: String,
+    #[serde(default)]
+    pub fit: Option<FitRules>,
+    /// The TP=1 components (the single-card packs; a file shared with TP=2, such as the
+    /// tokenizer, is listed again).
+    #[serde(default)]
+    pub components: Vec<Component>,
+}
+
+impl Model {
+    /// The TP widths this model's packs are hosted for (`[2]`, or `[1, 2]` with a TP=1 form; the
+    /// mock opens no GPU, so it offers no choice).
+    #[must_use]
+    pub fn tp_choices(&self) -> Vec<u32> {
+        if self.tp1.is_some() && self.preset.tp_choices().contains(&1) {
+            vec![1, 2]
+        } else {
+            vec![2]
+        }
+    }
+
+    /// The model as served at `tp`: the TP=1 form folded over the entry at `tp == 1` (the
+    /// components, packs, sizes and fit of the single-card packs), the entry itself otherwise.
+    #[must_use]
+    pub fn at_tp(&self, tp: u32) -> Model {
+        let mut m = self.clone();
+        if tp != 1 || self.preset == Preset::Mock {
+            return m;
+        }
+        let Some(t) = &self.tp1 else { return m };
+        if !t.description.is_empty() {
+            m.description.clone_from(&t.description);
+        }
+        if !t.container.is_empty() {
+            m.container.clone_from(&t.container);
+        }
+        if !t.packs.is_empty() {
+            m.packs.clone_from(&t.packs);
+        }
+        if let Some(g) = t.download_gb {
+            m.download_gb = g;
+        }
+        if !t.note.is_empty() {
+            m.note.clone_from(&t.note);
+        }
+        if !t.fetch.is_empty() {
+            m.fetch.clone_from(&t.fetch);
+        }
+        if let Some(f) = &t.fit {
+            m.fit = f.clone();
+        }
+        if !t.components.is_empty() {
+            m.components.clone_from(&t.components);
+        }
+        m
+    }
+
+    /// The TP this machine should run the model at: TP=2 with two supported cards (or a model
+    /// without a TP=1 form), TP=1 with one.
+    #[must_use]
+    pub fn recommended_tp(&self, supported_gpus: u32) -> u32 {
+        if supported_gpus < 2 && self.tp_choices().contains(&1) {
+            1
+        } else {
+            2
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -186,45 +276,59 @@ impl Catalog {
             if m.id.is_empty() || !ids.insert(m.id.as_str()) {
                 anyhow::bail!("the model catalog has an empty or duplicate id `{}`", m.id);
             }
-            let mut cids = std::collections::BTreeSet::new();
-            for comp in &m.components {
-                if !cids.insert(comp.id.as_str()) {
-                    anyhow::bail!("model `{}`: duplicate component `{}`", m.id, comp.id);
-                }
-                if comp.layout == Layout::Dir && !safe_name(&comp.name) {
-                    anyhow::bail!(
-                        "model `{}` component `{}`: `{}` is not a plain directory name",
-                        m.id,
-                        comp.id,
-                        comp.name
-                    );
-                }
-                if comp.layout == Layout::Files && comp.files.is_empty() {
-                    anyhow::bail!(
-                        "model `{}` component `{}`: a files layout lists its files",
-                        m.id,
-                        comp.id
-                    );
-                }
-                for f in &comp.files {
-                    if !safe_rel(&f.path) || (!f.from.is_empty() && !safe_rel(&f.from)) {
-                        anyhow::bail!("model `{}`: unsafe file path `{}`", m.id, f.path);
+            if m.tp1.is_some() && !m.preset.tp_choices().contains(&1) {
+                anyhow::bail!(
+                    "model `{}`: a TP=1 form for the {:?} preset, which serves TP=2 only",
+                    m.id,
+                    m.preset
+                );
+            }
+            let tp1 = m
+                .tp1
+                .as_ref()
+                .map(|t| t.components.as_slice())
+                .unwrap_or(&[]);
+            for (form, comps) in [("", m.components.as_slice()), (" (TP=1)", tp1)] {
+                let mut cids = std::collections::BTreeSet::new();
+                for comp in comps {
+                    if !cids.insert(comp.id.as_str()) {
+                        anyhow::bail!("model `{}`{form}: duplicate component `{}`", m.id, comp.id);
                     }
-                    if f.url.is_empty() && comp.source.hf_repo.is_empty() {
+                    if comp.layout == Layout::Dir && !safe_name(&comp.name) {
                         anyhow::bail!(
-                            "model `{}` component `{}`: `{}` has no url and no hf_repo",
+                            "model `{}` component `{}`: `{}` is not a plain directory name",
                             m.id,
                             comp.id,
-                            f.path
+                            comp.name
                         );
                     }
-                }
-                if comp.files.is_empty() && comp.source.hf_repo.is_empty() {
-                    anyhow::bail!(
-                        "model `{}` component `{}`: no source (hf_repo or files)",
-                        m.id,
-                        comp.id
-                    );
+                    if comp.layout == Layout::Files && comp.files.is_empty() {
+                        anyhow::bail!(
+                            "model `{}` component `{}`: a files layout lists its files",
+                            m.id,
+                            comp.id
+                        );
+                    }
+                    for f in &comp.files {
+                        if !safe_rel(&f.path) || (!f.from.is_empty() && !safe_rel(&f.from)) {
+                            anyhow::bail!("model `{}`: unsafe file path `{}`", m.id, f.path);
+                        }
+                        if f.url.is_empty() && comp.source.hf_repo.is_empty() {
+                            anyhow::bail!(
+                                "model `{}` component `{}`: `{}` has no url and no hf_repo",
+                                m.id,
+                                comp.id,
+                                f.path
+                            );
+                        }
+                    }
+                    if comp.files.is_empty() && comp.source.hf_repo.is_empty() {
+                        anyhow::bail!(
+                            "model `{}` component `{}`: no source (hf_repo or files)",
+                            m.id,
+                            comp.id
+                        );
+                    }
                 }
             }
         }
@@ -497,6 +601,35 @@ pub fn fit(
 /// preset's own), the tokenizer / chat-template paths its files feed. Everything else in `cfg`
 /// (paths, proxy, usage, overrides that are not pack flags) is kept.
 pub fn config_for(cfg: &Config, model: &Model, roots: &Roots) -> anyhow::Result<Config> {
+    config_for_tp(cfg, model, cfg.engine.tp, roots)
+}
+
+/// [`config_for`] at `tp` (`engine.tp` is set to it): the model's TP=1 form's components at
+/// `tp == 1`. A TP the model is not hosted for is refused by name.
+pub fn config_for_tp(
+    cfg: &Config,
+    model: &Model,
+    tp: u32,
+    roots: &Roots,
+) -> anyhow::Result<Config> {
+    let tp = if model.preset == Preset::Flashnext {
+        2
+    } else {
+        tp
+    };
+    if !model.tp_choices().contains(&tp) {
+        anyhow::bail!(
+            "{} is hosted for TP={} only (no single-card packs)",
+            model.name,
+            model
+                .tp_choices()
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join("/")
+        );
+    }
+    let model = &model.at_tp(tp);
     let mut c = cfg.clone();
     if c.engine.preset != model.preset {
         // a different subcommand: the old overrides belong to the other flag set
@@ -504,6 +637,7 @@ pub fn config_for(cfg: &Config, model: &Model, roots: &Roots) -> anyhow::Result<
         c.engine.extra_args.clear();
     }
     c.engine.preset = model.preset;
+    c.engine.tp = tp;
     c.engine.runtime = if model.preset == Preset::Mock {
         Runtime::Direct
     } else {
@@ -543,6 +677,72 @@ pub fn config_for(cfg: &Config, model: &Model, roots: &Roots) -> anyhow::Result<
         }
     }
     Ok(c)
+}
+
+/// Switch `cfg` to `tp` (the Settings page's TP choice): `engine.tp` (and, at TP=1, the card)
+/// is set, and a pack flag that names one of `catalog`'s packs at the old TP is moved to the
+/// same component at the new TP (the TP=1 form's component of the same id); a pack flag naming
+/// the preset's own default of the old TP is dropped (the new TP's preset names its own). Any
+/// other pack override is kept (the validator then says if its tp_size does not match).
+#[must_use]
+pub fn with_tp(cfg: &Config, tp: u32, device: Option<u32>, catalog: &Catalog) -> Config {
+    let mut c = cfg.clone();
+    let from = c.engine.tp;
+    c.engine.tp = tp;
+    if let Some(d) = device {
+        c.engine.device = d;
+    }
+    if from == tp || c.engine.preset != Preset::Qwen27b {
+        return c;
+    }
+    let name_of = |v: &FlagValue| -> Option<String> {
+        let a = v.arg()?;
+        let n = a.rsplit('/').next()?.to_string();
+        (!n.is_empty()).then_some(n)
+    };
+    let stock = |t: u32, flag: &str| -> &'static str {
+        match (t, flag) {
+            (1, "--pack") => crate::compose::tp1::PACK,
+            (1, _) => crate::compose::tp1::DRAFT_PACK,
+            (_, "--pack") => "qwen38-27b-macaq7-bc3",
+            _ => "qwen38-dflash2-drafter-quarkhead",
+        }
+    };
+    for flag in ["--pack", "--engine-draft-pack"] {
+        let Some(name) = c.engine.flags.get(flag).and_then(name_of) else {
+            continue;
+        };
+        if name == stock(from, flag) {
+            c.engine.flags.remove(flag);
+            continue;
+        }
+        // the catalog's same component at the other TP
+        let twin = catalog
+            .models
+            .iter()
+            .filter(|m| m.preset == Preset::Qwen27b && m.tp1.is_some())
+            .find_map(|m| {
+                let (a, b) = (m.at_tp(from), m.at_tp(tp));
+                let comp = a
+                    .components
+                    .iter()
+                    .find(|x| x.flag == flag && (x.name == name || x.aliases.contains(&name)))?;
+                b.components
+                    .iter()
+                    .find(|y| y.id == comp.id && y.flag == flag)
+                    .map(|y| y.name.clone())
+            });
+        if let Some(t) = twin {
+            if t == stock(tp, flag) {
+                c.engine.flags.remove(flag);
+            } else {
+                c.engine
+                    .flags
+                    .insert(flag.to_string(), FlagValue::Str(format!("/packs/{t}")));
+            }
+        }
+    }
+    c
 }
 
 #[cfg(test)]
@@ -721,6 +921,120 @@ mod tests {
         let out = config_for(&cfg, c.model("mock").unwrap(), &roots).unwrap();
         assert_eq!(out.engine.runtime, Runtime::Direct);
         out.validate().unwrap();
+    }
+
+    #[test]
+    fn the_27b_has_a_single_card_form_and_flashnext_does_not() {
+        let c = Catalog::embedded();
+        let m27 = c.model("27b").unwrap();
+        let fnx = c.model("flashnext").unwrap();
+        assert_eq!(m27.tp_choices(), [1, 2]);
+        assert_eq!(fnx.tp_choices(), [2]);
+        let one = m27.at_tp(1);
+        assert_eq!(one.container, "saber-27b-tp1-serve");
+        assert_eq!(one.fit.min_gpus, 1);
+        assert_eq!(one.fit.tp, [1]);
+        let ids: Vec<&str> = one.components.iter().map(|x| x.id.as_str()).collect();
+        assert_eq!(ids, ["target", "drafter", "tokenizer"]);
+        assert!(one.components[0].name.contains("tp1"));
+        assert_eq!(one.components[0].pack_magic, ["rank0.pack"]);
+        // the TP=2 entry is unchanged by the fold, and TP=2 of a TP=2-only model is itself
+        assert_eq!(m27.at_tp(2), *m27);
+        assert_eq!(fnx.at_tp(1), *fnx);
+        // the machine's recommendation
+        assert_eq!(m27.recommended_tp(1), 1);
+        assert_eq!(m27.recommended_tp(2), 2);
+        assert_eq!(fnx.recommended_tp(1), 2);
+        // one card: the TP=1 form fits, the TP=2 entry does not
+        let one_card = sys(vec![gpu("gfx1201", 32)], 64);
+        assert_eq!(fit(&one.fit, &one_card, None, 0).verdict, Verdict::Fits);
+        assert_eq!(fit(&m27.fit, &one_card, None, 0).verdict, Verdict::NoFit);
+        // a TP=1 form on a TP=2-only preset is refused by name
+        let bad = r#"{"version":1,"models":[{"id":"f","name":"F","kind":"Flash-Next","preset":"flashnext","tp1":{}}]}"#;
+        let e = Catalog::parse(bad).unwrap_err();
+        assert!(format!("{e:#}").contains("TP=2 only"), "{e:#}");
+    }
+
+    #[test]
+    fn config_for_a_tp_and_the_settings_switch() {
+        let dir = saber_test_scratch::ScratchDir::new("console-catalog-tp");
+        let mut cfg = Config::default();
+        cfg.engine.paths.nvme = dir.path().join("nvme");
+        cfg.engine.paths.repo = dir.path().join("repo");
+        let roots = Roots::for_config(&cfg, Path::new("/h"));
+        let c = Catalog::embedded();
+        let m27 = c.model("27b").unwrap();
+        std::fs::create_dir_all(&roots.repo_cache).unwrap();
+        for f in ["quark27b.tokenizer.json", "template_corpus.jinja"] {
+            std::fs::write(roots.repo_cache.join(f), b"x").unwrap();
+        }
+        // the TP=1 packs not installed: refused by name
+        let e = config_for_tp(&cfg, m27, 1, &roots).unwrap_err();
+        assert!(format!("{e:#}").contains("one card"), "{e:#}");
+        let one = m27.at_tp(1);
+        for x in &one.components[..2] {
+            std::fs::create_dir_all(roots.packs.join(&x.name)).unwrap();
+        }
+        let out = config_for_tp(&cfg, m27, 1, &roots).unwrap();
+        assert_eq!((out.engine.preset, out.engine.tp), (Preset::Qwen27b, 1));
+        let packs = |c: &Config| {
+            (
+                c.engine.flags.get("--pack").and_then(FlagValue::arg),
+                c.engine
+                    .flags
+                    .get("--engine-draft-pack")
+                    .and_then(FlagValue::arg),
+            )
+        };
+        assert_eq!(
+            packs(&out),
+            (
+                Some("/packs/qwen38-27b-macaq7-bc3-tp1".into()),
+                Some("/packs/qwen38-dflash2-drafter-quarkhead-tp1".into())
+            )
+        );
+        out.validate().unwrap();
+        // the Settings switch: the catalog's packs are the presets' own at each TP, so the
+        // overrides go and each TP's preset names its packs
+        let back = with_tp(&out, 2, None, &c);
+        assert_eq!(back.engine.tp, 2);
+        assert_eq!(packs(&back), (None, None));
+        let again = with_tp(&back, 1, Some(1), &c);
+        assert_eq!((again.engine.tp, again.engine.device), (1, 1));
+        assert_eq!(packs(&again), (None, None));
+        // a pack the catalog does not list stays an override (the validator checks its tp_size)
+        let mut q = out.clone();
+        q.engine.flags.insert(
+            "--pack".into(),
+            FlagValue::Str("/packs/qwen38-27b-quark-awq-mxfp4-tp1".into()),
+        );
+        let q2 = with_tp(&q, 2, None, &c);
+        assert_eq!(
+            q2.engine.flags.get("--pack"),
+            Some(&FlagValue::Str(
+                "/packs/qwen38-27b-quark-awq-mxfp4-tp1".into()
+            ))
+        );
+        // the preset's own packs (no override) stay with the preset; an unknown pack stays
+        let mut stock = Config::default();
+        stock.engine.preset = Preset::Qwen27b;
+        stock.engine.flags.insert(
+            "--pack".into(),
+            FlagValue::Str("/packs/qwen38-27b-macaq7-bc3".into()),
+        );
+        stock.engine.flags.insert(
+            "--engine-draft-pack".into(),
+            FlagValue::Str("/packs/my-own-drafter".into()),
+        );
+        let s1 = with_tp(&stock, 1, None, &c);
+        assert_eq!(s1.engine.flags.get("--pack"), None);
+        assert_eq!(
+            s1.engine.flags.get("--engine-draft-pack"),
+            Some(&FlagValue::Str("/packs/my-own-drafter".into()))
+        );
+        // Flash-Next: only the field moves (its validate refuses 1)
+        let f = with_tp(&Config::default(), 1, None, &c);
+        assert_eq!(f.engine.flags, Config::default().engine.flags);
     }
 
     #[test]

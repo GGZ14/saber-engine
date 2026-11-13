@@ -90,6 +90,22 @@ export function setFlag(name, value) {
   scheduleCheck();
 }
 
+/**
+ * Switch the draft's TP (1 = one card, 2 = both; `device` = the TP=1 card). The server moves the
+ * pack flags that name a catalog pack to the packs cut for that TP (/api/config/tp); nothing is
+ * saved until the draft is applied.
+ */
+export async function setTp(tp, device) {
+  try {
+    const r = await api('/api/config/tp', { method: 'POST', body: { config: S.draft, tp, device } });
+    S.draft = clone(r.config);
+    S.error = '';
+    scheduleCheck(0);
+  } catch (e) {
+    S.error = e.message;
+  }
+}
+
 /** A config field by dotted path (`engine.port`). */
 export function setField(path, value) {
   const parts = path.split('.');

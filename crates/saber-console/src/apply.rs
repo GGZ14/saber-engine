@@ -409,6 +409,7 @@ impl Console {
             draft_pack: draft,
             model,
             estimate: Some(est.clone()),
+            gpus: self.supported_gpus(),
         };
         let report = validate::validate(cfg, &self.schema, &cmd, &facts);
         let st = self.sup.status();
@@ -431,6 +432,21 @@ impl Console {
             diff_base: base,
             restart_required,
         }
+    }
+
+    /// The supported GPUs in this machine's KFD topology (`sys_root`), `None` when the topology
+    /// is not readable (a host without the driver, a test without a fake tree).
+    #[must_use]
+    pub fn supported_gpus(&self) -> Option<u32> {
+        let nodes = self.sys_root.join("sys/class/kfd/kfd/topology/nodes");
+        if !nodes.is_dir() {
+            return None;
+        }
+        let n = crate::system::probe_gpus(&self.sys_root)
+            .iter()
+            .filter(|g| g.supported && !g.integrated)
+            .count();
+        Some(n as u32)
     }
 
     fn estimate(
@@ -457,14 +473,30 @@ impl Console {
         };
         let s = |k: &str| m.get(k).and_then(|v| v.as_deref());
         let hw = self.metrics.hw_latest().map(|(_, h)| h);
+        let card = cfg.engine.single_card();
         let vram = hw
             .as_ref()
-            // the largest card (an APU's iGPU reports a small carve-out beside the dGPUs)
-            .and_then(|h| h.gpus.iter().filter_map(|g| g.vram_total).reduce(f64::max))
+            .and_then(|h| match card {
+                // TP=1: the card the engine runs on (when the sample names it)
+                Some(d) if (d as usize) < h.gpus.len() => h.gpus[d as usize].vram_total,
+                // the largest card (an APU's iGPU reports a small carve-out beside the dGPUs)
+                _ => h.gpus.iter().filter_map(|g| g.vram_total).reduce(f64::max),
+            })
             .map(|v| v as u64);
         let host_ram = hw.as_ref().and_then(|h| h.host.mem_total).map(|v| v as u64);
         let tp = validate::effective_tp(preset, &m);
         let info = |p: Option<&PackFact>| p.and_then(|p| p.info.clone());
+        // the 27B engine's ledger law: `lean` (the default) replaces the budget and headroom flags
+        let lean = preset == Preset::Qwen27b
+            && s("--engine-ledger").map_or_else(
+                || {
+                    self.schema
+                        .get(preset, "--engine-ledger")
+                        .and_then(|f| f.default.clone())
+                        .is_none_or(|d| d == "lean")
+                },
+                |v| v == "lean",
+            );
         let (law, max_ctx, max_seqs, kv_b, st_b, budget) = match preset {
             Preset::Flashnext => (
                 Law::Flashnext,
@@ -496,7 +528,11 @@ impl Console {
                 } else {
                     2
                 },
-                num("--engine-budget-mib"),
+                if lean {
+                    Some(estimate::LEAN_BUDGET_MIB as f64)
+                } else {
+                    num("--engine-budget-mib")
+                },
             ),
             Preset::Mock => (
                 Law::Mock,
@@ -519,14 +555,27 @@ impl Console {
             target: info(pack),
             drafter: info(draft),
             model,
-            kv_headroom_mib: num("--engine-kv-headroom-mib").unwrap_or(1024.0) as u64,
+            kv_headroom_mib: if lean {
+                estimate::LEAN_HEADROOM_MIB
+            } else {
+                num("--engine-kv-headroom-mib").unwrap_or(1024.0) as u64
+            },
             fn_kv_hot_gib: num("--fn-kv-hot-gib").unwrap_or(0.916),
             fn_admit_slab_tokens: num("--fn-kv-admit-slab-tokens").map(|v| v as u64),
             fn_kv_tier_on: s("--fn-kv-tier") != Some("off"),
             host_ram,
             mock_kv_gib: num("--kv-gib").unwrap_or(8.0) as u64,
         };
-        estimate::estimate(&inputs)
+        let mut e = estimate::estimate(&inputs);
+        if lean {
+            e.notes.push(format!(
+                "the engine's lean ledger (the default): budget {} MiB, KV headroom {} MiB in place of \
+                 --engine-budget-mib / --engine-kv-headroom-mib (`--engine-ledger today` keeps the flags)",
+                estimate::LEAN_BUDGET_MIB,
+                estimate::LEAN_HEADROOM_MIB
+            ));
+        }
+        e
     }
 
     /// The installed packs, with which the config uses.
