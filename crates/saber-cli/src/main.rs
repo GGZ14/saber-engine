@@ -29,6 +29,7 @@ mod block_capture;
 mod capture_gate;
 mod census_parity;
 mod chain_bench;
+mod console;
 mod d2d_gate;
 mod device_row_gate;
 mod device_row_shards;
@@ -52,6 +53,7 @@ mod ledger_law;
 mod load;
 mod npy;
 mod park_bench;
+mod plane_flags;
 mod ragged_attn_gate;
 mod sample_check;
 mod serve;
@@ -2425,6 +2427,10 @@ enum Cmd {
         /// every restore (image handed back), so the retry-then-give-up path runs on the card.
         #[arg(long)]
         engine_park_fail_restores: bool,
+
+        /// The plane's API keys and recent-requests ring.
+        #[command(flatten)]
+        plane: plane_flags::PlaneFlags,
     },
 
     /// The P3 seam's gate: one prompt through the pass and through the serve path, plus ms/step
@@ -3181,6 +3187,10 @@ enum Cmd {
         /// `qwen4_exp`; a 27B pack refuses any of them off its default.
         #[command(flatten)]
         fnx: flashnext::run::FnFlags,
+
+        /// The plane's API keys and recent-requests ring (`--fn-serve`).
+        #[command(flatten)]
+        plane: plane_flags::PlaneFlags,
     },
 
     /// Rank 1 of a TP=2 tier: the same engine on the other card, driven by rank 0
@@ -3523,6 +3533,49 @@ enum Cmd {
         hip_lib: String,
     },
 
+    /// The browser console: a dashboard that supervises the engine (`saber-console`)
+    ///
+    /// An always-on process on :8090 that serves the UI and owns the engine (`saber engine` /
+    /// `saber serve`) as a child it composes from `~/.config/saber/config.toml`. Loopback by
+    /// default; a non-loopback `--host` needs `--admin-token`.
+    Ui {
+        /// Address to bind (default: the config's console.host, else 127.0.0.1). Anything but a
+        /// loopback address needs an admin token.
+        #[arg(long)]
+        host: Option<String>,
+
+        /// The console's port (default: the config's console.port, else 8090).
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// The admin token every /api call must carry (required off loopback; default: the
+        /// config's console.admin_token_hash). Kept in memory only.
+        #[arg(long)]
+        admin_token: Option<String>,
+
+        /// Generate a new admin token, store its salted hash in the config (console.
+        /// admin_token_hash), print the token ONCE and exit.
+        #[arg(long)]
+        gen_admin_token: bool,
+
+        /// The config store (default: ~/.config/saber/config.toml).
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// Run this engine preset instead of the stored one, without saving it: `mock` is the
+        /// GPU-free development engine (`saber serve --engine mock`).
+        #[arg(long, value_parser = ["mock"])]
+        engine: Option<String>,
+
+        /// --engine mock: the mock engine's port.
+        #[arg(long, default_value_t = 8099)]
+        mock_port: u16,
+
+        /// Print the flag schema (JSON) and exit.
+        #[arg(long)]
+        dump_schema: bool,
+    },
+
     /// The P0 autotune sweep: measure every untuned route and write the cache
     Tune {
         /// The Saber manifest, e.g. examples/qwen38-27b-nvfp4-tp2.toml
@@ -3706,6 +3759,26 @@ fn main() -> anyhow::Result<()> {
 
 fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
     match cmd {
+        Cmd::Ui {
+            host,
+            port,
+            admin_token,
+            gen_admin_token,
+            config,
+            engine,
+            mock_port,
+            dump_schema,
+        } => console::run(console::UiArgs {
+            host,
+            port,
+            admin_token,
+            gen_admin_token,
+            config,
+            engine,
+            mock_port,
+            dump_schema,
+        }),
+
         Cmd::Probe {
             hip_lib,
             no_free_mem,
@@ -5001,372 +5074,380 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
             park_max_per_session,
             park_max_restore_attempts,
             engine_park_fail_restores,
-        } => match engine.as_str() {
-            // The real engine: no manifest and no autotune cache on this path, because the
-            // implementation choice comes from `saber-exec`'s own rule tables and not from a bound
-            // plan (a divergence recorded in the branch report, not a decision hidden here).
-            "real" => {
-                macaq6_arms(macaq6_attn_fp8_mode, &engine_gdn_scan, engine_tp)?;
-                let parsers = serve_parsers(
-                    enable_auto_tool_choice,
-                    no_enable_auto_tool_choice,
-                    tool_call_parser,
-                    reasoning_parser,
-                    &parser_defaults,
-                )?;
-                let served_model_name = one_served_name(served_model_name)?;
-                // P27-W2-5: the GDN replay arm is refused by name beside parking (a park of a
-                // session whose base owes a replay is refused at run time).
-                // CMP27G: the replay arm COMPOSES with the tree default (`ancestor9`): the tree
-                // reads the sequence's base (materialized first when it owes a chain step's rows)
-                // and its flush advances the base in place. The 16-row form is refused at boot.
-                // it composes with the prefix cache: a snapshot is taken at a
-                // prefill cut (the base, nothing owed) and a load writes a fresh admission's
-                // base; a save / verify of an owed base is refused fail-closed (FATAL) on both
-                // ranks.
-                let engine_gdn_replay = gdn_replay_resolve(
-                    "--engine-gdn-replay",
-                    &engine_gdn_replay,
-                    engine_gdn_state_dtype == "f16",
-                    &engine_spec_tree,
-                    &[(park_ram_gib > 0.0 || park_nvme_gib > 0.0, "a park tier")],
-                );
-                if engine_gdn_replay == "on" && (park_ram_gib > 0.0 || park_nvme_gib > 0.0) {
-                    anyhow::bail!(
+            plane,
+        } => {
+            plane.install()?;
+            match engine.as_str() {
+                // The real engine: no manifest and no autotune cache on this path, because the
+                // implementation choice comes from `saber-exec`'s own rule tables and not from a bound
+                // plan (a divergence recorded in the branch report, not a decision hidden here).
+                "real" => {
+                    macaq6_arms(macaq6_attn_fp8_mode, &engine_gdn_scan, engine_tp)?;
+                    let parsers = serve_parsers(
+                        enable_auto_tool_choice,
+                        no_enable_auto_tool_choice,
+                        tool_call_parser,
+                        reasoning_parser,
+                        &parser_defaults,
+                    )?;
+                    let served_model_name = one_served_name(served_model_name)?;
+                    // P27-W2-5: the GDN replay arm is refused by name beside parking (a park of a
+                    // session whose base owes a replay is refused at run time).
+                    // CMP27G: the replay arm COMPOSES with the tree default (`ancestor9`): the tree
+                    // reads the sequence's base (materialized first when it owes a chain step's rows)
+                    // and its flush advances the base in place. The 16-row form is refused at boot.
+                    // it composes with the prefix cache: a snapshot is taken at a
+                    // prefill cut (the base, nothing owed) and a load writes a fresh admission's
+                    // base; a save / verify of an owed base is refused fail-closed (FATAL) on both
+                    // ranks.
+                    let engine_gdn_replay = gdn_replay_resolve(
+                        "--engine-gdn-replay",
+                        &engine_gdn_replay,
+                        engine_gdn_state_dtype == "f16",
+                        &engine_spec_tree,
+                        &[(park_ram_gib > 0.0 || park_nvme_gib > 0.0, "a park tier")],
+                    );
+                    if engine_gdn_replay == "on" && (park_ram_gib > 0.0 || park_nvme_gib > 0.0) {
+                        anyhow::bail!(
                         "--engine-gdn-replay on with a park tier: parking is refused under the \
                          replay arm (P27-W2-5)"
                     );
-                }
-                let Some(pack) = pack else {
-                    anyhow::bail!(
-                        "--engine real needs --pack <device-final pack>; build one with \
+                    }
+                    let Some(pack) = pack else {
+                        anyhow::bail!(
+                            "--engine real needs --pack <device-final pack>; build one with \
                          `tools/fetch_packs.sh`"
-                    );
-                };
-                // P27-7: the ledger law resolves the two reserves ONCE, here; rank 1 is told the
-                // resolved numbers by value (`--budget-mib` / `--kv-headroom-mib`).
-                let (engine_budget_mib, engine_kv_headroom_mib) =
-                    ledger_law::Ledger::parse(&engine_ledger)?.resolve_said(
-                        engine_budget_mib,
-                        engine_kv_headroom_mib,
-                        ledger_law::box_p2pmem_mib(),
-                    );
-                let vision_on = matches!(vision.as_deref(), Some("lazy" | "on"));
-                engine::serve(&engine::ServeArgs {
-                    vision_max_patches: if vision.as_deref() == Some("off") {
-                        0
-                    } else if vision_on && vision_max_patches == 0 {
-                        65_536
-                    } else {
-                        vision_max_patches
-                    },
-                    vision_lazy: vision.as_deref() == Some("lazy"),
-                    image_limit: limit_mm_images,
-                    engine: engine::EngineArgs {
-                        vision_max_patches: 0,
-                        vision_lazy: false,
-                        // The index law is the default (the user, 2026-09-23); the temporal
-                        // axis is the control. `drafter_rope_index` is a no-op that names it.
-                        drafter_rope_index: drafter_rope_law(
-                            drafter_rope_index,
-                            drafter_rope_temporal,
-                        ),
-                        pack: pack.clone(),
-                        world: engine_tp,
-                        rank,
-                        peer_port: 0,
-                        follower: false,
-                        peer_device: engine_peer_device,
-                        prebuilt,
-                        hip_lib,
-                        device: engine_device,
-                        budget_mib: engine_budget_mib,
-                        max_seqs: engine_max_seqs,
-                        max_ctx: engine_max_ctx,
-                        prefill_rows: engine_prefill_rows,
-                        decode_batches: engine_decode_batches,
-                        decode_widths: engine_decode_widths,
-                        decode_bands: decode_bands_of(
-                            engine_ragged_widths,
-                            engine_rectangular_widths,
-                            engine_row_bands,
-                        ),
-                        ragged_ceiling: saber_sched::RaggedCeiling::parse(&engine_ragged_ceiling)?,
-                        width_rule: saber_sched::WidthRule::parse(&engine_width_rule)?,
-                        mixed_prefill: mixed_prefill_of(
-                            engine_mixed_prefill.as_deref(),
-                            engine_max_batched_tokens,
-                        )?,
-                        prefill_fill_above: engine_prefill_fill_above,
-                        deadline_s: engine_deadline_s,
-                        capture: !engine_no_capture,
-                        device_feed: true,
-                        live_row_attn: true,
-                        // THE SERVE PLANE PARKS SINCE ws-k14. It was `--engine mock` only:
-                        // a real serve held no staging buffer, so the one path an eviction
-                        // actually takes had never run against the card. Both halves are flags
-                        // now — this buffer and `--park-ram-gib` — and the engine refuses to
-                        // start if what is asked for cannot hold one image at `max_ctx`.
-                        park_staging_mib: engine_park_staging_mib,
-                        // The TIER's bytes go with the staging buffer, because the engine is what
-                        // declares the pinned pool both of them are billed against (ws-k14).
-                        park_ram_gib,
-                        park_staging_slots: 1,
-                        park_image_base: false,
-                        park_probe: false,
-                        kv_headroom_mib: engine_kv_headroom_mib,
-                        kv_pool_blocks: engine_kv_pool_blocks,
-                        // A serve plans a drafter tier only when asked: its bytes come out of
-                        // the KV pool, so a serve that does not speculate should not hold them.
-                        // With `--engine-draft-pack` the tier is resident and every decode step
-                        // proposes; with `--engine-draft-block` alone it is billed and nothing is
-                        // uploaded, which is how the pool arithmetic is compared.
-                        draft_block: engine_draft_block,
-                        draft_pack: engine_draft_pack,
-                        // A replay is a GATE's arm, not a server's: it seeds a capture's own
-                        // inputs into the drafter's buffers.
-                        draft_replay: None,
-                        draft_chain_dump: None,
-                        draft_seq: None,
-                        draft_seq_out: None,
-                        // THE SAME BAND AS `saber engine`. It was hardcoded `false` here while
-                        // `saber engine` took the flag, so the two planes could not be made to
-                        // resolve the same all-reduce family for the same shape by configuration
-                        // (ws-q1 open item 3). `Worker::spawn` forwards it to rank 1, where one
-                        // number in a rules table decides the SYMBOL each rank dispatches.
-                        ar_exact,
-                        draft_batch_check: false,
-                        draft_store_narrow: engine_draft_store_narrow,
-                        draft_store_natural_off: engine_draft_store_natural_off,
-                        draft_store_check: engine_draft_store_check,
-                        draft_store_deferred: engine_drafter_store == "deferred",
-                        draft_kv_paged: engine_draft_kv == "paged",
-                        draft_embed_share: engine_draft_embed_share == "on",
-                        selector_rank: saber_engine::selector_rank::SelectorRank::parse(
-                            &engine_selector_rank,
-                        )
-                        .unwrap_or_default(),
-                        spec_tree: saber_engine::spec_tree::SpecTreeForm::parse(&engine_spec_tree)
-                            .unwrap_or_default(),
-                        spec_tree_sampled: engine_spec_tree_sampled != "off",
-                        spec_tree_sampled_control: engine_spec_tree_sampled == "control",
-                        gdn_replay: engine_gdn_replay == "on",
-                        host_levers: saber_engine::host_levers::HostLevers::parse(
-                            &engine_host_levers,
-                        )
-                        .unwrap_or_default(),
-                        device_step: saber_engine::device_step::DeviceStep::parse(
-                            &engine_device_step,
-                        )
-                        .unwrap_or_default(),
-                        prefill_ar_overlap: engine_prefill_ar_overlap,
-                        prefill_ar_push_blocks: ar_push_blocks_of(
-                            &engine_ar_form,
-                            engine_ar_push_blocks,
-                        ),
-                        small_chunk_gemm: engine_small_chunk_gemm,
-                        small_chunk_band: engine_small_chunk_band,
-                        shared_prefill_arena: on_unless_off(
-                            engine_shared_prefill_arena,
-                            no_engine_shared_prefill_arena,
-                        ),
-                        shared_head_arena: on_unless_off(
-                            engine_shared_head_arena,
-                            no_engine_shared_head_arena,
-                        ),
-                        mid_chunk_gemm: mid_chunk_gemm_law(
-                            engine_mid_chunk_gemm,
-                            no_engine_mid_chunk_gemm,
-                        ),
-                        mid_chunk_atiled: on_unless_off(
-                            engine_mid_chunk_atiled,
-                            no_engine_mid_chunk_atiled,
-                        ),
-                        skinny_gate: on_unless_off(engine_skinny_gate, no_engine_skinny_gate),
-                        decode_pf: on_unless_off(engine_decode_pf, no_engine_decode_pf),
-                        head_m64: on_unless_off(engine_head_m64, no_engine_head_m64),
-                        drafter_gateup_m64: engine_drafter_gateup_m64
-                            .unwrap_or(saber_engine::device::DEFAULT_DRAFTER_GATEUP_M64),
-                        ar_wpar: engine_ar_wpar == "on",
-                        ar_fuse: engine_ar_fuse == "on",
-                        b1_arms: saber_engine::device::B1Arms::parse(&engine_b1_arms)
-                            .map_err(anyhow::Error::msg)?,
-                        c4_arms: saber_engine::device::C4Arms::parse(&engine_c4_arms)
-                            .map_err(anyhow::Error::msg)?,
-                        step_arms: saber_engine::device::StepArms::parse(&engine_step_arms)
-                            .map_err(anyhow::Error::msg)?,
-                        mixed_class_proxy: engine_mixed_class_proxy,
-                        decode_fusion: saber_engine::fuse27::Fuse27::parse(&engine_fuse)
-                            .and_then(|f| {
-                                f.check_mixed(
-                                    mixed_prefill_of(
-                                        engine_mixed_prefill.as_deref(),
-                                        engine_max_batched_tokens,
-                                    )
-                                    .is_ok_and(|m| m.enabled && m.fused),
-                                )
-                            })
-                            .map_err(anyhow::Error::msg)?
-                            .resolve(decode_fusion_of(
-                                engine_decode_fusion.as_deref(),
-                                engine_no_decode_fusion,
-                                "--engine-decode-fusion",
-                                "--engine-no-decode-fusion",
-                            )?)
-                            .map_err(anyhow::Error::msg)?,
-                        // THE SERVE PLANE IS NOT TRACED unless a diagnostic serve names
-                        // `--engine-host-trace` (C5). `saber serve` is where the published tok/s
-                        // comes from, and an instrument armed underneath it would be exactly the
-                        // ordering blind spot ws-t3 closed (GATES.md blind spot 19): a traced
-                        // serve's numbers are attribution, never a published cell.
-                        host_trace: engine_host_trace,
-                        // The serve plane's controls are OFF unless named (ws-p12): they exist here
-                        // because the eight-in-flight contamination is a SERVE-plane red that the
-                        // engine's own arms do not reproduce, so the controls have to run where
-                        // the red is.
-                        whole_step_frame: engine_whole_step_frame,
-                        frame_digest: engine_frame_digest,
-                        race_check: engine::race_mode(engine_race_check.as_deref())
-                            .map_err(anyhow::Error::msg)?
-                            .0,
-                        race_shadow: engine::race_mode(engine_race_check.as_deref())
-                            .map_err(anyhow::Error::msg)?
-                            .1,
-                        poison_boot: None,
-                        prefix_replay_poison: saber_engine::device::PrefixReplayPoison::parse(
-                            &engine_prefix_replay_poison,
-                        )
-                        .map_err(anyhow::Error::msg)?,
-                        constant_seed_control: false,
-                        gather_per_row: engine_gather_per_row,
-                        propose_in_step,
-                        fixed_step_wait: false,
-                        fail_after_steps: engine::fail_rank1_after(
-                            fail_rank_after_steps.as_deref(),
-                        )?,
-                        host_wait: engine::host_wait_27b(host_wait.as_deref())
-                            .map_err(anyhow::Error::msg)?,
-                        gdn_state_f16: engine_gdn_state_dtype == "f16",
-                        gdn_scan_exact: engine_gdn_scan == "exact",
-                        macaq_had: macaq_had.as_deref().map(|v| v == "on"),
-                        head: target_head(
-                            mxfp4_head,
-                            &[
-                                (engine_fp8_head, "--engine-fp8-head"),
-                                (engine_bf16_head, "--engine-bf16-head"),
-                            ],
-                            &pack,
-                        )?,
-                    },
-                    tokenizer,
-                    chat_template,
-                    host,
-                    port,
-                    served_model_name,
-                    max_logprobs,
-                    parsers,
-                    sample_dump,
-                    keep_stale_anchor_blocks,
-                    step_keyed_draws,
-                    spec_lookup: if spec_lookup == "on" {
-                        Some(
-                            saber_engine::LookupConfig::parse(
-                                &spec_lookup_ngram,
-                                spec_lookup_min_match,
+                        );
+                    };
+                    // P27-7: the ledger law resolves the two reserves ONCE, here; rank 1 is told the
+                    // resolved numbers by value (`--budget-mib` / `--kv-headroom-mib`).
+                    let (engine_budget_mib, engine_kv_headroom_mib) =
+                        ledger_law::Ledger::parse(&engine_ledger)?.resolve_said(
+                            engine_budget_mib,
+                            engine_kv_headroom_mib,
+                            ledger_law::box_p2pmem_mib(),
+                        );
+                    let vision_on = matches!(vision.as_deref(), Some("lazy" | "on"));
+                    engine::serve(&engine::ServeArgs {
+                        vision_max_patches: if vision.as_deref() == Some("off") {
+                            0
+                        } else if vision_on && vision_max_patches == 0 {
+                            65_536
+                        } else {
+                            vision_max_patches
+                        },
+                        vision_lazy: vision.as_deref() == Some("lazy"),
+                        image_limit: limit_mm_images,
+                        engine: engine::EngineArgs {
+                            vision_max_patches: 0,
+                            vision_lazy: false,
+                            // The index law is the default (the user, 2026-09-23); the temporal
+                            // axis is the control. `drafter_rope_index` is a no-op that names it.
+                            drafter_rope_index: drafter_rope_law(
+                                drafter_rope_index,
+                                drafter_rope_temporal,
+                            ),
+                            pack: pack.clone(),
+                            world: engine_tp,
+                            rank,
+                            peer_port: 0,
+                            follower: false,
+                            peer_device: engine_peer_device,
+                            prebuilt,
+                            hip_lib,
+                            device: engine_device,
+                            budget_mib: engine_budget_mib,
+                            max_seqs: engine_max_seqs,
+                            max_ctx: engine_max_ctx,
+                            prefill_rows: engine_prefill_rows,
+                            decode_batches: engine_decode_batches,
+                            decode_widths: engine_decode_widths,
+                            decode_bands: decode_bands_of(
+                                engine_ragged_widths,
+                                engine_rectangular_widths,
+                                engine_row_bands,
+                            ),
+                            ragged_ceiling: saber_sched::RaggedCeiling::parse(
+                                &engine_ragged_ceiling,
+                            )?,
+                            width_rule: saber_sched::WidthRule::parse(&engine_width_rule)?,
+                            mixed_prefill: mixed_prefill_of(
+                                engine_mixed_prefill.as_deref(),
+                                engine_max_batched_tokens,
+                            )?,
+                            prefill_fill_above: engine_prefill_fill_above,
+                            deadline_s: engine_deadline_s,
+                            capture: !engine_no_capture,
+                            device_feed: true,
+                            live_row_attn: true,
+                            // THE SERVE PLANE PARKS SINCE ws-k14. It was `--engine mock` only:
+                            // a real serve held no staging buffer, so the one path an eviction
+                            // actually takes had never run against the card. Both halves are flags
+                            // now — this buffer and `--park-ram-gib` — and the engine refuses to
+                            // start if what is asked for cannot hold one image at `max_ctx`.
+                            park_staging_mib: engine_park_staging_mib,
+                            // The TIER's bytes go with the staging buffer, because the engine is what
+                            // declares the pinned pool both of them are billed against (ws-k14).
+                            park_ram_gib,
+                            park_staging_slots: 1,
+                            park_image_base: false,
+                            park_probe: false,
+                            kv_headroom_mib: engine_kv_headroom_mib,
+                            kv_pool_blocks: engine_kv_pool_blocks,
+                            // A serve plans a drafter tier only when asked: its bytes come out of
+                            // the KV pool, so a serve that does not speculate should not hold them.
+                            // With `--engine-draft-pack` the tier is resident and every decode step
+                            // proposes; with `--engine-draft-block` alone it is billed and nothing is
+                            // uploaded, which is how the pool arithmetic is compared.
+                            draft_block: engine_draft_block,
+                            draft_pack: engine_draft_pack,
+                            // A replay is a GATE's arm, not a server's: it seeds a capture's own
+                            // inputs into the drafter's buffers.
+                            draft_replay: None,
+                            draft_chain_dump: None,
+                            draft_seq: None,
+                            draft_seq_out: None,
+                            // THE SAME BAND AS `saber engine`. It was hardcoded `false` here while
+                            // `saber engine` took the flag, so the two planes could not be made to
+                            // resolve the same all-reduce family for the same shape by configuration
+                            // (ws-q1 open item 3). `Worker::spawn` forwards it to rank 1, where one
+                            // number in a rules table decides the SYMBOL each rank dispatches.
+                            ar_exact,
+                            draft_batch_check: false,
+                            draft_store_narrow: engine_draft_store_narrow,
+                            draft_store_natural_off: engine_draft_store_natural_off,
+                            draft_store_check: engine_draft_store_check,
+                            draft_store_deferred: engine_drafter_store == "deferred",
+                            draft_kv_paged: engine_draft_kv == "paged",
+                            draft_embed_share: engine_draft_embed_share == "on",
+                            selector_rank: saber_engine::selector_rank::SelectorRank::parse(
+                                &engine_selector_rank,
                             )
-                            .map_err(|e| anyhow::anyhow!(e))?,
-                        )
-                    } else {
-                        None
-                    },
-                    prefix_cache: if enable_prefix_caching == "on"
-                        || prefix_cache_verify
-                        || warm_prompts.is_some()
-                    {
-                        saber_sched::PrefixCachePolicy {
-                            verify: prefix_cache_verify,
-                            host_budget_bytes: prefix_cache_host_mib << 20,
-                            min_tokens: prefix_cache_min_tokens,
-                            ..saber_sched::PrefixCachePolicy::on()
-                        }
-                    } else {
-                        saber_sched::PrefixCachePolicy::OFF
-                    },
-                    warm_prompts,
-                    park_nvme_gib,
-                    park_nvme_path,
-                    park_on_pressure,
-                    park_policy: park_policy_of(
+                            .unwrap_or_default(),
+                            spec_tree: saber_engine::spec_tree::SpecTreeForm::parse(
+                                &engine_spec_tree,
+                            )
+                            .unwrap_or_default(),
+                            spec_tree_sampled: engine_spec_tree_sampled != "off",
+                            spec_tree_sampled_control: engine_spec_tree_sampled == "control",
+                            gdn_replay: engine_gdn_replay == "on",
+                            host_levers: saber_engine::host_levers::HostLevers::parse(
+                                &engine_host_levers,
+                            )
+                            .unwrap_or_default(),
+                            device_step: saber_engine::device_step::DeviceStep::parse(
+                                &engine_device_step,
+                            )
+                            .unwrap_or_default(),
+                            prefill_ar_overlap: engine_prefill_ar_overlap,
+                            prefill_ar_push_blocks: ar_push_blocks_of(
+                                &engine_ar_form,
+                                engine_ar_push_blocks,
+                            ),
+                            small_chunk_gemm: engine_small_chunk_gemm,
+                            small_chunk_band: engine_small_chunk_band,
+                            shared_prefill_arena: on_unless_off(
+                                engine_shared_prefill_arena,
+                                no_engine_shared_prefill_arena,
+                            ),
+                            shared_head_arena: on_unless_off(
+                                engine_shared_head_arena,
+                                no_engine_shared_head_arena,
+                            ),
+                            mid_chunk_gemm: mid_chunk_gemm_law(
+                                engine_mid_chunk_gemm,
+                                no_engine_mid_chunk_gemm,
+                            ),
+                            mid_chunk_atiled: on_unless_off(
+                                engine_mid_chunk_atiled,
+                                no_engine_mid_chunk_atiled,
+                            ),
+                            skinny_gate: on_unless_off(engine_skinny_gate, no_engine_skinny_gate),
+                            decode_pf: on_unless_off(engine_decode_pf, no_engine_decode_pf),
+                            head_m64: on_unless_off(engine_head_m64, no_engine_head_m64),
+                            drafter_gateup_m64: engine_drafter_gateup_m64
+                                .unwrap_or(saber_engine::device::DEFAULT_DRAFTER_GATEUP_M64),
+                            ar_wpar: engine_ar_wpar == "on",
+                            ar_fuse: engine_ar_fuse == "on",
+                            b1_arms: saber_engine::device::B1Arms::parse(&engine_b1_arms)
+                                .map_err(anyhow::Error::msg)?,
+                            c4_arms: saber_engine::device::C4Arms::parse(&engine_c4_arms)
+                                .map_err(anyhow::Error::msg)?,
+                            step_arms: saber_engine::device::StepArms::parse(&engine_step_arms)
+                                .map_err(anyhow::Error::msg)?,
+                            mixed_class_proxy: engine_mixed_class_proxy,
+                            decode_fusion: saber_engine::fuse27::Fuse27::parse(&engine_fuse)
+                                .and_then(|f| {
+                                    f.check_mixed(
+                                        mixed_prefill_of(
+                                            engine_mixed_prefill.as_deref(),
+                                            engine_max_batched_tokens,
+                                        )
+                                        .is_ok_and(|m| m.enabled && m.fused),
+                                    )
+                                })
+                                .map_err(anyhow::Error::msg)?
+                                .resolve(decode_fusion_of(
+                                    engine_decode_fusion.as_deref(),
+                                    engine_no_decode_fusion,
+                                    "--engine-decode-fusion",
+                                    "--engine-no-decode-fusion",
+                                )?)
+                                .map_err(anyhow::Error::msg)?,
+                            // THE SERVE PLANE IS NOT TRACED unless a diagnostic serve names
+                            // `--engine-host-trace` (C5). `saber serve` is where the published tok/s
+                            // comes from, and an instrument armed underneath it would be exactly the
+                            // ordering blind spot ws-t3 closed (GATES.md blind spot 19): a traced
+                            // serve's numbers are attribution, never a published cell.
+                            host_trace: engine_host_trace,
+                            // The serve plane's controls are OFF unless named (ws-p12): they exist here
+                            // because the eight-in-flight contamination is a SERVE-plane red that the
+                            // engine's own arms do not reproduce, so the controls have to run where
+                            // the red is.
+                            whole_step_frame: engine_whole_step_frame,
+                            frame_digest: engine_frame_digest,
+                            race_check: engine::race_mode(engine_race_check.as_deref())
+                                .map_err(anyhow::Error::msg)?
+                                .0,
+                            race_shadow: engine::race_mode(engine_race_check.as_deref())
+                                .map_err(anyhow::Error::msg)?
+                                .1,
+                            poison_boot: None,
+                            prefix_replay_poison: saber_engine::device::PrefixReplayPoison::parse(
+                                &engine_prefix_replay_poison,
+                            )
+                            .map_err(anyhow::Error::msg)?,
+                            constant_seed_control: false,
+                            gather_per_row: engine_gather_per_row,
+                            propose_in_step,
+                            fixed_step_wait: false,
+                            fail_after_steps: engine::fail_rank1_after(
+                                fail_rank_after_steps.as_deref(),
+                            )?,
+                            host_wait: engine::host_wait_27b(host_wait.as_deref())
+                                .map_err(anyhow::Error::msg)?,
+                            gdn_state_f16: engine_gdn_state_dtype == "f16",
+                            gdn_scan_exact: engine_gdn_scan == "exact",
+                            macaq_had: macaq_had.as_deref().map(|v| v == "on"),
+                            head: target_head(
+                                mxfp4_head,
+                                &[
+                                    (engine_fp8_head, "--engine-fp8-head"),
+                                    (engine_bf16_head, "--engine-bf16-head"),
+                                ],
+                                &pack,
+                            )?,
+                        },
+                        tokenizer,
+                        chat_template,
+                        host,
+                        port,
+                        served_model_name,
+                        max_logprobs,
+                        parsers,
+                        sample_dump,
+                        keep_stale_anchor_blocks,
+                        step_keyed_draws,
+                        spec_lookup: if spec_lookup == "on" {
+                            Some(
+                                saber_engine::LookupConfig::parse(
+                                    &spec_lookup_ngram,
+                                    spec_lookup_min_match,
+                                )
+                                .map_err(|e| anyhow::anyhow!(e))?,
+                            )
+                        } else {
+                            None
+                        },
+                        prefix_cache: if enable_prefix_caching == "on"
+                            || prefix_cache_verify
+                            || warm_prompts.is_some()
+                        {
+                            saber_sched::PrefixCachePolicy {
+                                verify: prefix_cache_verify,
+                                host_budget_bytes: prefix_cache_host_mib << 20,
+                                min_tokens: prefix_cache_min_tokens,
+                                ..saber_sched::PrefixCachePolicy::on()
+                            }
+                        } else {
+                            saber_sched::PrefixCachePolicy::OFF
+                        },
+                        warm_prompts,
+                        park_nvme_gib,
+                        park_nvme_path,
                         park_on_pressure,
-                        &park_victim,
-                        park_max_per_session,
-                        park_max_restore_attempts,
-                    )?,
-                    park_fail_restores: engine_park_fail_restores,
-                })
-            }
-            "mock" => {
-                let parsers = serve_parsers(
-                    enable_auto_tool_choice,
-                    no_enable_auto_tool_choice,
-                    tool_call_parser,
-                    reasoning_parser,
-                    &parser_defaults,
-                )?;
-                let _ = one_served_name(served_model_name)?;
-                let Some(mock) = mock else {
-                    anyhow::bail!("--engine mock needs --mock <script.toml>");
-                };
-                if ar_exact {
-                    anyhow::bail!(
-                        "--ar-exact is an `--engine real` flag: the mock executor launches no \
+                        park_policy: park_policy_of(
+                            park_on_pressure,
+                            &park_victim,
+                            park_max_per_session,
+                            park_max_restore_attempts,
+                        )?,
+                        park_fail_restores: engine_park_fail_restores,
+                    })
+                }
+                "mock" => {
+                    let parsers = serve_parsers(
+                        enable_auto_tool_choice,
+                        no_enable_auto_tool_choice,
+                        tool_call_parser,
+                        reasoning_parser,
+                        &parser_defaults,
+                    )?;
+                    let _ = one_served_name(served_model_name)?;
+                    let Some(mock) = mock else {
+                        anyhow::bail!("--engine mock needs --mock <script.toml>");
+                    };
+                    if ar_exact {
+                        anyhow::bail!(
+                            "--ar-exact is an `--engine real` flag: the mock executor launches no \
                          collective, so there is no family to force and accepting it would make \
                          two mock runs look like an arithmetic A/B that never happened"
-                    );
-                }
-                if keep_stale_anchor_blocks {
-                    anyhow::bail!(
+                        );
+                    }
+                    if keep_stale_anchor_blocks {
+                        anyhow::bail!(
                         "--keep-stale-anchor-blocks is an `--engine real` flag: the mock executor \
                          has no drafter and proposes nothing, so there is no block to keep and \
                          accepting it would make a control arm that never ran look like one that \
                          did"
                     );
-                }
-                if step_keyed_draws {
-                    anyhow::bail!(
+                    }
+                    if step_keyed_draws {
+                        anyhow::bail!(
                         "--step-keyed-draws is an `--engine real` flag: the mock executor draws \
                          nothing through the real executor's acceptance law, so a control arm \
                          on it would never have run"
                     );
-                }
-                if propose_in_step {
-                    anyhow::bail!(
+                    }
+                    if propose_in_step {
+                        anyhow::bail!(
                         "--propose-in-step is an `--engine real` flag: the mock executor has no \
                          drafter of its own, so there is no proposal to put back inside the step"
                     );
+                    }
+                    serve::run(&serve::ServeArgs {
+                        mock,
+                        manifest,
+                        prebuilt,
+                        autotune,
+                        tokenizer,
+                        chat_template,
+                        host,
+                        port,
+                        kv_gib,
+                        state_gib,
+                        step_delay_ms,
+                        park_ram_gib,
+                        park_nvme_gib,
+                        park_nvme_path,
+                        park_on_pressure,
+                        max_logprobs,
+                        parsers,
+                    })
                 }
-                serve::run(&serve::ServeArgs {
-                    mock,
-                    manifest,
-                    prebuilt,
-                    autotune,
-                    tokenizer,
-                    chat_template,
-                    host,
-                    port,
-                    kv_gib,
-                    state_gib,
-                    step_delay_ms,
-                    park_ram_gib,
-                    park_nvme_gib,
-                    park_nvme_path,
-                    park_on_pressure,
-                    max_logprobs,
-                    parsers,
-                })
+                other => anyhow::bail!("--engine {other}: the executors are `mock` and `real`"),
             }
-            other => anyhow::bail!("--engine {other}: the executors are `mock` and `real`"),
-        },
+        }
 
         Cmd::Engine {
             pack,
@@ -5505,7 +5586,9 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
             deadline_s,
             hip_lib,
             fnx,
+            plane,
         } => {
+            plane.install()?;
             // FN12, the model selection law: the pack's manifest decides the path. A Flash-Next
             // pack (`"model": "qwen4_exp"`) boots the Flash-Next engine and returns; every other
             // pack takes the 27B's path below, unchanged (and refuses the Flash-Next flags).

@@ -7,10 +7,16 @@ the missing pieces and launch the server.
     tools/saber-setup --model flashnext --print
     tools/saber-setup --tp 1 --print  # the 27B on ONE card (TP=1)
 
-Python 3 standard library only (curses). The UI never decides anything the launchers do not: every
-option maps to an environment variable or a flag that tools/serve_27b.sh / tools/serve_flashnext.sh
-already take (README "Flags and options"). Settings are saved to ~/.config/saber/setup.json and a
-re-runnable ~/.config/saber/launch-<model>.sh.
+Python 3.11+ standard library only (curses, tomllib). The UI never decides anything the launchers
+do not: every option maps to an environment variable or a flag that tools/serve_27b.sh /
+tools/serve_flashnext.sh already take (README "Flags and options").
+
+Settings live in the SAME file the browser console (`saber ui`) uses, ~/.config/saber/config.toml,
+so the terminal wizard and the browser agree: this tool reads its options from the console's
+engine section and writes back only the keys it owns (preset, port, its flags, the NVMe path and
+the [setup] state). An older ~/.config/saber/setup.json is migrated into config.toml on the first
+run that saves. The model list is tools/models.json (the console embeds the same file). A
+re-runnable ~/.config/saber/launch-<model>.sh is still written on request.
 """
 from __future__ import annotations
 
@@ -24,41 +30,23 @@ import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONF_DIR = os.environ.get("SABER_SETUP_DIR", os.path.expanduser("~/.config/saber"))
-CONF = os.path.join(CONF_DIR, "setup.json")
+CONF = os.path.join(CONF_DIR, "setup.json")  # the pre-console settings file (migrated)
+CONSOLE_CONF = os.environ.get("SABER_CONSOLE_CONFIG", os.path.join(CONF_DIR, "config.toml"))
+CATALOG = os.path.join(REPO, "tools", "models.json")
+CONSOLE_CONFIG_VERSION = 4  # saber_console::config::CONFIG_VERSION
 
 GIB = 1024**3
 
-# name, launcher, container name, packs the launcher needs (under SABER_PACKS), download size (GB), model id
-MODELS = {
-    "27b": dict(
-        title="Qwen3.8-27B-MACaQ-MXFP4 (dense, DFlash2 drafter)",
-        launcher="tools/serve_27b.sh",
-        container="saber-27b-serve",
-        # The launcher's default weights (tools/serve_27b.sh --weights macaq): the MACaQ pack + the quarkhead drafter.
-        packs=["qwen38-27b-macaq7-bc3", "qwen38-dflash2-drafter-quarkhead"],
-        extra_files=[".cache/quark27b.tokenizer.json", ".cache/template_corpus.jinja"],
-        download_gb=29,
-        note="about 29 GB of packs",
-        fetch="27b-macaq",
-        # The single-card (TP=1) form: its own packs (a pack is cut for one TP degree), container, fetch target.
-        tp1=dict(
-            container="saber-27b-tp1-serve",
-            packs=["qwen38-27b-macaq7-bc3-tp1", "qwen38-dflash2-drafter-quarkhead-tp1"],
-            download_gb=28,
-            note="about 28 GB of single-card (TP=1) packs",
-            fetch="27b-macaq-tp1",
-        ),
-    ),
-    "flashnext": dict(
-        title="Qwen3.8 Flash-Next (MoE)",
-        launcher="tools/serve_flashnext.sh",
-        container="saber-flashnext-serve",
-        packs=["qwen38-flashnext-quark-trunk8"],
-        extra_files=[],
-        download_gb=240,
-        note="about 70 GB of packs plus the 170 GB original checkpoint it reads in place",
-    ),
-}
+
+def load_models(path=CATALOG):
+    """The models the launchers serve, from the shared catalog (tools/models.json): id -> entry with
+    title, launcher, container, packs, extra_files, download_gb, note (+ the console's fields)."""
+    with open(path) as f:
+        cat = json.load(f)
+    return {m["id"]: m for m in cat["models"] if m.get("launcher")}
+
+
+MODELS = load_models()
 
 # --------------------------------------------------------------------------------------------
 # Options. kind: choice | toggle | text.  `default` is Saber's recommended setting; the UI starts
@@ -102,7 +90,7 @@ OPTIONS = [
     # 27B
     opt("prefix", "Prefix caching", "toggle", True,
         "Cache finished prompts so a returning conversation only prefills its new tail.",
-        emit=lambda v, c: ({}, ["--enable-prefix-caching", "on"] if v else []), models=("27b",)),
+        emit=lambda v, c: ({}, [] if v else ["--enable-prefix-caching", "off"]), models=("27b",)),
     opt("vision27", "Images (vision)", "choice", "off",
         "off = text only. lazy = the vision tower streams from host RAM per image (+~30 ms an image, "
         "full context kept). on = tower resident in VRAM (~1.9 GiB a card; needs context <= 131072).",
@@ -208,25 +196,238 @@ def default_cfg(model="27b"):
     return cfg
 
 
-def load_cfg():
+# --------------------------------------------------------------------------------------------
+# The shared config (~/.config/saber/config.toml, the console's store)
+# --------------------------------------------------------------------------------------------
+
+PRESET_OF = {"27b": "qwen27b", "flashnext": "flashnext"}
+MODEL_OF = {v: k for k, v in PRESET_OF.items()}
+DEFAULT_NVME = "/mnt/nvme"
+
+
+def _flag_rules():
+    """(option key, flag, to_flag(value) -> flag value or None = no override, from_flag(flag value)
+    -> option value). Only these flags are owned (read and written) by this tool. An absent flag
+    is the preset's own value: the option's default (at TP=1, the single-card default)."""
+    return [
+        ("prefix", "--enable-prefix-caching", lambda v: None if v else "off", lambda f: str(f) != "off"),
+        ("vision27", "--vision", lambda v: None if v == "off" else v, str),
+        # (at TP=1 these two are always written: the console's 27B preset is TP=2's boot)
+        ("ctx27", "--engine-max-ctx", lambda v: None if str(v) == "262144" else int(v), str),
+        ("seqs", "--engine-max-seqs", lambda v: None if str(v) == "8" else int(v), str),
+        ("visionfn", "--fn-vision", lambda v: None if v == "lazy" else v, str),
+        ("thinking", "--fn-thinking", lambda v: None if v else "off", lambda f: str(f) != "off"),
+        ("ptree", "--fn-prefix-tree", lambda v: None if v else "off", lambda f: str(f) != "off"),
+        ("ctxfn", "--fn-max-ctx", lambda v: None if str(v) == "262144" else int(v), str),
+    ]
+
+
+# The 27B on one card, in the console's terms: the TP=2 preset with these flags replaced (the
+# launcher's `--tp 1` boot: one device, the -tp1 packs, its batch ladder). The console then composes
+# the same single-card command line the launcher runs.
+TP1_OWNED = ("--engine-tp", "--engine-device", "--engine-peer-device", "--engine-decode-batches")
+
+
+def tp1_flags(cfg):
+    packs = model_info(cfg)["packs"]
+    return {
+        "--engine-tp": 1,
+        "--engine-device": int(cfg.get("gpu1", "0")),
+        "--engine-peer-device": False,  # removed from the preset's command line
+        "--engine-decode-batches": "1,2,4",
+        "--pack": "/packs/" + packs[0],
+        "--engine-draft-pack": "/packs/" + packs[1],
+    }
+
+
+def cfg_from_console(doc, base=None):
+    """The wizard's settings from a parsed config.toml (the console's)."""
+    cfg = dict(base or default_cfg())
+    eng = doc.get("engine", {})
+    setup = doc.get("setup", {})
+    model = setup.get("model") if setup.get("model") in MODELS else MODEL_OF.get(eng.get("preset", "flashnext"))
+    if model:
+        cfg["model"] = model
+    flags = eng.get("flags", {})
+    cfg["tp"] = "1" if cfg["model"] == "27b" and str(flags.get("--engine-tp", "2")) == "1" else "2"
+    if cfg["tp"] == "1":
+        cfg["gpu1"] = str(flags.get("--engine-device", "0"))
+    for key, flag, _to, frm in _flag_rules():
+        o = next(o for o in OPTIONS if o["key"] == key)
+        if cfg["model"] not in o["models"]:
+            continue
+        cfg[key] = frm(flags[flag]) if flag in flags else default_of(o, cfg)
+    cfg["routes"] = "--fn-route-record" in flags
+    if "port" in eng:
+        cfg["port"] = str(eng["port"])
+    nvme = eng.get("paths", {}).get("nvme")
+    if nvme:
+        cfg["packs"] = nvme.rstrip("/") + "/saber-packs"
+    return cfg
+
+
+def console_from_cfg(cfg, doc=None):
+    """Write the wizard's settings into a config.toml document (a dict), touching only the keys
+    this tool owns. Returns (doc, notes)."""
+    doc = json.loads(json.dumps(doc or {}))  # a deep copy
+    notes = []
+    doc["version"] = max(int(doc.get("version", CONSOLE_CONFIG_VERSION)), CONSOLE_CONFIG_VERSION)
+    eng = doc.setdefault("engine", {})
+    preset = PRESET_OF[cfg["model"]]
+    if eng.get("preset", "flashnext") != preset:
+        # another subcommand: the old overrides belong to the other flag set (the console does the same)
+        eng["flags"] = {}
+        eng["extra_args"] = []
+    eng["preset"] = preset
+    eng["runtime"] = "container"
+    eng["port"] = int(cfg["port"])
+    flags = eng.setdefault("flags", {})
+    tp1 = cfg["model"] == "27b" and cfg.get("tp") == "1"
+    for key, flag, to, _frm in _flag_rules():
+        o = next(o for o in OPTIONS if o["key"] == key)
+        if cfg["model"] not in o["models"]:
+            continue
+        v = int(cfg[key]) if tp1 and key in ("ctx27", "seqs") else to(cfg[key])
+        if v is None:
+            flags.pop(flag, None)
+        else:
+            flags[flag] = v
+    if tp1:
+        flags.update(tp1_flags(cfg))
+    elif cfg["model"] == "27b" and str(flags.get("--engine-tp", "2")) == "1":
+        # back to TP=2: drop the single-card overrides (a pack the console picked stays)
+        for f in TP1_OWNED:
+            flags.pop(f, None)
+        for f in ("--pack", "--engine-draft-pack"):
+            if str(flags.get(f, "")).endswith("-tp1"):
+                flags.pop(f)
+    paths = eng.setdefault("paths", {})
+    if cfg["model"] == "27b":
+        packs = str(cfg["packs"]).rstrip("/")
+        if os.path.basename(packs) == "saber-packs":
+            nvme = os.path.dirname(packs)
+            if nvme != DEFAULT_NVME or "nvme" in paths:
+                paths["nvme"] = nvme
+        else:
+            notes.append(f"the console reads packs from <nvme>/saber-packs; {packs} is not named saber-packs, "
+                         "so the console keeps its NVMe path (the launcher still uses SABER_PACKS)")
+    nvme = paths.get("nvme", DEFAULT_NVME)
+    if cfg["model"] == "flashnext" and cfg.get("routes"):
+        flags["--fn-route-record"] = nvme.rstrip("/") + "/saber-kv/routes"
+    else:
+        flags.pop("--fn-route-record", None)
+    if not flags:
+        eng.pop("flags", None)
+    if not paths:
+        eng.pop("paths", None)
+    setup = doc.setdefault("setup", {})
+    setup["model"] = cfg["model"]
+    setup["completed"] = True
+    setup["step"] = "done"
+    return doc, notes
+
+
+def _toml_key(k):
+    import re
+    return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else json.dumps(k)
+
+
+def _toml_val(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return json.dumps(v, ensure_ascii=False)
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_val(x) for x in v) + "]"
+    raise TypeError(f"cannot write {type(v).__name__} to TOML")
+
+
+def dump_toml(doc):
+    """A small TOML writer for the console's config shape: scalars, arrays of scalars, tables and
+    arrays of tables."""
+    out = []
+
+    def is_aot(v):
+        return isinstance(v, list) and v and all(isinstance(x, dict) for x in v)
+
+    def table(d, path):
+        scal = [(k, v) for k, v in d.items() if not isinstance(v, dict) and not is_aot(v)]
+        subs = [(k, v) for k, v in d.items() if isinstance(v, dict)]
+        aots = [(k, v) for k, v in d.items() if is_aot(v)]
+        if path and (scal or not (subs or aots)):
+            out.append(f"\n[{'.'.join(_toml_key(p) for p in path)}]")
+        for k, v in scal:
+            out.append(f"{_toml_key(k)} = {_toml_val(v)}")
+        for k, v in subs:
+            table(v, path + [k])
+        for k, v in aots:
+            for item in v:
+                out.append(f"\n[[{'.'.join(_toml_key(p) for p in path + [k])}]]")
+                for k2, v2 in item.items():
+                    out.append(f"{_toml_key(k2)} = {_toml_val(v2)}")
+
+    table(doc, [])
+    return "\n".join(out).lstrip("\n") + "\n"
+
+
+def read_console(path=None):
+    """The parsed config.toml, or None when there is none."""
+    import tomllib
+    path = path or CONSOLE_CONF
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        return None
+
+
+def write_console(doc, path=None):
+    """Atomic, owner-only (the file can hold the console's admin token and API keys); the previous
+    file is kept as config.toml.prev, like the console's own save."""
+    path = path or CONSOLE_CONF
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(dump_toml(doc))
+    if os.path.exists(path):
+        shutil.copyfile(path, path[: -len(".toml")] + ".toml.prev" if path.endswith(".toml") else path + ".prev")
+    os.replace(tmp, path)
+
+
+def load_legacy(path=None):
+    """The pre-console setup.json, as wizard settings (or None)."""
     cfg = default_cfg()
     try:
-        with open(CONF) as f:
+        with open(path or CONF) as f:
             saved = json.load(f)
-        for k, v in saved.items():
-            if (k == "model" and v in MODELS) or (k == "tp" and v in ("1", "2")) or (k not in ("model", "tp") and k in cfg):
-                cfg[k] = v
     except (OSError, ValueError):
-        pass
+        return None
+    for k, v in saved.items():
+        if (k == "model" and v in MODELS) or (k == "tp" and v in ("1", "2")) or (k not in ("model", "tp") and k in cfg):
+            cfg[k] = v
     if cfg["model"] != "27b":
         cfg["tp"] = "2"
     return cfg
 
 
+def load_cfg():
+    """config.toml when it exists, else a legacy setup.json, else the defaults."""
+    doc = read_console()
+    if doc is not None:
+        return cfg_from_console(doc)
+    return load_legacy() or default_cfg()
+
+
 def save_cfg(cfg):
-    os.makedirs(CONF_DIR, exist_ok=True)
-    with open(CONF, "w") as f:
-        json.dump(cfg, f, indent=2)
+    """Write the shared config.toml (migrating setup.json the first time: its settings ARE cfg)."""
+    doc, notes = console_from_cfg(cfg, read_console())
+    write_console(doc)
+    for n in notes:
+        print("note: " + n)
+    return CONSOLE_CONF
 
 
 # --------------------------------------------------------------------------------------------
@@ -624,8 +825,7 @@ def ui(stdscr, cfg):
             if ch == curses.KEY_LEFT:
                 page = 1
             elif ch == ord("s"):
-                save_cfg(cfg)
-                msg = "Saved " + write_launch_script(cfg)
+                msg = "Saved " + save_cfg(cfg) + " and " + write_launch_script(cfg)
             elif ch in (ord("i"), ord("l"), ord("x")):
                 save_cfg(cfg)
                 action = {"i": ("install",), "l": ("launch",), "x": ("stop",)}[chr(ch)]
@@ -711,6 +911,8 @@ def main():
         set_tp(cfg, args.tp)
     if args.show or not sys.stdout.isatty() or not sys.stdin.isatty():
         print(plan_text(cfg))
+        src = CONSOLE_CONF if read_console() is not None else (CONF + " (migrated on the next save)" if load_legacy() else "defaults")
+        print(f"\nSettings from {src}")
         return 0
 
     import curses

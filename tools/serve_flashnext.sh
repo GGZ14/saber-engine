@@ -91,6 +91,10 @@ if [ "${1:-}" = stop ]; then
   $CTR rm -f "$CNAME" >/dev/null 2>&1 && echo "stopped $CNAME" || echo "$CNAME was not running"
   exit 0
 fi
+# The console in front (docs/CONSOLE.md): `SABER_CONSOLE=1 tools/serve_flashnext.sh [--no-build] [args]` runs `saber ui`
+# (tools/serve_console.sh), which starts THIS preset's engine from ~/.config/saber/config.toml (seeded from
+# this launcher on a first run) and serves the dashboard on 127.0.0.1:8090. The headless path below is unchanged.
+if [ "${SABER_CONSOLE:-0}" = 1 ]; then exec "$REPO/tools/serve_console.sh" --preset flashnext "$@"; fi
 BUILD=1
 RECORD=${SABER_RECORD_ROUTES:-0}
 while :; do
@@ -145,6 +149,13 @@ if [ -n "$WARM" ]; then
   ARGS+=(--warm-prompts "$OUT/warm-prompts.txt")
 fi
 
+ENGINE_CMD="$SABER engine --pack $PACK --fn-trunk $FN_TRUNK --fn-kv-dtype $FN_KV --fn-vram-elastic-kv-max-gib $FN_ELASTIC_KV_MAX --fn-experts $FN_EXPERTS ${PROMPT_IDS_ARG} --tp 2 \
+  --hip-lib /opt/rocm/lib/libamdhip64.so.7 --prebuilt /work/prebuilt/gfx1201 --fn-out $OUT/run \
+  --fn-serve $PORT --fn-thinking on $REC_ARGS ${ARGS[*]}"
+# SABER_PRINT_CMD=1: print the engine's argv (one word a line) and exit before any guard, build or
+# boot -- the console's composition test (saber-console `launcher_parity`) compares against it.
+if [ "${SABER_PRINT_CMD:-0}" = 1 ]; then printf '%s\n' $ENGINE_CMD; exit 0; fi
+
 if systemctl --user is-active --quiet qwen_prod_nvfp4; then
   echo "prod's unit qwen_prod_nvfp4 is ACTIVE; refusing to boot a second server on the cards" >&2; exit 1
 fi
@@ -192,9 +203,7 @@ $CTR run -d --name "$CNAME" --security-opt label=disable --security-opt seccomp=
   -e HIP_VISIBLE_DEVICES="${HIP_DEVICES:-0,1}" -e GPU_MAX_HW_QUEUES="${GPU_MAX_HW_QUEUES:-3}" -e LD_LIBRARY_PATH=/opt/rocm/lib -e PYTHONDONTWRITEBYTECODE=1 "${P2P[@]}" \
   -v "$SHARED":"$SHARED" -v "$NVME"/models:"$NVME"/models:ro -v "$NVME"/saber-packs:"$NVME"/saber-packs:ro \
   -v "$NVME"/saber-kv:"$NVME"/saber-kv -v "$REPO":/work:ro -w /work --entrypoint /bin/bash "$IMG" \
-  -c "ulimit -c 0; exec ${SERVE_PREFIX:-} $SABER engine --pack $PACK --fn-trunk $FN_TRUNK --fn-kv-dtype $FN_KV --fn-vram-elastic-kv-max-gib $FN_ELASTIC_KV_MAX --fn-experts $FN_EXPERTS ${PROMPT_IDS_ARG} --tp 2 \
-      --hip-lib /opt/rocm/lib/libamdhip64.so.7 --prebuilt /work/prebuilt/gfx1201 --fn-out $OUT/run \
-      --fn-serve $PORT --fn-thinking on $REC_ARGS ${ARGS[*]}" >/dev/null || { echo "$CTR run failed" >&2; exit 1; }
+  -c "ulimit -c 0; exec ${SERVE_PREFIX:-} $ENGINE_CMD" >/dev/null || { echo "$CTR run failed" >&2; exit 1; }
 echo "== $(date '+%T') booting $CNAME on :$PORT (the pack loads from NVMe; usually 1-3 min)"
 for i in $(seq 1 900); do
   curl -s --max-time 2 "localhost:$PORT/v1/models" >/dev/null 2>&1 && break

@@ -1,0 +1,36 @@
+[package]
+name = "saber-console"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "saber ui: the browser console that supervises the engine (config store, flag schema, supervisor, metrics)"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+# The flag schema is read from the CLI's own clap structs (`CommandFactory`), so it never drifts.
+clap = { workspace = true }
+axum = { version = "0.8", features = ["json", "tokio", "http1", "query"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "process", "signal", "fs"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# The SPA (ui/dist, built in the saber-dev image by tools/console/build_ui.sh) is compiled into the binary.
+rust-embed = { version = "8", features = ["mime-guess"] }
+# The /v1 reverse proxy (one loopback HTTP/1 connection a request, frames passed
+# through as they arrive) and the usage store (SQLite compiled in, WAL).
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+# Download verification (sha256), disk-space probe (statvfs) and access(2).
+sha2 = { workspace = true }
+hex = { workspace = true }
+libc = { workspace = true }
+
+[dev-dependencies]
+saber-test-scratch = { path = "../saber-test-scratch" }

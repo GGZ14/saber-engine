@@ -420,6 +420,44 @@ pub struct ServerState {
     /// builder's default; the Flash-Next plane) renders each message as sent; the 27B's plane
     /// builder runs [`ConversationForm::Prod0271`], the conversation prod 0.27.1 rebuilds.
     pub conversation_form: ConversationForm,
+    /// The recent-requests ring (`/v1/requests`) and the lifetime totals.
+    pub requests: Arc<crate::requests::RequestRing>,
+    /// Bearer API keys (`--api-key`); `None` = auth off (the default).
+    pub auth: Option<Arc<crate::auth::ApiKeys>>,
+    /// When the server state was assembled (`/v1/stats`' uptime).
+    pub started: std::time::Instant,
+}
+
+/// The plane options the CLI resolves from its flags (`--api-key`,
+/// `--api-key-file`, `--api-auth-all`, `--request-ring`) and installs ONCE before any server
+/// state is built, so the three serve paths (mock, 27B, Flash-Next) pick them up without each
+/// threading them through its own builder. A builder may still set them explicitly (tests).
+#[derive(Debug, Clone)]
+pub struct PlaneOptions {
+    pub auth: Option<Arc<crate::auth::ApiKeys>>,
+    pub request_ring: usize,
+}
+
+impl Default for PlaneOptions {
+    fn default() -> Self {
+        Self {
+            auth: None,
+            request_ring: crate::requests::DEFAULT_RING,
+        }
+    }
+}
+
+static PLANE_OPTIONS: std::sync::OnceLock<PlaneOptions> = std::sync::OnceLock::new();
+
+/// Install the process's plane options (first call wins; later calls are refused).
+pub fn install_plane_options(opts: PlaneOptions) -> Result<(), PlaneOptions> {
+    PLANE_OPTIONS.set(opts)
+}
+
+/// The installed plane options, or the defaults (auth off, a 1,024-record ring).
+#[must_use]
+pub fn plane_options() -> PlaneOptions {
+    PLANE_OPTIONS.get().cloned().unwrap_or_default()
 }
 
 /// FN28 (the user, 2026-09-29 ~19:50 CDT: "ok, align that also for 27b"): the conversation the
@@ -532,6 +570,7 @@ impl ServerStateBuilder {
     ) -> Self {
         let model_name = engine.model().served_model_name.clone();
         let max_model_len = engine.model().max_model_len;
+        let plane = plane_options();
         Self {
             state: ServerState {
                 engine,
@@ -559,8 +598,25 @@ impl ServerStateBuilder {
                 vision: crate::images::VisionPolicy::default(),
                 tool_arguments: ToolArguments::Verbatim,
                 conversation_form: ConversationForm::AsSent,
+                requests: Arc::new(crate::requests::RequestRing::new(plane.request_ring)),
+                auth: plane.auth,
+                started: std::time::Instant::now(),
             },
         }
+    }
+
+    /// Bearer API keys (`None` = off).
+    #[must_use]
+    pub fn api_keys(mut self, keys: Option<crate::auth::ApiKeys>) -> Self {
+        self.state.auth = keys.map(Arc::new);
+        self
+    }
+
+    /// The recent-requests ring's length.
+    #[must_use]
+    pub fn request_ring(mut self, capacity: usize) -> Self {
+        self.state.requests = Arc::new(crate::requests::RequestRing::new(capacity));
+        self
     }
 
     /// FN25: the tool-call `arguments` law (Flash-Next: [`ToolArguments::Objects`]; the 27B:

@@ -227,6 +227,10 @@ pub struct StepLedger {
     /// The trace's clock: an `Instant` and the unix ms it was taken at (records carry unix ms).
     epoch: Option<(Instant, f64)>,
     joined: u64,
+    /// The step-time / queue-wait histograms `/metrics` and `/v1/stats` read
+    /// (the scheduler takes them at construction, [`saber_sched::StepExecutor::step_histograms`]),
+    /// fed from each joined record here -- off the step's own work, a few relaxed adds a step.
+    hists: std::sync::Arc<saber_serve::hist::StepHistograms>,
 }
 
 impl StepLedger {
@@ -273,6 +277,10 @@ impl StepLedger {
                 self.idle.1 += r.gap_ms;
             }
             self.by.entry(r.class.clone()).or_default().add(&r);
+            self.hists.record_step_ms(r.wall_ms, r.class == "p");
+            self.hists.record_queue_us(
+                &t.admit_lag_us[..(t.admitted as usize).min(t.admit_lag_us.len())],
+            );
             self.joined += 1;
             if let Some(w) = self.trace.as_mut() {
                 let at = self.epoch.map_or(0.0, |(i0, u0)| u0 + ms(i0, t.start));
@@ -340,6 +348,12 @@ impl StepLedger {
                 let _ = writeln!(w, "{line}}}");
             }
         }
+    }
+
+    /// The histograms this ledger feeds.
+    #[must_use]
+    pub fn histograms(&self) -> std::sync::Arc<saber_serve::hist::StepHistograms> {
+        std::sync::Arc::clone(&self.hists)
     }
 
     /// Flush the trace (the shutdown).
@@ -580,6 +594,32 @@ mod tests {
         assert!(lines[2].get("h_ple_l0").is_none());
         assert_eq!(lines[2]["dense"].as_u64(), Some(0));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The joined records feed the step-time histogram (decode / mixed walls,
+    /// a prefill alone left out) and the queue-wait one (each admitted request's lag), and the
+    /// scheduler's handle is the same histograms.
+    #[test]
+    fn console_the_joined_records_feed_the_step_and_queue_histograms() {
+        let t0 = Instant::now();
+        let mut l = StepLedger::default();
+        let h = l.histograms();
+        let mut a = timing(None, t0, 8, 0);
+        a.admitted = 2;
+        a.admit_lag_us = [1500, 31250, 9, 9, 9, 9, 9, 9];
+        let b = timing(Some(a.end), a.end, 0, 1);
+        for t in [a, b] {
+            l.push_eng(EngRec::default());
+            l.push_sched(t);
+        }
+        let step = h.step.snapshot();
+        assert_eq!(
+            step.count, 1,
+            "the prefill-alone step is TTFT's, not the step's"
+        );
+        assert_eq!(step.sum_us, 31_000, "d8's wall: entry -> end");
+        let q = h.queue.snapshot();
+        assert_eq!((q.count, q.sum_us), (2, 32_750), "only the admitted lags");
     }
 
     /// FN157: the admit-slack census rides the trace line (running, queue, finished, each admitted

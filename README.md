@@ -232,6 +232,25 @@ default path puts it. The location is fixed in two places, both absolute paths:
 index also lists a first-party fp8 copy of the table (half the size), but it is off by default,
 gated on a numerics check, and not part of the hosted files.
 
+## The browser console
+
+Prefer a dashboard? `saber ui` runs in front of the engine: open `http://127.0.0.1:8090/`, follow
+the setup wizard (system check, model download, profile, network and keys, launch), and from then
+on start, monitor, reconfigure and stop the engine from the browser, with live charts, a persistent
+usage history and per-label API keys.
+
+```bash
+tools/serve_console.sh                              # build, then the console on 127.0.0.1:8090
+SABER_CONSOLE=1 tools/serve_27b.sh --no-build       # or: a launcher with the console in front
+tools/serve_console.sh --mock                       # try it without GPUs
+```
+
+Clients can keep using the engine on `:8080`, or go through the console's `/v1` proxy on `:8090`
+to have their requests and key labels recorded. A non-loopback bind needs an admin token
+(`saber ui --gen-admin-token`). The terminal wizard (`tools/saber-setup`) and the console share
+`~/.config/saber/config.toml`. Everything about it, including the HTTP API and the Grafana
+dashboard (`tools/console/grafana-saber.json`), is in [`docs/CONSOLE.md`](docs/CONSOLE.md).
+
 ## Build packs yourself
 
 Saber does not load checkpoints directly. It boots from a *pack* (`SBRPACK1`, one 4096-byte-aligned file
@@ -434,6 +453,7 @@ Without a vision flag the 27B refuses an image part by name.
 | Logs | `podman logs -f saber-27b-serve` (or `docker logs -f ...`) |
 | Exit code of a dead server | `podman wait saber-27b-serve` |
 | Flash-Next | `tools/serve_flashnext.sh` |
+| The browser console in front | `SABER_CONSOLE=1 tools/serve_27b.sh` or `tools/serve_console.sh` |
 
 ### Troubleshooting
 
@@ -478,6 +498,9 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 `tools/dev.sh`. Compile a kernel with `tools/hipcc.sh crates/saber-kernels/hip/<k>.hip out.hsaco`.
 `saber --help` lists the CLI: `serve`, `engine` (one-prompt gate with ms/step), `probe`, `gate`,
 `explain` and the per-feature gates.
+The console's browser app lives in `ui/src`; `tools/console/build_ui.sh` rebuilds `ui/dist` (a
+pinned, checksummed Node inside the dev image, no GPU) and the result is committed, so a plain
+`cargo build` needs no Node.
 
 ## Reproducing the code objects
 
@@ -525,6 +548,7 @@ decode GEMM's reduce epilogue) regenerate them exactly.
 | `crates/saber-cli` | the `saber` binary |
 | `crates/saber-engine`, `-exec`, `-plan`, `-sched` | engine, execution graphs, launch plan, scheduler |
 | `crates/saber-serve` | the OpenAI HTTP plane |
+| `crates/saber-console`, `ui/` | `saber ui`, the browser console (the SPA's source; `ui/dist` is the committed build) |
 | `crates/saber-kernels`, `prebuilt/gfx1201` | HIP kernel sources and their compiled code objects with manifests |
 | `crates/saber-mem`, `-model` | weight packs and the model graph |
 | `tools/build_packs.sh`, `tools/pack/` | the pack builders and their self-checks |

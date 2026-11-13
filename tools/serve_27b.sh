@@ -83,6 +83,15 @@ if [ "$STOP" = 1 ]; then
   [ "$stopped" = 1 ] || echo "${j// / or } was not running"
   exit 0
 fi
+# The console in front (docs/CONSOLE.md): `SABER_CONSOLE=1 tools/serve_27b.sh [--no-build] [args]` runs `saber ui`
+# (tools/serve_console.sh), which starts THIS preset's engine from ~/.config/saber/config.toml (seeded from
+# this launcher on a first run) and serves the dashboard on 127.0.0.1:8090. The headless path below is unchanged.
+# The console's 27B preset is the default boot (TP=2, the MACaQ pack); other packs are picked on its Settings page.
+if [ "${SABER_CONSOLE:-0}" = 1 ]; then
+  [ "$TP" = 2 ] && [ "$WEIGHTS" = macaq ] || { echo "SABER_CONSOLE=1: the console's 27B preset is TP=2 with the default weights; run this launcher without SABER_CONSOLE for --tp 1 / --weights $WEIGHTS" >&2; exit 2; }
+  NB=(); [ "$BUILD" = 0 ] && NB=(--no-build)
+  exec "$REPO/tools/serve_console.sh" --preset qwen27b "${NB[@]}" "$@"
+fi
 
 case "$WEIGHTS" in
   macaq) Q=macaq7-bc3; QD=-quarkhead; QF=-macaq; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-MXFP4}; WIDTHS=${WIDTHS:-1,5,8} ;;
@@ -134,6 +143,16 @@ if [ -n "$WARM" ]; then
   ARGS+=(--warm-prompts "$OUT/warm-prompts.txt")
 fi
 
+SERVE_CMD="$SABER serve --engine real $TP_ARGS \
+  --hip-lib /opt/rocm/lib/libamdhip64.so.7 --pack /packs/$TIER --prebuilt ${PREBUILT:-prebuilt/gfx1201} \
+  --tokenizer $TOKENIZER --chat-template $CHAT_TEMPLATE \
+  --engine-max-ctx $MAX_CTX --engine-prefill-rows 96,128,192,256,320,384,512,768,1024,1536,2048 \
+  --engine-decode-batches $BATCHES --engine-decode-widths ${WIDTHS:-1,8} --engine-max-seqs $MAX_SEQS --engine-draft-block ${DRAFT_BLOCK:-8} --engine-draft-pack /packs/$DRAFT \
+  --engine-budget-mib ${BUDGET_MIB:-30500} --engine-rectangular-widths --served-model-name $MODEL --host 0.0.0.0 --port $PORT ${ARGS[*]}"
+# SABER_PRINT_CMD=1: print the engine's argv (one word a line) and exit before any guard, build or
+# boot -- the console's composition test (saber-console `launcher_parity`) compares against it.
+if [ "${SABER_PRINT_CMD:-0}" = 1 ]; then printf '%s\n' $SERVE_CMD; exit 0; fi
+
 if systemctl --user is-active --quiet qwen_prod_nvfp4; then
   echo "prod's unit qwen_prod_nvfp4 is ACTIVE; refusing to boot a second server on the cards" >&2; exit 1
 fi
@@ -177,12 +196,6 @@ fi
 [ -x "$REPO/$SABER" ] || { echo "no release binary at $SABER" >&2; exit 1; }
 
 CACHE_REAL=$(readlink -f "$REPO/.cache")
-SERVE_CMD="$SABER serve --engine real $TP_ARGS \
-  --hip-lib /opt/rocm/lib/libamdhip64.so.7 --pack /packs/$TIER --prebuilt ${PREBUILT:-prebuilt/gfx1201} \
-  --tokenizer $TOKENIZER --chat-template $CHAT_TEMPLATE \
-  --engine-max-ctx $MAX_CTX --engine-prefill-rows 96,128,192,256,320,384,512,768,1024,1536,2048 \
-  --engine-decode-batches $BATCHES --engine-decode-widths ${WIDTHS:-1,8} --engine-max-seqs $MAX_SEQS --engine-draft-block ${DRAFT_BLOCK:-8} --engine-draft-pack /packs/$DRAFT \
-  --engine-budget-mib ${BUDGET_MIB:-30500} --engine-rectangular-widths --served-model-name $MODEL --host 0.0.0.0 --port $PORT ${ARGS[*]}"
 # FN73: a server that exits is reported with ITS exit code (86 = a rank failed: the log's last
 # line is `saber: FATAL rank R: <reason>`), and this script exits with it -- never a masked 1.
 died() {
