@@ -434,6 +434,24 @@ impl Console {
         }
     }
 
+    /// The kernel's P2PDMA pool a card, MiB (the largest `p2pmem/size` under the DRM cards; 0
+    /// when there is none): the engine's ledger gives it up.
+    #[must_use]
+    pub fn p2p_pool_mib(&self) -> u64 {
+        std::fs::read_dir(self.sys_root.join("sys/class/drm"))
+            .map(|rd| {
+                rd.flatten()
+                    .filter_map(|e| {
+                        std::fs::read_to_string(e.path().join("device/p2pmem/size")).ok()
+                    })
+                    .filter_map(|t| t.trim().parse::<u64>().ok())
+                    .map(|b| b.div_ceil(1 << 20))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0)
+    }
+
     /// The supported GPUs in this machine's KFD topology (`sys_root`), `None` when the topology
     /// is not readable (a host without the driver, a test without a fake tree).
     #[must_use]
@@ -560,6 +578,16 @@ impl Console {
             } else {
                 num("--engine-kv-headroom-mib").unwrap_or(1024.0) as u64
             },
+            p2p_pool_mib: self.p2p_pool_mib(),
+            draft_block: if m.contains_key("--engine-draft-pack") {
+                num("--engine-draft-block").unwrap_or(0.0) as u64
+            } else {
+                0
+            },
+            decode_batches: s("--engine-decode-batches")
+                .map(|b| b.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+                .unwrap_or_else(|| vec![1, 2, 4, 8]),
+            gdn_replay: s("--engine-gdn-replay") != Some("off"),
             fn_kv_hot_gib: num("--fn-kv-hot-gib").unwrap_or(0.916),
             fn_admit_slab_tokens: num("--fn-kv-admit-slab-tokens").map(|v| v as u64),
             fn_kv_tier_on: s("--fn-kv-tier") != Some("off"),

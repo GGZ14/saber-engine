@@ -42,11 +42,21 @@ pub mod tp1 {
     pub const PACK: &str = "qwen38-27b-macaq7-bc3-tp1";
     /// The single-card DFlash2 drafter pack.
     pub const DRAFT_PACK: &str = "qwen38-dflash2-drafter-quarkhead-tp1";
-    /// Per-sequence context (one card's KV pool is far smaller than two cards').
-    pub const MAX_CTX: u64 = 65_536;
-    pub const MAX_SEQS: u64 = 4;
-    /// The decode batch ladder (`BATCHES`).
-    pub const BATCHES: &str = "1,2,4";
+    /// Per-sequence context: one conversation of up to 128k tokens (the user's default of
+    /// 2026-11-14; one card's ledger leaves ~62k tokens spare beside it for the prefix cache).
+    pub const MAX_CTX: u64 = 131_072;
+    /// One sequence: one card's KV goes to one conversation (other requests queue).
+    pub const MAX_SEQS: u64 = 1;
+    /// The decode batch ladder the sequences pick from (`BATCHES`: every rung <= the
+    /// sequences; 1 sequence = `1`, 2 = `1,2`, 4 = `1,2,4`).
+    pub const BATCH_LADDER: &str = "1,2,4,8";
+    /// The batches of the launcher's TP=1 default boot.
+    pub const BATCHES: &str = "1";
+    /// The TP=1 defaults before 2026-11-14 (4 sequences at 65,536, batches 1,2,4): what a
+    /// version-4 file's TP=1 overrides restate.
+    pub const V4_MAX_CTX: u64 = 65_536;
+    pub const V4_MAX_SEQS: u64 = 4;
+    pub const V4_BATCHES: &str = "1,2,4";
     /// The container the launcher names a TP=1 server.
     pub const CONTAINER: &str = "saber-27b-tp1-serve";
 }
@@ -193,7 +203,7 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
                 f("--engine-prefill-rows", PREFILL_ROWS),
                 f(
                     "--engine-decode-batches",
-                    if one { tp1::BATCHES } else { "1,2,3,4,8" },
+                    if one { tp1::BATCH_LADDER } else { "1,2,3,4,8" },
                 ),
                 f("--engine-decode-widths", "1,5,8"),
                 f("--engine-max-seqs", max_seqs),
@@ -267,6 +277,38 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
                 user.extend(vs.iter().map(|x| (k.clone(), Some(x.clone()))));
             }
             (None, v) => user.push((k.clone(), v.arg())),
+        }
+    }
+    // The engine refuses a decode batch larger than its sequences ("the largest decode batch is
+    // 4 and the engine has state for N sequence(s)"): with no batches of the user's own, the
+    // preset's ladder (TP=1: 1,2,4,8; TP=2: 1,2,3,4,8) is trimmed to what the sequences can run
+    // (TP=1's default 1 sequence -> 1; 2 -> 1,2; 4 -> 1,2,4). An explicit
+    // `--engine-decode-batches` is the user's: the validator names a conflict instead.
+    if cfg.preset == Preset::Qwen27b && !cfg.flags.contains_key("--engine-decode-batches") {
+        let seqs = base
+            .iter()
+            .find(|(k, _)| k == "--engine-max-seqs")
+            .and_then(|(_, v)| v.as_deref()?.trim().parse::<u64>().ok());
+        if let (Some(seqs), Some(b)) = (
+            seqs,
+            base.iter_mut()
+                .find(|(k, _)| k == "--engine-decode-batches"),
+        ) {
+            if let Some(list) = b.1.as_deref() {
+                let all: Vec<u64> = list
+                    .split(',')
+                    .filter_map(|x| x.trim().parse().ok())
+                    .collect();
+                let kept = crate::estimate::trim_batches(&all, seqs);
+                if kept != all {
+                    b.1 = Some(
+                        kept.iter()
+                            .map(u64::to_string)
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    );
+                }
+            }
         }
     }
     let mut tail: Vec<String> = flatten(&user);
@@ -903,8 +945,9 @@ mod tests {
             "{line}"
         );
         assert!(line.contains(&format!("--engine-draft-pack /packs/{}", tp1::DRAFT_PACK)));
-        assert!(line.contains("--engine-max-ctx 65536") && line.contains("--engine-max-seqs 4"));
-        assert!(line.contains("--engine-decode-batches 1,2,4 "), "{line}");
+        // the single-card default: one conversation of up to 131,072 tokens, batch 1
+        assert!(line.contains("--engine-max-ctx 131072") && line.contains("--engine-max-seqs 1"));
+        assert!(line.contains("--engine-decode-batches 1 "), "{line}");
         // a named container wins
         c.container.name = "mine".into();
         assert_eq!(
@@ -951,6 +994,51 @@ mod tests {
             .engine
             .iter()
             .any(|a| a == "--step-delay-ms"));
+    }
+
+    /// The batches follow the sequences: the TP's ladder (TP=1 1,2,4,8; TP=2 1,2,3,4,8) trimmed
+    /// to the sequences (the engine refuses a batch larger than its sequences); explicit batches
+    /// are the user's and are left to the validator.
+    #[test]
+    fn the_batches_follow_the_sequences() {
+        let mut c = Config::default().engine;
+        c.preset = Preset::Qwen27b;
+        c.tp = 1;
+        let line =
+            |c: &crate::config::EngineConfig| compose(c, &ctx(Path::new("/h"))).engine_line();
+        for (seqs, want) in [
+            (None, "1"),
+            (Some(2), "1,2"),
+            (Some(4), "1,2,4"),
+            (Some(8), "1,2,4,8"),
+        ] {
+            if let Some(s) = seqs {
+                c.flags
+                    .insert("--engine-max-seqs".into(), FlagValue::Int(s));
+            }
+            let l = line(&c);
+            assert!(
+                l.contains(&format!("--engine-decode-batches {want} ")),
+                "{seqs:?}: {l}"
+            );
+        }
+        // TP=2's ladder at 3 sequences, and its default 8
+        let mut t = Config::default().engine;
+        t.preset = Preset::Qwen27b;
+        assert!(line(&t).contains("--engine-decode-batches 1,2,3,4,8 "));
+        t.flags
+            .insert("--engine-max-seqs".into(), FlagValue::Int(3));
+        assert!(
+            line(&t).contains("--engine-decode-batches 1,2,3 "),
+            "{}",
+            line(&t)
+        );
+        // the user's own batches stay as given
+        c.flags.insert(
+            "--engine-decode-batches".into(),
+            FlagValue::Str("1,2".into()),
+        );
+        assert!(line(&c).contains("--engine-decode-batches 1,2 "));
     }
 
     #[test]

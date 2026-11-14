@@ -1133,14 +1133,14 @@ async fn the_wizard_offers_tp1_and_tp2_by_the_gpu_count() {
         .find(|x| x["name"] == "Long context")
         .unwrap()
         .clone();
-    assert_eq!(long1["flags"]["--engine-max-seqs"], 1);
+    assert_eq!(long1["flags"]["--engine-max-ctx"], 163_840);
     let (c, v) = post(p, "/api/setup/profile", json!({"name": "Long context"})).await;
     assert_eq!(c, 200, "{v}");
     let saved = Config::load(&cfg_path).unwrap().unwrap();
     assert_eq!(saved.engine.tp, 1);
     assert_eq!(
-        saved.engine.flags.get("--engine-max-seqs"),
-        Some(&saber_console::config::FlagValue::Int(1))
+        saved.engine.flags.get("--engine-max-ctx"),
+        Some(&saber_console::config::FlagValue::Int(163_840))
     );
     // the estimate is labelled for one card
     let chk = post(p, "/api/config/validate", json!({"config": saved}))

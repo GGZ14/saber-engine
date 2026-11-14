@@ -64,11 +64,13 @@ def opt(key, label, kind, default, help, emit=_none, choices=None, models=("27b"
 
 
 # TP=1 (the 27B on one card): the launcher's own defaults (tools/serve_27b.sh --tp 1) and the values
-# offered. One card holds 18.5 GB of target + 6.4 GB of drafter pack, so the KV pool is far smaller
-# than TP=2's (about 168k tokens at 4 sequences, 101k at 8); every value here booted and answered on a
-# card (README "One card (TP=1)"). 163840 also boots but one such sequence takes the whole pool.
-TP1_CTX_DEFAULT, TP1_CTX_CHOICES = "65536", ["65536", "131072", "32768", "16384"]
-TP1_SEQS_DEFAULT, TP1_SEQS_CHOICES = "4", ["4", "8", "2", "1"]
+# offered. One card's KV is far smaller than two cards' (measured, MACaQ -tp1 pair, 2026-11-14): one
+# sequence gets ~214k tokens at a 65,536 context and boots up to ~176k context (163840 leaves ~1.1k
+# spare blocks), 2 sequences ~171k tokens, 4 ~127k. The default is ONE conversation at a time with up to
+# 131,072 tokens of context (~62k tokens spare for the prefix cache); other requests queue. The
+# launcher derives the decode batches from MAX_SEQS (the rungs of 1,2,4,8 up to it).
+TP1_CTX_DEFAULT, TP1_CTX_CHOICES = "131072", ["131072", "163840", "65536", "32768", "16384"]
+TP1_SEQS_DEFAULT, TP1_SEQS_CHOICES = "1", ["1", "2", "4", "8"]
 TP1_VISION = ["off", "lazy", "on"]
 
 
@@ -810,7 +812,8 @@ def ui(stdscr, cfg):
                     help_ = p["help"]
                 elif k == "tp":
                     help_ = p[3] or ("Both cards, tensor-parallel: the tuned setup." if p[0] == "2" else
-                                     "One card: the single-card packs, a smaller context and fewer sequences.")
+                                     "One card: one conversation at a time with up to ~128k tokens of context (other requests "
+                                     "queue); 2 or 4 sequences serve several at once and share the KV.")
                 else:
                     help_ = "Switch between the two supported models (←/→)."
                 put(h - 5, 1, help_[: w - 3], YELLOW)

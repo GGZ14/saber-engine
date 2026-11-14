@@ -9,8 +9,10 @@
 #   tools/serve_27b.sh stop         # stop the server container (whichever of TP=2 / TP=1 is running)
 #   tools/serve_27b.sh --tp 1 [--no-build]   # ONE card (TP=1; or TP=1 in the environment): the -tp1 packs of
 #     the chosen weights (`tools/fetch_packs.sh 27b-macaq-tp1` for the default), on HIP device DEVICE (default 0), container
-#     saber-27b-tp1-serve; defaults MAX_CTX 65536, MAX_SEQS 4, BATCHES 1,2,4 (every env knob below
-#     still overrides). `--tp 1 stop` stops only the TP=1 container. TP=2 (`--tp 2`) is the default.
+#     saber-27b-tp1-serve; defaults MAX_CTX 131072, MAX_SEQS 1 (one conversation at a time, up to ~128k tokens;
+#     other requests queue), BATCHES = the rungs of 1,2,4,8 up to MAX_SEQS (every env knob below still
+#     overrides). MAX_SEQS=2 or 4 serves several at once (they share the KV: ~171k / ~127k tokens at
+#     MAX_CTX=65536); one card boots up to ~176k context at 1 sequence (163840 leaves ~1.1k spare blocks). `--tp 1 stop` stops only the TP=1 container. TP=2 (`--tp 2`) is the default.
 #   tools/serve_27b.sh --weights macaq|quark|nvfp4 [--tp 1] ...   # which 27B weights (WEIGHTS=... in the environment
 #     does the same). macaq (the default): the MACaQ pack above. quark: amd/Qwen3.8-27B-Quark-AWQ-MXFP4 as
 #     published (qwen38-27b-quark-awq-mxfp4[-tp1], `tools/fetch_packs.sh 27b-quark[-tp1]` or tools/build_packs.sh).
@@ -115,13 +117,17 @@ else
   [ -z "${HIP_DEVICES:-}" ] || { echo "TP=1 takes DEVICE=<one HIP device>, not HIP_DEVICES" >&2; exit 2; }
   DEVICE=${DEVICE:-0}
   [[ "$DEVICE" =~ ^[0-9]+$ ]] || { echo "DEVICE=$DEVICE: TP=1 serves on ONE HIP device index" >&2; exit 2; }
-  MAX_CTX=${MAX_CTX:-65536}
+  MAX_CTX=${MAX_CTX:-131072}
   if [ "$WEIGHTS" != nvfp4 ]; then TIER=${TIER:-qwen38-27b-$Q-tp1}; DRAFT=${DRAFT:-qwen38-dflash2-drafter$QD-tp1}
   else TIER=${TIER:-qwen38-27b-nvfp4-devfinal-tp1-fp8head}; DRAFT=${DRAFT:-qwen38-dflash2-drafter-tp1-fp8head}; fi
   TP_ARGS="--engine-tp 1 --engine-device 0"
   HIP_DEVICES=$DEVICE
-  BATCHES=${BATCHES:-1,2,4}
-  MAX_SEQS=${MAX_SEQS:-4}
+  MAX_SEQS=${MAX_SEQS:-1}
+  [[ "$MAX_SEQS" =~ ^[0-9]+$ ]] && [ "$MAX_SEQS" -ge 1 ] || { echo "MAX_SEQS=$MAX_SEQS: a sequence count >= 1" >&2; exit 2; }
+  # the engine refuses a decode batch larger than its sequences: the rungs of 1,2,4,8 up to MAX_SEQS
+  if [ -z "${BATCHES:-}" ]; then
+    BATCHES=1; for b in 2 4 8; do [ "$b" -le "$MAX_SEQS" ] && BATCHES+=",$b"; done
+  fi
   FETCH=27b$QF-tp1
 fi
 if [ "$WEIGHTS" != nvfp4 ]; then TOKENIZER=${TOKENIZER:-/work/.cache/quark27b.tokenizer.json}

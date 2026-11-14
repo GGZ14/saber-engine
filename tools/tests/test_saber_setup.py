@@ -159,9 +159,9 @@ class SharedConfig(unittest.TestCase):
         self.assertEqual((back["tp"], back["gpu1"], back["ctx27"], back["seqs"]),
                          ("1", "1", S.TP1_CTX_DEFAULT, S.TP1_SEQS_DEFAULT))
         # a TP=1 value other than the single-card default is an override
-        back["ctx27"] = "131072"
+        back["ctx27"] = "65536"
         doc1, _ = S.console_from_cfg(back, tomllib.loads(text))
-        self.assertEqual(doc1["engine"]["flags"], {"--engine-max-ctx": 131072})
+        self.assertEqual(doc1["engine"]["flags"], {"--engine-max-ctx": 65536})
         # back to TP=2: the field flips, the context goes back to the TP=2 default
         S.set_tp(back, "2")
         back["ctx27"] = "262144"
@@ -175,6 +175,11 @@ class SharedConfig(unittest.TestCase):
         env, argv = S.build_launch(cfg2)
         self.assertEqual(argv[:3], ["tools/serve_27b.sh", "--tp", "1"])
         self.assertEqual(env, {"DEVICE": "1"})
+        # the single-card default is one conversation at a time, up to 131,072 tokens
+        self.assertEqual((S.TP1_SEQS_DEFAULT, S.TP1_CTX_DEFAULT), ("1", "131072"))
+        cfg2["seqs"] = "4"
+        env, _ = S.build_launch(cfg2)
+        self.assertEqual(env, {"DEVICE": "1", "MAX_SEQS": "4"})
 
     def test_a_version_4_tp1_file_migrates(self):
         # what this tool wrote for TP=1 before config version 5: flag overrides of the TP=2 preset
@@ -190,7 +195,9 @@ class SharedConfig(unittest.TestCase):
         e = doc["engine"]
         self.assertEqual(doc["version"], S.CONSOLE_CONFIG_VERSION)
         self.assertEqual((e["tp"], e["device"]), (1, 1))
-        self.assertEqual(e["flags"], {"--engine-max-seqs": 2, "--vision": "lazy"})
+        # the old single-card context and sequences stay (the boot the file had); the batches go
+        # (the launcher and the console derive them from the sequences)
+        self.assertEqual(e["flags"], {"--engine-max-ctx": 65536, "--engine-max-seqs": 2, "--vision": "lazy"})
         # a version-5 file round-trips its TP without any override
         self.assertEqual(S.tp_of(doc), ("1", "1"))
         self.assertEqual(S.tp_of({"engine": {"preset": "flashnext", "tp": 2}}), ("2", "0"))

@@ -307,10 +307,11 @@ impl EngineConfig {
         use crate::compose::tp1;
         let same =
             |v: Option<&FlagValue>, want: &str| v.and_then(FlagValue::arg).as_deref() == Some(want);
+        // the old single-card context / sequences stay overrides (the file keeps the boot it had;
+        // the TP=1 default is 1 sequence at 131,072 since 2026-11-14); the batches go: the
+        // console derives them from the sequences (the old 1,2,4 = 4 sequences' ladder)
         for (k, want) in [
-            ("--engine-decode-batches", tp1::BATCHES.to_string()),
-            ("--engine-max-ctx", tp1::MAX_CTX.to_string()),
-            ("--engine-max-seqs", tp1::MAX_SEQS.to_string()),
+            ("--engine-decode-batches", tp1::V4_BATCHES.to_string()),
             ("--pack", format!("/packs/{}", tp1::PACK)),
             ("--engine-draft-pack", format!("/packs/{}", tp1::DRAFT_PACK)),
         ] {
@@ -1107,10 +1108,16 @@ model = "27b"
         let c = Config::from_toml(v4).unwrap();
         assert_eq!((c.engine.tp, c.engine.device), (1, 1));
         let keys: Vec<&str> = c.engine.flags.keys().map(String::as_str).collect();
-        // a differing value (2 sequences) and the unrelated flags stay overrides
+        // the old context / sequences (the boot the file had) and the unrelated flags stay
+        // overrides; the batches go (derived from the sequences now)
         assert_eq!(
             keys,
-            ["--enable-prefix-caching", "--engine-max-seqs", "--vision"]
+            [
+                "--enable-prefix-caching",
+                "--engine-max-ctx",
+                "--engine-max-seqs",
+                "--vision"
+            ]
         );
         assert_eq!(
             c.engine.flags["--enable-prefix-caching"],

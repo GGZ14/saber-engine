@@ -7,6 +7,7 @@
   import { ui, guarded, refreshStatus } from '../lib/store.svelte.js';
   import { W, loadSetup, loadSystem, loadCatalog, followDownloads, setupCall, copyText, gb } from '../lib/setup.svelte.js';
   import DownloadRow from '../lib/DownloadRow.svelte';
+  import KvTip from '../lib/KvTip.svelte';
 
   const step = $derived(W.setup?.state?.step ?? 'system');
   const steps = $derived((W.setup?.steps ?? []).filter((s) => s.id !== 'done'));
@@ -58,7 +59,7 @@
   }
   const TP_TEXT = {
     2: 'Each card holds half of the model: the full 262,144-token context, 8 sequences and the fastest decode.',
-    1: 'The whole model on one GPU: a 65,536-token context and 4 sequences by default (one card has less memory for the cache), and the other card stays free.',
+    1: 'The whole model on one GPU, and the other card stays free. One conversation at a time, up to ~128k tokens of context; other requests queue. Choose 2 or 4 sequences in Settings if several people or agents use it at once (they share the KV: ~171k / ~127k tokens at a 64k context).',
   };
   const cardsText = (n) => `This machine has ${n} supported card${n === 1 ? '' : 's'}.`;
   const VERDICT = { fits: 'Fits this machine', tight: 'Fits, with a caveat', 'no-fit': 'Does not fit this machine' };
@@ -382,6 +383,7 @@
             </div>
             {#if !estimate.fits}<p class="t-fail" role="alert">The estimate says this does not fit: pick another profile or a smaller context in Settings.</p>{/if}
             {#each estimate.warnings ?? [] as w}<p class="note">{w}</p>{/each}
+            <KvTip {estimate} />
             <p class="note">An estimate from the pack and the model's config; the engine checks the real budget when it starts.</p>
           {/if}
           {#if estErr}<p class="t-fail">{estErr}</p>{/if}

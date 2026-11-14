@@ -87,38 +87,38 @@ pub fn builtin_for(section: &str, tp: u32) -> Vec<Profile> {
             p(
                 "Balanced",
                 "serve",
-                "The single-card launcher's defaults, unchanged (tools/serve_27b.sh --tp 1): 4 \
-                 sequences at a 65,536-token context, decode batches 1,2,4.",
+                "The single-card defaults (tools/serve_27b.sh --tp 1): one conversation at a time with \
+                 up to 131,072 tokens of context, about 62k tokens of KV to spare for the prefix \
+                 cache; other requests queue.",
                 &[],
             ),
             p(
                 "Max throughput",
                 "serve",
-                "4 sequences at a 16,384-token context, so all four fit at full context in the one \
-                 card's KV pool.",
-                &[("--engine-max-ctx", Int(16_384))],
+                "Several users or agents at once: 4 sequences at a 16,384-token context (all four fit \
+                 at full context in the one card's KV).",
+                &[("--engine-max-seqs", Int(4)), ("--engine-max-ctx", Int(16_384))],
             ),
             p(
                 "Lowest latency",
                 "serve",
-                "2 sequences: each running request keeps a small decode batch, the rest queue.",
-                &[("--engine-max-seqs", Int(2))],
+                "One conversation at a 65,536-token context: the smallest step, the most spare KV for \
+                 cached prefixes.",
+                &[("--engine-max-ctx", Int(65_536))],
             ),
             p(
                 "Long context",
                 "serve",
-                "A 131,072-token context with 1 sequence: the longest conversation one card holds. \
-                 Check the memory estimate: a larger single-card pack leaves a smaller pool.",
-                &[
-                    ("--engine-max-ctx", Int(131_072)),
-                    ("--engine-max-seqs", Int(1)),
-                ],
+                "One conversation of up to 163,840 tokens (measured to boot with ~1,100 KV blocks \
+                 spare; 176,128 is the last value that boots, with almost nothing spare).",
+                &[("--engine-max-ctx", Int(163_840))],
             ),
             p(
                 "Low power",
                 "serve",
-                "2 sequences (less sustained load). The GPU power cap is never changed by the console.",
-                &[("--engine-max-seqs", Int(2))],
+                "One conversation at a 65,536-token context (less work a step). The GPU power cap is \
+                 never changed by the console.",
+                &[("--engine-max-ctx", Int(65_536))],
             ),
         ];
     }
@@ -532,13 +532,10 @@ mod tests {
         // the TP=2 list's entry applies in its TP=1 form
         let long2 = two.iter().find(|p| p.name == "Long context").unwrap();
         let out = apply_profile(&c, long2).unwrap();
-        assert_eq!(
-            out.engine.flags.get("--engine-max-seqs"),
-            Some(&FlagValue::Int(1))
-        );
+        assert_eq!(out.engine.flags.get("--engine-max-seqs"), None);
         assert_eq!(
             out.engine.flags.get("--engine-max-ctx"),
-            Some(&FlagValue::Int(131_072))
+            Some(&FlagValue::Int(163_840))
         );
         assert_eq!((out.engine.tp, out.engine.device), (1, 1));
         for p in &one {

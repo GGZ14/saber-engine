@@ -604,13 +604,16 @@ pub fn validate(cfg: &Config, schema: &SchemaIndex, cmd: &EngineCommand, facts: 
         }
     }
     if let Some(est) = &facts.estimate {
+        if let Some(why) = &est.refusal {
+            r.err(ctx_flag, why.clone());
+        }
         if let Some(s) = est.seqs_at_ctx {
             let field = if preset == Preset::Flashnext {
                 ctx_flag
             } else {
                 "--engine-max-seqs"
             };
-            if s == 0 {
+            if s == 0 && est.refusal.is_none() {
                 r.warn(
                     ctx_flag,
                     format!(
@@ -635,6 +638,40 @@ pub fn validate(cfg: &Config, schema: &SchemaIndex, cmd: &EngineCommand, facts: 
         }
     }
     if preset == Preset::Qwen27b {
+        if let (Some(b), Some(s)) = (
+            val(&m, "--engine-decode-batches"),
+            num(&m, "--engine-max-seqs"),
+        ) {
+            let big: Vec<u64> = b
+                .split(',')
+                .filter_map(|x| x.trim().parse::<u64>().ok())
+                .filter(|&x| x > s as u64)
+                .collect();
+            if !big.is_empty() {
+                r.err(
+                    "--engine-decode-batches",
+                    format!(
+                        "the engine refuses a decode batch larger than its sequences: batch {} > \
+                         --engine-max-seqs {s}; use batches up to {s} (e.g. {}), or reset the \
+                         batches and the console trims the ladder for you",
+                        big.iter()
+                            .map(u64::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        crate::estimate::trim_batches(
+                            &b.split(',')
+                                .filter_map(|x| x.trim().parse().ok())
+                                .collect::<Vec<u64>>(),
+                            s as u64
+                        )
+                        .iter()
+                        .map(u64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                    ),
+                );
+            }
+        }
         let top = val(&m, "--engine-decode-batches").map(|b| {
             b.split(',')
                 .filter_map(|x| x.trim().parse::<u64>().ok())
@@ -1030,10 +1067,14 @@ mod tests {
         assert!(fields(&r.errors).contains(&"--engine-tp"), "{r:?}");
         assert!(fields(&r.warnings).contains(&"--engine-device"), "{r:?}");
         c.engine.flags.clear();
-        // TP=1 with 8 sequences on the 1,2,4 ladder warns (the launcher pairs 8 with ...,8)
+        // 8 sequences with explicit batches 1,2,4 warns (the launcher pairs 8 with ...,8)
         c.engine
             .flags
             .insert("--engine-max-seqs".into(), FlagValue::Int(8));
+        c.engine.flags.insert(
+            "--engine-decode-batches".into(),
+            FlagValue::Str("1,2,4".into()),
+        );
         let r = run(&c, &two);
         assert!(fields(&r.warnings).contains(&"--engine-max-seqs"), "{r:?}");
         c.engine.flags.insert(
@@ -1052,6 +1093,65 @@ mod tests {
                 .any(|i| i.message.contains("two cards only")),
             "{r:?}"
         );
+    }
+
+    /// D and E of the TP=1 hardware run: 1 sequence boots with batches 1, 2 with 1,2; a batch
+    /// above the sequences makes the engine exit, so an explicit one is a field error.
+    /// A context past the engine's boot check is a field error naming the ceiling.
+    #[test]
+    fn a_context_past_the_ceiling_is_a_field_error() {
+        let mut c = Config::default();
+        c.engine.preset = Preset::Qwen27b;
+        c.engine.tp = 1;
+        let f = Facts {
+            estimate: Some(Estimate {
+                seqs_at_ctx: Some(0),
+                refusal: Some(
+                    "the engine will refuse to start: ... the longest context at 1 sequence(s) is about 177152"
+                        .into(),
+                ),
+                ..Estimate::default()
+            }),
+            ..Facts::default()
+        };
+        let r = run(&c, &f);
+        assert_eq!(fields(&r.errors), ["--engine-max-ctx"]);
+        assert!(r.errors[0].message.contains("177152"));
+    }
+
+    #[test]
+    fn decode_batches_may_not_exceed_the_sequences() {
+        let mut c = Config::default();
+        c.engine.preset = Preset::Qwen27b;
+        c.engine.tp = 1;
+        c.engine
+            .flags
+            .insert("--engine-max-seqs".into(), FlagValue::Int(1));
+        // the preset's 1,2,4 is trimmed by the composition: no error
+        assert!(
+            run(&c, &Facts::default()).ok,
+            "{:?}",
+            run(&c, &Facts::default()).errors
+        );
+        c.engine.flags.insert(
+            "--engine-decode-batches".into(),
+            FlagValue::Str("1,2,4".into()),
+        );
+        let r = run(&c, &Facts::default());
+        assert_eq!(fields(&r.errors), ["--engine-decode-batches"]);
+        assert!(r.errors[0].message.contains("e.g. 1"), "{r:?}");
+        c.engine
+            .flags
+            .insert("--engine-decode-batches".into(), FlagValue::Str("1".into()));
+        assert!(run(&c, &Facts::default()).ok);
+        c.engine
+            .flags
+            .insert("--engine-max-seqs".into(), FlagValue::Int(2));
+        c.engine.flags.insert(
+            "--engine-decode-batches".into(),
+            FlagValue::Str("1,2".into()),
+        );
+        assert!(run(&c, &Facts::default()).ok);
     }
 
     #[test]

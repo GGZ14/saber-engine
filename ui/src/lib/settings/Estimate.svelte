@@ -3,6 +3,7 @@
   // an ESTIMATE: the engine's own ledger at boot is the truth and refuses what does not fit.
   import { S } from '../settings.svelte.js';
   import { bytes, int } from '../api.js';
+  import KvTip from '../KvTip.svelte';
 
   const e = $derived(S.check?.estimate ?? null);
   const parts = $derived.by(() => {
@@ -62,11 +63,13 @@
       {#if e.drafter_bytes != null}<dt>Drafter {card}</dt><dd>{bytes(e.drafter_bytes)}</dd>{/if}
       {#if e.state_bytes != null}<dt>GDN state</dt><dd>{bytes(e.state_bytes)}</dd>{/if}
       {#if e.kv_bytes != null}<dt>{e.law === 'flashnext' ? 'KV hot pool' : 'KV pool'}</dt><dd>{bytes(e.kv_bytes)}</dd>{/if}
+      {#if e.draft_kv_bytes}<dt>Drafter KV</dt><dd>{bytes(e.draft_kv_bytes)}</dd>{/if}
       {#if e.kv_ram_bytes != null}<dt>KV in host RAM / card</dt><dd>{bytes(e.kv_ram_bytes)}</dd>{/if}
       {#if e.kv_bytes_per_token != null}<dt>KV per token {card}</dt><dd>{bytes(e.kv_bytes_per_token)}</dd>{/if}
       {#if e.expert_slots != null}<dt>Expert slots in VRAM</dt><dd>{int(e.expert_slots)}{e.expert_records ? ` of ${int(e.expert_records)}` : ''}</dd>{/if}
     </dl>
     {#each e.warnings as w}<p class="warn">{w}</p>{/each}
+    <KvTip estimate={e} />
     <details class="notes">
       <summary>How this is estimated</summary>
       <ul>{#each e.notes as n}<li>{n}</li>{/each}</ul>

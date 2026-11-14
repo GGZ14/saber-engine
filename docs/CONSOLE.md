@@ -74,8 +74,9 @@ While `config.toml` is absent or the setup is unfinished, the console opens the 
    with resume, sha256 verification and progress (the list survives a console restart: a running
    download comes back paused, resume continues from its `.part` files). The 27B asks **how many
    cards**: two (TP=2, each card holds half of the model: the full 262,144-token context and 8
-   sequences) or one (TP=1, the whole model on one GPU with the single-card `-tp1` packs: 65,536
-   tokens and 4 sequences by default, the other card stays free), and which card. The console
+   sequences) or one (TP=1, the whole model on one GPU with the single-card `-tp1` packs: one
+   conversation at a time with up to ~128k tokens of context by default, other requests queue;
+   2 or 4 sequences serve several at once; the other card stays free), and which card. The console
    counts the supported GPUs and recommends TP=2 with two, TP=1 with one; with one GPU TP=2 is
    refused. Flash-Next runs on two cards only (no single-card pack exists).
 3. **Profile**: Balanced / Max throughput / Lowest latency / Long context / Low power, with the
@@ -116,7 +117,7 @@ layout" at the bottom of the page forgets it).
 - **Parallelism** (the Engine panel, the 27B): Two cards (TP=2) or One card (TP=1) and the card.
   It is `engine.tp` / `engine.device` in `config.toml`, not a flag override: TP=1 composes exactly
   `tools/serve_27b.sh --tp 1`'s boot (`--engine-tp 1 --engine-device 0`, no peer, the `-tp1` target
-  and drafter packs, `--engine-max-ctx 65536 --engine-max-seqs 4 --engine-decode-batches 1,2,4`) in
+  and drafter packs, `--engine-max-ctx 131072 --engine-max-seqs 1 --engine-decode-batches 1`: one conversation at a time) in
   the container `saber-27b-tp1-serve` with `HIP_VISIBLE_DEVICES=<card>` (inside it the card is
   device 0). Switching moves a target / drafter pack that names one of the catalog's packs to the
   same pack cut for the other TP (a pack is cut for one TP; the validator refuses a mismatch by
@@ -126,6 +127,39 @@ layout" at the bottom of the page forgets it).
   (the unsplit weights of the `-tp1` packs, every KV head, each sequence's whole GDN state), and
   uses the engine's own ledger law (`lean`: budget 31,744 MiB, KV headroom 848 MiB, in place of
   `--engine-budget-mib` / `--engine-kv-headroom-mib`; `--engine-ledger today` keeps the flags).
+- **KV cache: context vs sequences.** The estimate follows the engine's own 27B ledger (fitted to
+  five TP=1 boots of the MACaQ `-tp1` pair within 0.1 %, and within 1 % of the NVFP4 pair's measured
+  168,768 tokens) and shows, beside the figure, what fewer sequences or a shorter context would
+  give, computed by the same law. Measured at TP=1 (one R9700, MACaQ, 2026-11-14):
+
+  | context | sequences (batches) | KV tokens |
+  |---|---|---|
+  | 65,536 | 4 (1,2,4) | 127,712 (1 full-length session at a time) |
+  | 32,768 | 4 | 127,904 |
+  | 16,384 | 4 | 147,552 |
+  | 65,536 | 2 (1,2) | 171,248 |
+  | 65,536 | 1 (1) | 213,824 |
+
+  | 131,072 | 1 (1), **the TP=1 default** since 2026-11-14 | 192,832 (3,860 blocks = ~62k tokens spare) |
+  | 163,840 | 1 | 182,336 (1,156 blocks spare) |
+  | 176,128 | 1 | 178,400 (142 blocks spare: the last value that boots) |
+  | 180,224 | 1 | refused at boot (the ledger's 11,114 blocks < the 11,265 one sequence needs) |
+
+  Sequences are the lever: each one holds its own model state (the GDN snapshots) on the card.
+  A shorter context frees only the drafter's KV pages, which share the pool with the target's
+  blocks until the context is small (16k), so halving 64k to 32k gives almost nothing. For one
+  long conversation at a time pick the Long context profile (1 sequence); for several users keep
+  the sequences and lower the context.
+- **The boot check.** The engine refuses to start when one sequence at the max context does
+  not fit the ledger's KV blocks (`max_ctx / 16 + 1`); the estimate computes the same check, so a
+  context past the ceiling is a field error naming it (at TP=1, MACaQ, 1 sequence: ~177k; the
+  tip shows the ceiling for each sequence count). The TP=1 default is one conversation of up to
+  131,072 tokens with ~62k tokens spare for the prefix cache; the Settings Engine panel's
+  Sequences control serves several at once (2 or 4, which share the KV).
+- **Decode batches never exceed the sequences**: the engine refuses a batch larger than its
+  sequence count, so with fewer sequences than the preset's ladder (1,2,4 at TP=1, 1,2,3,4,8 at
+  TP=2) the console trims the ladder (2 sequences -> 1,2; 1 -> 1). Batches you set yourself are
+  kept, and one above the sequences is a field error.
 - On/off flags whose engine default is on (`--enable-prefix-caching`) are toggles: off writes
   `--enable-prefix-caching off` (a bare `false` in `config.toml` means the same), on needs no flag.
 - Apply = save, drain (running + waiting requests reach 0, `engine.drain_timeout_s`), stop,

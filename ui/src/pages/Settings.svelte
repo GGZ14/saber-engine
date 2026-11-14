@@ -39,6 +39,18 @@
   const cardChoices = $derived(cards.length ? cards.map((g, i) => ({ i, label: `Card ${i}${g.name ? ` · ${g.name}` : ''}` })) : [{ i: 0, label: 'Card 0' }, { i: 1, label: 'Card 1' }]);
   const tp = $derived(S.draft?.engine?.tp ?? 2);
   const oneGpu = $derived(cards.length === 1);
+  // the sequences: the TP's default unless overridden; changing them drops explicit batches
+  // (the console derives the batches from the sequences)
+  const seqsDefault = $derived(tp === 1 ? 1 : 8);
+  const seqsNow = $derived(Number(S.draft?.engine?.flags?.['--engine-max-seqs'] ?? seqsDefault));
+  function setSeqs(n) {
+    const flags = { ...(S.draft.engine.flags || {}) };
+    if (n === seqsDefault) delete flags['--engine-max-seqs'];
+    else flags['--engine-max-seqs'] = n;
+    delete flags['--engine-decode-batches'];
+    S.draft.engine.flags = flags;
+    scheduleCheck(0);
+  }
   $effect(() => { if (S.draft) extraText = (S.draft.engine.extra_args ?? []).join(' '); });
 
   const section = $derived(sectionOf(S.draft?.engine?.preset));
@@ -171,7 +183,7 @@
                   </label>
                   <label class="opt" class:sel={tp === 1}>
                     <input type="radio" name="tp" value="1" checked={tp === 1} disabled={running} onchange={() => setTp(1, S.draft.engine.device ?? 0)} />
-                    <span><strong>One card (TP=1)</strong> · the whole model on one GPU (the single-card packs): 65,536 tokens and 4 sequences by default, and the other card stays free.</span>
+                    <span><strong>One card (TP=1)</strong> · the whole model on one GPU (the single-card packs), the other card stays free: one conversation at a time with up to ~128k tokens of context by default.</span>
                   </label>
                 </div>
                 {#if tp === 1}
@@ -181,6 +193,12 @@
                     </select>
                   </label>
                 {/if}
+                <label class="card">Sequences (conversations at once)
+                  <select value={String(seqsNow)} onchange={(e) => setSeqs(Number(e.currentTarget.value))}>
+                    {#each [1, 2, 4, 8] as n}<option value={String(n)}>{n}{n === seqsDefault ? ' (default)' : ''}</option>{/each}
+                  </select>
+                </label>
+                <p class="muted note">More sequences share the card's KV cache; the decode batches follow the sequences (1 -> 1, 2 -> 1,2, 4 -> 1,2,4). See the memory estimate for the KV each choice gets.</p>
                 <p class="muted note" id="tp-help">Switching moves the target and drafter packs to the ones cut for that TP (a pack is built for one TP). The memory estimate updates on the right.</p>
               {/if}
             </fieldset>
