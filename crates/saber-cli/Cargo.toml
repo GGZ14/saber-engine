@@ -33,6 +33,8 @@ saber-sched = { path = "../saber-sched" }
 # whole-model forward at TP=1.
 saber-engine = { path = "../saber-engine" }
 saber-serve = { path = "../saber-serve" }
+# `saber ui`: the browser console that supervises the engine.
+saber-console = { path = "../saber-console" }
 saber-vision-input = { path = "../saber-vision-input" }
 serde = { workspace = true }
 toml = { workspace = true }

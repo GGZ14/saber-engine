@@ -98,8 +98,8 @@ pub use park::{
 };
 pub use prefix_cache::{PrefixCache, PrefixCacheCounters, PrefixCachePolicy, PrefixHit};
 pub use sched::{
-    AdmitArmCounters, KvAdmissionSnapshot, SchedCounters, Scheduler, SchedulerError, StepOutcome,
-    StepSummary, KV_ADMISSION_GAUGES,
+    record_step_hists, AdmitArmCounters, KvAdmissionSnapshot, SchedCounters, Scheduler,
+    SchedulerError, StepOutcome, StepSummary, KV_ADMISSION_GAUGES,
 };
 pub use serve::{
     attach_park_tier, build_state, build_state_with, build_state_with_parsers,

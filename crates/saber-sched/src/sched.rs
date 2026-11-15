@@ -793,6 +793,9 @@ struct Seq {
     snap_at: Option<u32>,
     /// FN52, the verify arm: `(entry, tokens, entry's blocks)` to compare against at `tokens`.
     verify_at: Option<(u32, u32, Vec<u32>)>,
+    /// Prompt tokens adopted from the prefix cache (0 = looked, missed; `None`
+    /// = no lookup), reported on the choice's first event (`StepEvent::cached_tokens`).
+    cached_tokens: Option<u32>,
 }
 
 impl Seq {
@@ -1196,6 +1199,13 @@ pub struct Scheduler<E: StepExecutor> {
     /// The executor's memory-plane exposition (FN14: Flash-Next's `saber_xtier_*` / `saber_ple_*`),
     /// asked for once at construction; `/metrics` appends it verbatim.
     memory_plane: Option<Arc<Mutex<String>>>,
+    /// The step-time and queue-wait histograms -- the executor's own (the
+    /// Flash-Next step ledger records them from its joined record) or, for an executor that keeps
+    /// none, the scheduler's, recorded from the step's [`StepTiming`] after the commit (instants
+    /// the step already took; a few relaxed atomic adds, no clock read).
+    step_hists: Arc<saber_serve::hist::StepHistograms>,
+    /// Whether the scheduler records [`Self::step_hists`] itself (no executor histograms).
+    step_hists_own: bool,
     /// LR-F: the step clock (`None` = `Instant::now`, the served path). A replay installs a
     /// virtual one ([`Scheduler::with_clock`]) so walls, arrivals and holds run in model time.
     clock: Clock,
@@ -1321,6 +1331,9 @@ impl<E: StepExecutor> Scheduler<E> {
         let prompt_logprobs_max = executor.max_prompt_logprobs();
         let census = executor.census_mirror();
         let memory_plane = executor.memory_plane();
+        let exec_hists = executor.step_histograms();
+        let step_hists_own = exec_hists.is_none();
+        let step_hists = exec_hists.unwrap_or_default();
         if config.prefix_cache.enabled && !executor.prefix_cache_supported() {
             return Err(SchedulerError::PrefixCacheUnsupported);
         }
@@ -1330,6 +1343,8 @@ impl<E: StepExecutor> Scheduler<E> {
             model,
             census,
             memory_plane,
+            step_hists,
+            step_hists_own,
             executor: Mutex::new(executor),
             stepping: Mutex::new(StepClock::default()),
             core: Mutex::new(Core {
@@ -1549,7 +1564,7 @@ impl<E: StepExecutor> Scheduler<E> {
             rows += chunk_rows(c);
             chunks += c.slots.len() as u32;
         }
-        exec.step_done(&StepTiming {
+        let timing = StepTiming {
             prev_end: clock75.last_end,
             work_at_prev_end: clock75.work_at_end,
             idle_polls: clock75.idle_polls,
@@ -1569,7 +1584,11 @@ impl<E: StepExecutor> Scheduler<E> {
             waiting: census157.0,
             admitted: census157.1,
             admit_lag_us: census157.2,
-        });
+        };
+        exec.step_done(&timing);
+        if self.step_hists_own {
+            record_step_hists(&self.step_hists, &timing);
+        }
         clock75.last_end = Some(end);
         clock75.work_at_end = !core.running.is_empty() || !core.waiting.is_empty();
         clock75.idle_polls = 0;
@@ -2643,6 +2662,10 @@ impl Core {
                     prefix.adopt.as_ref().map_or(0, |h| h.tokens as usize)
                 },
                 ema: self.config.width.new_ema(),
+                cached_tokens: match prefix.adopt.as_ref() {
+                    Some(h) => Some(h.tokens),
+                    None => prefix.looked.then_some(0),
+                },
                 events: w.events.clone(),
                 pending_fork: deferred.then(|| Box::new(seq_admitted.clone())),
                 // A fresh admission has nothing in flight. A restore sets this before it issues.
@@ -4740,6 +4763,8 @@ impl Core {
             spec_decode_accepted_per_pos: self.spec.accepted_per_pos.clone(),
             census: Vec::new(),
             memory_plane: String::new(),
+            step_time: None,
+            queue_wait: None,
         }
     }
 }
@@ -4791,6 +4816,11 @@ fn emit_with_prompt(
         logprobs,
         prompt_logprobs,
         error: None,
+        cached_tokens: if seq.step_index == 0 {
+            seq.cached_tokens
+        } else {
+            None
+        },
     });
     seq.step_index += 1;
 }
@@ -4831,7 +4861,22 @@ fn emit_error(
         logprobs: None,
         prompt_logprobs: None,
         error: Some(message.to_owned()),
+        cached_tokens: None,
     });
+}
+
+/// One step's histogram samples from its [`StepTiming`] -- the wall the step
+/// ledger calls `wall` (from the previous step's end when the gap had work, else from the entry)
+/// for a decode / mixed step, and each admitted request's arrival -> entry wait.
+pub fn record_step_hists(h: &saber_serve::hist::StepHistograms, t: &StepTiming) {
+    let from = match t.prev_end {
+        Some(p) if t.work_at_prev_end => p,
+        _ => t.start,
+    };
+    let wall_ms = t.end.saturating_duration_since(from).as_secs_f64() * 1e3;
+    h.record_step_ms(wall_ms, t.phase == Phase::Prefill && t.decode_rows == 0);
+    let n = (t.admitted as usize).min(t.admit_lag_us.len());
+    h.record_queue_us(&t.admit_lag_us[..n]);
 }
 
 fn emit_owned(
@@ -4855,6 +4900,7 @@ fn emit_owned(
         logprobs,
         prompt_logprobs: None,
         error: None,
+        cached_tokens: None,
     };
     // The receiver is the client's stream; a dropped stream is not an abort, so a send failure is
     // expected and not an error.
@@ -5124,6 +5170,8 @@ impl<E: StepExecutor> Scheduler<E> {
                 stats.memory_plane.clone_from(&t);
             }
         }
+        stats.step_time = Some(self.step_hists.step.snapshot());
+        stats.queue_wait = Some(self.step_hists.queue.snapshot());
         stats
     }
 

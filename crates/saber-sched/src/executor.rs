@@ -605,6 +605,13 @@ pub trait StepExecutor: Send + fmt::Debug + 'static {
         None
     }
 
+    /// The executor's own step-time / queue-wait histograms (the Flash-Next
+    /// step ledger's), asked for once at construction. `None` (the default) = the scheduler
+    /// records them from each step's [`StepTiming`].
+    fn step_histograms(&self) -> Option<std::sync::Arc<saber_serve::hist::StepHistograms>> {
+        None
+    }
+
     /// FN75: one step's scheduler-side clock and shape (the served-step ledger), called with the
     /// executor lock held at the end of every step's commit. The default records nothing.
     fn step_done(&mut self, _t: &StepTiming) {}

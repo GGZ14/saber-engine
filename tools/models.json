@@ -1,0 +1,283 @@
+{
+  "version": 1,
+  "about": "The Saber model catalog: what tools/saber-setup (the terminal wizard) and saber ui (the browser console, which embeds this file at build time) offer to download and serve. A component's `source` is a Hugging Face repo path (listed at download time: sizes and LFS sha256 come from the Hub) or an explicit `files` list with url/size/sha256. `dest` is the root a component lands under: packs = <nvme>/saber-packs, models = <nvme>/models, repo_cache = <repo>/.cache. Fit rules are checked against the console's hardware probe.",
+  "hf_endpoint": "https://huggingface.co",
+  "models": [
+    {
+      "id": "27b",
+      "name": "Qwen3.8-27B-MACaQ-MXFP4",
+      "title": "Qwen3.8-27B-MACaQ-MXFP4 (dense, DFlash2 drafter)",
+      "kind": "27B",
+      "preset": "qwen27b",
+      "description": "The dense 27B model (the MACaQ MXFP4 pack) with the DFlash2 block drafter: the fastest single-stream decode on two cards, a 262,144-token context, eight concurrent sequences.",
+      "launcher": "tools/serve_27b.sh",
+      "container": "saber-27b-serve",
+      "packs": [
+        "qwen38-27b-macaq7-bc3",
+        "qwen38-dflash2-drafter-quarkhead"
+      ],
+      "extra_files": [
+        ".cache/quark27b.tokenizer.json",
+        ".cache/template_corpus.jinja"
+      ],
+      "download_gb": 29,
+      "note": "about 29 GB of packs",
+      "fit": {
+        "min_gpus": 2,
+        "arch_prefixes": [
+          "gfx12"
+        ],
+        "min_vram_gib": 30,
+        "tp": [
+          2
+        ],
+        "min_host_ram_gib": 24,
+        "min_disk_gib": 30
+      },
+      "components": [
+        {
+          "id": "target",
+          "label": "27B target pack (MACaQ MXFP4)",
+          "dest": "packs",
+          "name": "qwen38-27b-macaq7-bc3",
+          "aliases": [],
+          "flag": "--pack",
+          "approx_bytes": 21300000000,
+          "source": {
+            "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER",
+            "path": "qwen38-27b-macaq7-bc3"
+          },
+          "pack_magic": [
+            "rank0.pack",
+            "rank1.pack"
+          ],
+          "required": [
+            "manifest.json"
+          ]
+        },
+        {
+          "id": "drafter",
+          "label": "DFlash2 drafter pack",
+          "dest": "packs",
+          "name": "qwen38-dflash2-drafter-quarkhead",
+          "aliases": [],
+          "flag": "--engine-draft-pack",
+          "approx_bytes": 8200000000,
+          "source": {
+            "hf_repo": "Launch80/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER",
+            "path": "qwen38-dflash2-drafter-quarkhead"
+          },
+          "pack_magic": [
+            "rank0.pack",
+            "rank1.pack"
+          ],
+          "required": []
+        },
+        {
+          "id": "tokenizer",
+          "label": "Tokenizer and chat template",
+          "dest": "repo_cache",
+          "layout": "files",
+          "approx_bytes": 20100000,
+          "source": {
+            "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER",
+            "path": ""
+          },
+          "files": [
+            {
+              "path": "quark27b.tokenizer.json",
+              "from": "tokenizer.json",
+              "config_path": "tokenizer"
+            },
+            {
+              "path": "template_corpus.jinja",
+              "from": "qwen-fixed-v22.3.jinja",
+              "config_path": "chat_template"
+            }
+          ]
+        }
+      ],
+      "fetch": "27b-macaq",
+      "tp1": {
+        "description": "The dense 27B model (the MACaQ MXFP4 pack) on ONE card (TP=1): the single-card packs, a 65,536-token context and four concurrent sequences by default (one card's KV pool is far smaller than two cards').",
+        "container": "saber-27b-tp1-serve",
+        "packs": [
+          "qwen38-27b-macaq7-bc3-tp1",
+          "qwen38-dflash2-drafter-quarkhead-tp1"
+        ],
+        "download_gb": 28,
+        "note": "about 28 GB of single-card (TP=1) packs",
+        "fetch": "27b-macaq-tp1",
+        "fit": {
+          "min_gpus": 1,
+          "arch_prefixes": [
+            "gfx12"
+          ],
+          "min_vram_gib": 30,
+          "tp": [
+            1
+          ],
+          "min_host_ram_gib": 24,
+          "min_disk_gib": 30
+        },
+        "components": [
+          {
+            "id": "target",
+            "label": "27B target pack (MACaQ MXFP4, one card)",
+            "dest": "packs",
+            "name": "qwen38-27b-macaq7-bc3-tp1",
+            "aliases": [],
+            "flag": "--pack",
+            "approx_bytes": 20228825088,
+            "source": {
+              "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER",
+              "path": "qwen38-27b-macaq7-bc3-tp1"
+            },
+            "pack_magic": [
+              "rank0.pack"
+            ],
+            "required": [
+              "manifest.json"
+            ]
+          },
+          {
+            "id": "drafter",
+            "label": "DFlash2 drafter pack (one card)",
+            "dest": "packs",
+            "name": "qwen38-dflash2-drafter-quarkhead-tp1",
+            "aliases": [],
+            "flag": "--engine-draft-pack",
+            "approx_bytes": 7668350976,
+            "source": {
+              "hf_repo": "Launch80/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER",
+              "path": "qwen38-dflash2-drafter-quarkhead-tp1"
+            },
+            "pack_magic": [
+              "rank0.pack"
+            ],
+            "required": []
+          },
+          {
+            "id": "tokenizer",
+            "label": "Tokenizer and chat template",
+            "dest": "repo_cache",
+            "layout": "files",
+            "approx_bytes": 20100000,
+            "source": {
+              "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER",
+              "path": ""
+            },
+            "files": [
+              {
+                "path": "quark27b.tokenizer.json",
+                "from": "tokenizer.json",
+                "config_path": "tokenizer"
+              },
+              {
+                "path": "template_corpus.jinja",
+                "from": "qwen-fixed-v22.3.jinja",
+                "config_path": "chat_template"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "flashnext",
+      "name": "Qwen3.8 Flash-Next",
+      "title": "Qwen3.8 Flash-Next (MoE)",
+      "kind": "Flash-Next",
+      "preset": "flashnext",
+      "description": "The large mixture-of-experts model: experts tiered across VRAM and pinned host RAM, MTP speculative decoding, vision, a 262,144-token context. The best quality; it needs a lot of host RAM and disk.",
+      "launcher": "tools/serve_flashnext.sh",
+      "container": "saber-flashnext-serve",
+      "packs": [
+        "qwen38-flashnext-quark-trunk8"
+      ],
+      "extra_files": [],
+      "download_gb": 240,
+      "note": "about 70 GB of packs plus the 170 GB original checkpoint it reads in place",
+      "fit": {
+        "min_gpus": 2,
+        "arch_prefixes": [
+          "gfx12"
+        ],
+        "min_vram_gib": 30,
+        "tp": [
+          2
+        ],
+        "min_host_ram_gib": 56,
+        "min_disk_gib": 250
+      },
+      "components": [
+        {
+          "id": "target",
+          "label": "Flash-Next pack",
+          "dest": "packs",
+          "name": "qwen38-flashnext-quark-trunk8",
+          "aliases": [
+            "qwen38-flashnext-quark-ep2-trunk8"
+          ],
+          "flag": "--pack",
+          "approx_bytes": 70000000000,
+          "source": {
+            "hf_repo": "Launch80/Qwen3.8-Flash-Next-SABER",
+            "path": "qwen38-flashnext-quark-trunk8"
+          },
+          "pack_magic": [
+            "rank0/dense.pack",
+            "rank1/dense.pack",
+            "shared/dense.pack",
+            "vision/rank0.pack",
+            "vision/rank1.pack"
+          ],
+          "required": [
+            "manifest.json",
+            "rank0/experts.tp2.xtier",
+            "rank1/experts.tp2.xtier",
+            "rank0/trunk8.pack",
+            "rank1/trunk8.pack",
+            "rank0/mtp_fp8.pack",
+            "rank1/mtp_fp8.pack",
+            "rank0/mtp_x4.pack",
+            "rank1/mtp_x4.pack",
+            "shared/hc8.pack"
+          ]
+        },
+        {
+          "id": "checkpoint",
+          "label": "Original checkpoint (read in place by the pack)",
+          "dest": "models",
+          "name": "Qwen3.8-Flash-Next-Quark-MXFP4",
+          "aliases": [],
+          "approx_bytes": 170000000000,
+          "source": {
+            "hf_repo": "amd/Qwen3.8-Flash-Next-Quark-MXFP4",
+            "path": ""
+          },
+          "pack_magic": [],
+          "required": [
+            "config.json",
+            "model-00131-of-00131.safetensors"
+          ]
+        }
+      ],
+      "fetch": "flashnext"
+    },
+    {
+      "id": "mock",
+      "name": "Mock engine",
+      "title": "Mock engine (no GPU, for trying the console)",
+      "kind": "mock",
+      "preset": "mock",
+      "description": "The real serving plane over a scripted executor: no GPU, no download. Use it to try the console, the playground and the dashboards before a model is installed.",
+      "download_gb": 0,
+      "note": "no download",
+      "fit": {
+        "min_gpus": 0
+      },
+      "components": []
+    }
+  ]
+}

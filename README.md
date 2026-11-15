@@ -151,8 +151,8 @@ Task scores tie with the earlier pack (GSM8K 1,282 vs 1,284 of 1,319, thinking m
 740k tokens. The rollback is one flag: `--weights quark` (the Quark AWQ pack, same drafter) or
 `--weights nvfp4` (the previous default). **One card:** `tools/fetch_packs.sh 27b-macaq-tp1` +
 `tools/serve_27b.sh --tp 1` (`qwen38-27b-macaq7-bc3-tp1` 20.2 GB + `qwen38-dflash2-drafter-quarkhead-tp1`
-7.7 GB). Its quality was measured (top-5 KL 0.0228 at context 32,768), but **its speed and whether the
-launcher's TP=1 defaults (65,536 context, 4 sequences) fit have not been measured.**
+7.7 GB). Its quality was measured (top-5 KL 0.0228 at context 32,768); its KV pool was measured at
+boot (below), its speed has not been.
 
 **One card (TP=1).** A pack is cut for one TP degree: its rows and columns are already sharded per
 rank, so the TP=2 packs above (`rank0.pack` + `rank1.pack`) cannot be loaded on one card. Each Hugging
@@ -162,7 +162,26 @@ Face repo hosts the single-card packs as separate `-tp1` folders, each with one 
 ```bash
 tools/serve_27b.sh --tp 1                                     # card 0 (the MACaQ -tp1 packs)
 DEVICE=1 tools/serve_27b.sh --tp 1 --no-build                 # or card 1 (container saber-27b-tp1-serve)
+MAX_SEQS=4 MAX_CTX=65536 tools/serve_27b.sh --tp 1            # several users at once (they share the KV)
 ```
+
+**The TP=1 defaults are one conversation at a time: `MAX_SEQS=1`, `MAX_CTX=131072`, decode batches
+`1`** (the batches follow `MAX_SEQS`: the rungs of 1,2,4,8 up to it; the engine refuses a batch larger
+than its sequences). Other requests queue. KV pool of the MACaQ TP=1 pair, measured at boot (one
+R9700, the 2 GiB P2P pool carved out):
+
+| context | sequences | KV tokens | after one full-length session |
+|---|---|---|---|
+| 131,072 (default) | 1 | 192,832 | 3,860 blocks (~62k tokens) spare for cached prefixes |
+| 163,840 | 1 | 182,336 | 1,156 blocks spare |
+| 176,128 | 1 | 178,400 | 142 blocks spare: the longest context that boots at 1 sequence |
+| 180,224 | 1 | refused at boot | one sequence needs more blocks than the ledger leaves |
+| 65,536 | 1 / 2 / 4 | 213,824 / 171,248 / 127,712 | |
+| 32,768 / 16,384 | 4 | 127,904 / 147,552 | |
+
+The sequence count is the lever (each sequence holds its own model state on the card); a shorter
+context frees only the drafter's KV, which helps little until 16k. No long-prompt request has been
+decoded at these contexts yet: the engine's boot admission check admits the session.
 
 The measurements below are of the **NVFP4** TP=1 packs (`tools/fetch_packs.sh 27b-tp1`, `--weights nvfp4
 --tp 1`: `qwen38-27b-nvfp4-devfinal-tp1-fp8head` 18.5 GB + `qwen38-dflash2-drafter-tp1-fp8head` 6.4 GB),
@@ -170,8 +189,8 @@ measured before MACaQ became the default; the MACaQ and Quark TP=1 packs are lar
 are smaller.
 
 One card holds the 18.5 GB target pack and the 6.4 GB drafter pack, so the KV pool is far smaller than
-TP=2's, and the TP=1 defaults are **`MAX_CTX=65536` per sequence, `MAX_SEQS=4`, decode batches
-`1,2,4`** (draft block 8 and the same verify widths as at TP=2). At those defaults the pool holds 10,548
+TP=2's. Measured with the NVFP4 pair at `MAX_CTX=65536`, `MAX_SEQS=4`, decode batches `1,2,4` (the
+TP=1 defaults before 2026-11-14; draft block 8 and the same verify widths as at TP=2): the pool held 10,548
 blocks = 168,768 tokens, about 2.5 full-length sequences. Measured on one R9700 (card 0 at a 210 W cap;
 ROCm 10.1 dev image; the optional 2 GiB P2P pool carved out of the card):
 
@@ -204,7 +223,7 @@ numerics, not a reproduction of AMD's evaluation. Measured speed is on the
 **One card:** `tools/fetch_packs.sh 27b-quark-tp1` + `tools/serve_27b.sh --weights quark --tp 1`
 (packs `qwen38-27b-quark-awq-mxfp4-tp1` 19.8 GB + `qwen38-dflash2-drafter-quarkhead-tp1` 7.7 GB). The TP=1
 packs were verified offline against the checkpoint and the TP=2 packs, but **a TP=1 boot of them has
-not been measured yet**: whether the launcher's TP=1 defaults (65,536 context, 4 sequences) fit, and its
+not been measured yet**: whether the launcher's TP=1 defaults (131,072 context, 1 sequence) fit, and its
 speed, are unknown. The target is 1.3 GB larger than the NVFP4 TP=1 pack, so the KV pool will be smaller.
 
 <!-- QualityBench results for the Quark 27B are being collected; this section gets them when they are in. -->
@@ -231,6 +250,26 @@ default path puts it. The location is fixed in two places, both absolute paths:
 `manifest.json` (`checkpoint.dir`) and `ple/ple_index.json` (`sources.ckpt_bf16.checkpoint`). The
 index also lists a first-party fp8 copy of the table (half the size), but it is off by default,
 gated on a numerics check, and not part of the hosted files.
+
+## The browser console
+
+Prefer a dashboard? `saber ui` runs in front of the engine: open `http://127.0.0.1:8090/`, follow
+the setup wizard (system check, model download, profile, network and keys, launch), and from then
+on start, monitor, reconfigure and stop the engine from the browser, with live charts, a persistent
+usage history and per-label API keys.
+
+```bash
+tools/serve_console.sh                              # build, then the console on 127.0.0.1:8090
+SABER_CONSOLE=1 tools/serve_27b.sh --no-build       # or: a launcher with the console in front
+SABER_CONSOLE=1 tools/serve_27b.sh --tp 1 --no-build  # the 27B on one card (the console's TP choice)
+tools/serve_console.sh --mock                       # try it without GPUs
+```
+
+Clients can keep using the engine on `:8080`, or go through the console's `/v1` proxy on `:8090`
+to have their requests and key labels recorded. A non-loopback bind needs an admin token
+(`saber ui --gen-admin-token`). The terminal wizard (`tools/saber-setup`) and the console share
+`~/.config/saber/config.toml`. Everything about it, including the HTTP API and the Grafana
+dashboard (`tools/console/grafana-saber.json`), is in [`docs/CONSOLE.md`](docs/CONSOLE.md).
 
 ## Build packs yourself
 
@@ -434,6 +473,7 @@ Without a vision flag the 27B refuses an image part by name.
 | Logs | `podman logs -f saber-27b-serve` (or `docker logs -f ...`) |
 | Exit code of a dead server | `podman wait saber-27b-serve` |
 | Flash-Next | `tools/serve_flashnext.sh` |
+| The browser console in front | `SABER_CONSOLE=1 tools/serve_27b.sh` or `tools/serve_console.sh` |
 
 ### Troubleshooting
 
@@ -478,6 +518,9 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 `tools/dev.sh`. Compile a kernel with `tools/hipcc.sh crates/saber-kernels/hip/<k>.hip out.hsaco`.
 `saber --help` lists the CLI: `serve`, `engine` (one-prompt gate with ms/step), `probe`, `gate`,
 `explain` and the per-feature gates.
+The console's browser app lives in `ui/src`; `tools/console/build_ui.sh` rebuilds `ui/dist` (a
+pinned, checksummed Node inside the dev image, no GPU) and the result is committed, so a plain
+`cargo build` needs no Node.
 
 ## Reproducing the code objects
 
@@ -525,6 +568,7 @@ decode GEMM's reduce epilogue) regenerate them exactly.
 | `crates/saber-cli` | the `saber` binary |
 | `crates/saber-engine`, `-exec`, `-plan`, `-sched` | engine, execution graphs, launch plan, scheduler |
 | `crates/saber-serve` | the OpenAI HTTP plane |
+| `crates/saber-console`, `ui/` | `saber ui`, the browser console (the SPA's source; `ui/dist` is the committed build) |
 | `crates/saber-kernels`, `prebuilt/gfx1201` | HIP kernel sources and their compiled code objects with manifests |
 | `crates/saber-mem`, `-model` | weight packs and the model graph |
 | `tools/build_packs.sh`, `tools/pack/` | the pack builders and their self-checks |

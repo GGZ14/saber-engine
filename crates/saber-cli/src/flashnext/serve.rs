@@ -373,6 +373,9 @@ impl StepExecutor for FnExec {
     fn memory_plane(&self) -> Option<Arc<Mutex<String>>> {
         Some(Arc::clone(&self.plane))
     }
+    fn step_histograms(&self) -> Option<Arc<saber_serve::hist::StepHistograms>> {
+        self.ledger.lock().ok().map(|l| l.histograms())
+    }
     fn step_done(&mut self, t: &saber_sched::StepTiming) {
         if let Ok(mut l) = self.ledger.lock() {
             l.push_sched(*t);

@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::engine::{EngineStats, FinishReason};
+use crate::hist::{HistSnapshot, Histogram, LocalHist};
 
 /// Counters the serving plane owns. Queue depth and the spec-decode counters come
 /// from the engine at render time.
@@ -46,6 +47,20 @@ pub struct Metrics {
     /// FN126: images the arena clamp downscaled (their resize target at the booted arena's pixel
     /// ceiling differs from prod's own) -- answered, not refused.
     image_downscaled: AtomicU64,
+    /// The request-side latency histograms, recorded once per request at its
+    /// end from the HTTP task's own instants ([`crate::requests::RequestTracker`]) -- nothing on
+    /// the step path.
+    ttft: Histogram,
+    itl: Histogram,
+    e2e: Histogram,
+}
+
+/// The three request-side histograms at one instant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LatencySnapshots {
+    pub ttft: HistSnapshot,
+    pub itl: HistSnapshot,
+    pub e2e: HistSnapshot,
 }
 
 /// The image-refusal labels, in exposition order (`InputError::label` plus `disabled`, a vision
@@ -82,7 +97,73 @@ impl Metrics {
             image_patches: AtomicU64::new(0),
             image_refused: std::array::from_fn(|_| AtomicU64::new(0)),
             image_downscaled: AtomicU64::new(0),
+            ttft: Histogram::new(crate::hist::TTFT_BOUNDS_US),
+            itl: Histogram::new(crate::hist::STEP_BOUNDS_US),
+            e2e: Histogram::new(crate::hist::E2E_BOUNDS_US),
         }
+    }
+
+    /// An empty per-request inter-token accumulator (folded in by [`Self::observe_request`]).
+    #[must_use]
+    pub fn itl_local(&self) -> LocalHist {
+        self.itl.local()
+    }
+
+    /// One request's end: its TTFT (when a token came), its inter-token gaps, and -- for a
+    /// request that completed (200) -- its end-to-end latency.
+    pub fn observe_request(
+        &self,
+        ttft: Option<std::time::Duration>,
+        itl: &LocalHist,
+        completed: bool,
+        e2e: std::time::Duration,
+    ) {
+        if let Some(t) = ttft {
+            self.ttft.observe(t);
+        }
+        if itl.count() > 0 {
+            self.itl.merge(itl);
+        }
+        if completed {
+            self.e2e.observe(e2e);
+        }
+    }
+
+    #[must_use]
+    pub fn latency_snapshots(&self) -> LatencySnapshots {
+        LatencySnapshots {
+            ttft: self.ttft.snapshot(),
+            itl: self.itl.snapshot(),
+            e2e: self.e2e.snapshot(),
+        }
+    }
+
+    #[must_use]
+    pub fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    /// `(prompt, generation)` tokens counted so far.
+    #[must_use]
+    pub fn token_totals(&self) -> (u64, u64) {
+        (
+            self.prompt_tokens.load(Ordering::Relaxed),
+            self.generation_tokens.load(Ordering::Relaxed),
+        )
+    }
+
+    /// `request_success_total` by reason, in exposition order.
+    #[must_use]
+    pub fn finish_counts(&self) -> [(&'static str, u64); 4] {
+        [
+            ("stop", self.success_stop.load(Ordering::Relaxed)),
+            ("length", self.success_length.load(Ordering::Relaxed)),
+            (
+                "tool_calls",
+                self.success_tool_calls.load(Ordering::Relaxed),
+            ),
+            ("abort", self.success_abort.load(Ordering::Relaxed)),
+        ]
     }
 
     /// One request's images were admitted: `count` images, `patches` patches in all.
@@ -386,6 +467,54 @@ impl Metrics {
             "saber_fn126_downscaled_total{l} {}.0",
             self.image_downscaled.load(Ordering::Relaxed)
         );
+        // The latency histograms (seconds; the OpenAI-server family names under `saber:`).
+        // The step-side pair comes from the engine (the Flash-Next step ledger, or the scheduler);
+        // an engine that keeps none exposes the family empty, so a scrape can tell "no samples"
+        // from "an old binary".
+        let inner = format!(
+            "engine=\"{}\",model_name=\"{}\"",
+            self.engine_label, self.model_name
+        );
+        let lat = self.latency_snapshots();
+        let step = stats
+            .step_time
+            .clone()
+            .unwrap_or_else(|| HistSnapshot::empty(crate::hist::STEP_BOUNDS_US));
+        let queue = stats
+            .queue_wait
+            .clone()
+            .unwrap_or_else(|| HistSnapshot::empty(crate::hist::QUEUE_BOUNDS_US));
+        for (snap, name, help) in [
+            (
+                &lat.ttft,
+                "saber:time_to_first_token_seconds",
+                "Histogram of time to first token in seconds (arrival to the first token-bearing \
+                 event).",
+            ),
+            (
+                &lat.itl,
+                "saber:inter_token_latency_seconds",
+                "Histogram of the gap between successive token-bearing events (one SSE update) \
+                 in seconds.",
+            ),
+            (
+                &lat.e2e,
+                "saber:e2e_request_latency_seconds",
+                "Histogram of end-to-end latency of completed requests in seconds.",
+            ),
+            (
+                &queue,
+                "saber:request_queue_time_seconds",
+                "Histogram of time requests spent waiting for admission in seconds.",
+            ),
+            (
+                &step,
+                "saber:step_time_seconds",
+                "Histogram of engine decode/mixed step wall time in seconds.",
+            ),
+        ] {
+            snap.render(&mut out, name, help, &inner);
+        }
         // The engine's shutdown census, live (ws-v8): one family per counter, under the name the
         // census table in `docs/SHADOW.md` §2 gives it. Rendered in the order the engine declared
         // them, which groups each census line's counters together.
@@ -474,6 +603,7 @@ mod tests {
             spec_decode_accepted_per_pos: vec![7, 6, 5, 4, 2, 1, 1],
             census: Vec::new(),
             memory_plane: String::new(),
+            ..EngineStats::default()
         });
         for line in [
             "saber:num_requests_running{engine=\"0\",model_name=\"Qwen3.8\"} 2.0",

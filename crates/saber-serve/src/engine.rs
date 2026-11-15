@@ -105,6 +105,9 @@ pub struct StepEvent {
     /// an OpenAI error body (a 500 for a non-streaming request, an `error` event before `[DONE]`
     /// on a stream), which is what prod does with an engine exception.
     pub error: Option<String>,
+    /// Prompt tokens the engine served from its prefix cache, on the choice's
+    /// FIRST event only (`None` = the engine does not say, or no cache).
+    pub cached_tokens: Option<u32>,
 }
 
 /// What the serving plane hands the engine.
@@ -199,6 +202,11 @@ impl std::fmt::Debug for Submission {
 /// plane counts those itself, because it is what computes `usage`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EngineStats {
+    /// The engine step's wall (decode / mixed steps) and the queue wait
+    /// (arrival -> admission), from the step ledger or the scheduler's step record. `None` =
+    /// the engine keeps none (the family renders empty).
+    pub step_time: Option<crate::hist::HistSnapshot>,
+    pub queue_wait: Option<crate::hist::HistSnapshot>,
     pub num_requests_running: u64,
     pub num_requests_waiting: u64,
     pub spec_decode_num_drafts: u64,
@@ -422,6 +430,11 @@ struct MockInner {
     accepted_per_pos: Vec<u64>,
     aborted: Vec<RequestId>,
     submitted: Vec<EngineRequest>,
+    /// The scripted step gaps, as a step histogram (the queue wait is 0: the
+    /// mock admits at submit).
+    steps: crate::hist::StepHistograms,
+    /// What every request's first event reports as `cached_tokens` ([`MockEngine::set_cached_tokens`]).
+    cached: Option<u32>,
 }
 
 /// An [`Engine`] that replays scripts. Used by every test in this crate.
@@ -467,6 +480,11 @@ impl MockEngine {
             .expect("mock lock")
             .scripts
             .push_back(script);
+    }
+
+    /// Every request's first event reports `n` prefix-cached prompt tokens (the ring's test).
+    pub fn set_cached_tokens(&self, n: Option<u32>) {
+        self.inner.lock().expect("mock lock").cached = n;
     }
 
     /// Reports a non-zero queue depth, for a `/metrics` test.
@@ -539,11 +557,20 @@ impl Engine for MockEngine {
             tokio::spawn(async move {
                 let mut prompt_logprobs = script.prompt_logprobs;
                 for (step_index, step) in script.steps.into_iter().enumerate() {
+                    let t0 = std::time::Instant::now();
                     if !delay.is_zero() {
                         tokio::time::sleep(delay).await;
                     }
+                    let cached;
                     {
                         let mut guard = inner.lock().expect("mock lock");
+                        cached = if step_index == 0 { guard.cached } else { None };
+                        if step_index == 0 {
+                            guard.steps.record_queue_us(&[0]);
+                        }
+                        guard
+                            .steps
+                            .record_step_ms(t0.elapsed().as_secs_f64() * 1e3, false);
                         if guard.aborted.contains(&id) {
                             if live.fetch_sub(1, Ordering::AcqRel) == 1 {
                                 guard.running = guard.running.saturating_sub(1);
@@ -577,6 +604,7 @@ impl Engine for MockEngine {
                         logprobs: step.logprobs,
                         prompt_logprobs: prompt_logprobs.take(),
                         error: step.error,
+                        cached_tokens: cached,
                     };
                     if tx.send(event).await.is_err() {
                         break;
@@ -610,6 +638,8 @@ impl Engine for MockEngine {
             spec_decode_accepted_per_pos: inner.accepted_per_pos.clone(),
             census: Vec::new(),
             memory_plane: String::new(),
+            step_time: Some(inner.steps.step.snapshot()),
+            queue_wait: Some(inner.steps.queue.snapshot()),
         }
     }
 

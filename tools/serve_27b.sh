@@ -9,8 +9,10 @@
 #   tools/serve_27b.sh stop         # stop the server container (whichever of TP=2 / TP=1 is running)
 #   tools/serve_27b.sh --tp 1 [--no-build]   # ONE card (TP=1; or TP=1 in the environment): the -tp1 packs of
 #     the chosen weights (`tools/fetch_packs.sh 27b-macaq-tp1` for the default), on HIP device DEVICE (default 0), container
-#     saber-27b-tp1-serve; defaults MAX_CTX 65536, MAX_SEQS 4, BATCHES 1,2,4 (every env knob below
-#     still overrides). `--tp 1 stop` stops only the TP=1 container. TP=2 (`--tp 2`) is the default.
+#     saber-27b-tp1-serve; defaults MAX_CTX 131072, MAX_SEQS 1 (one conversation at a time, up to ~128k tokens;
+#     other requests queue), BATCHES = the rungs of 1,2,4,8 up to MAX_SEQS (every env knob below still
+#     overrides). MAX_SEQS=2 or 4 serves several at once (they share the KV: ~171k / ~127k tokens at
+#     MAX_CTX=65536); one card boots up to ~176k context at 1 sequence (163840 leaves ~1.1k spare blocks). `--tp 1 stop` stops only the TP=1 container. TP=2 (`--tp 2`) is the default.
 #   tools/serve_27b.sh --weights macaq|quark|nvfp4 [--tp 1] ...   # which 27B weights (WEIGHTS=... in the environment
 #     does the same). macaq (the default): the MACaQ pack above. quark: amd/Qwen3.8-27B-Quark-AWQ-MXFP4 as
 #     published (qwen38-27b-quark-awq-mxfp4[-tp1], `tools/fetch_packs.sh 27b-quark[-tp1]` or tools/build_packs.sh).
@@ -83,6 +85,16 @@ if [ "$STOP" = 1 ]; then
   [ "$stopped" = 1 ] || echo "${j// / or } was not running"
   exit 0
 fi
+# The console in front (docs/CONSOLE.md): `SABER_CONSOLE=1 tools/serve_27b.sh [--no-build] [args]` runs `saber ui`
+# (tools/serve_console.sh), which starts THIS preset's engine from ~/.config/saber/config.toml (seeded from
+# this launcher on a first run) and serves the dashboard on 127.0.0.1:8090. The headless path below is unchanged.
+# The console's 27B preset is the default weights (the MACaQ pack) at either TP: `--tp 1` seeds a single-card
+# config (engine.tp = 1, DEVICE = the card); other packs are picked on its Settings page.
+if [ "${SABER_CONSOLE:-0}" = 1 ]; then
+  [ "$WEIGHTS" = macaq ] || { echo "SABER_CONSOLE=1: the console's 27B preset is the default weights; run this launcher without SABER_CONSOLE for --weights $WEIGHTS (or pick the pack on the console's Settings page)" >&2; exit 2; }
+  NB=(); [ "$BUILD" = 0 ] && NB=(--no-build)
+  DEVICE=${DEVICE:-0} exec "$REPO/tools/serve_console.sh" --preset qwen27b --tp "$TP" "${NB[@]}" "$@"
+fi
 
 case "$WEIGHTS" in
   macaq) Q=macaq7-bc3; QD=-quarkhead; QF=-macaq; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-MXFP4}; WIDTHS=${WIDTHS:-1,5,8} ;;
@@ -105,13 +117,17 @@ else
   [ -z "${HIP_DEVICES:-}" ] || { echo "TP=1 takes DEVICE=<one HIP device>, not HIP_DEVICES" >&2; exit 2; }
   DEVICE=${DEVICE:-0}
   [[ "$DEVICE" =~ ^[0-9]+$ ]] || { echo "DEVICE=$DEVICE: TP=1 serves on ONE HIP device index" >&2; exit 2; }
-  MAX_CTX=${MAX_CTX:-65536}
+  MAX_CTX=${MAX_CTX:-131072}
   if [ "$WEIGHTS" != nvfp4 ]; then TIER=${TIER:-qwen38-27b-$Q-tp1}; DRAFT=${DRAFT:-qwen38-dflash2-drafter$QD-tp1}
   else TIER=${TIER:-qwen38-27b-nvfp4-devfinal-tp1-fp8head}; DRAFT=${DRAFT:-qwen38-dflash2-drafter-tp1-fp8head}; fi
   TP_ARGS="--engine-tp 1 --engine-device 0"
   HIP_DEVICES=$DEVICE
-  BATCHES=${BATCHES:-1,2,4}
-  MAX_SEQS=${MAX_SEQS:-4}
+  MAX_SEQS=${MAX_SEQS:-1}
+  [[ "$MAX_SEQS" =~ ^[0-9]+$ ]] && [ "$MAX_SEQS" -ge 1 ] || { echo "MAX_SEQS=$MAX_SEQS: a sequence count >= 1" >&2; exit 2; }
+  # the engine refuses a decode batch larger than its sequences: the rungs of 1,2,4,8 up to MAX_SEQS
+  if [ -z "${BATCHES:-}" ]; then
+    BATCHES=1; for b in 2 4 8; do [ "$b" -le "$MAX_SEQS" ] && BATCHES+=",$b"; done
+  fi
   FETCH=27b$QF-tp1
 fi
 if [ "$WEIGHTS" != nvfp4 ]; then TOKENIZER=${TOKENIZER:-/work/.cache/quark27b.tokenizer.json}
@@ -134,9 +150,16 @@ if [ -n "$WARM" ]; then
   ARGS+=(--warm-prompts "$OUT/warm-prompts.txt")
 fi
 
-if systemctl --user is-active --quiet qwen_prod_nvfp4; then
-  echo "prod's unit qwen_prod_nvfp4 is ACTIVE; refusing to boot a second server on the cards" >&2; exit 1
-fi
+SERVE_CMD="$SABER serve --engine real $TP_ARGS \
+  --hip-lib /opt/rocm/lib/libamdhip64.so.7 --pack /packs/$TIER --prebuilt ${PREBUILT:-prebuilt/gfx1201} \
+  --tokenizer $TOKENIZER --chat-template $CHAT_TEMPLATE \
+  --engine-max-ctx $MAX_CTX --engine-prefill-rows 96,128,192,256,320,384,512,768,1024,1536,2048 \
+  --engine-decode-batches $BATCHES --engine-decode-widths ${WIDTHS:-1,8} --engine-max-seqs $MAX_SEQS --engine-draft-block ${DRAFT_BLOCK:-8} --engine-draft-pack /packs/$DRAFT \
+  --engine-budget-mib ${BUDGET_MIB:-30500} --engine-rectangular-widths --served-model-name $MODEL --host 0.0.0.0 --port $PORT ${ARGS[*]}"
+# SABER_PRINT_CMD=1: print the engine's argv (one word a line) and exit before any guard, build or
+# boot -- the console's composition test (saber-console `launcher_parity`) compares against it.
+if [ "${SABER_PRINT_CMD:-0}" = 1 ]; then printf '%s\n' $SERVE_CMD; exit 0; fi
+
 if [ "$TP" = 2 ]; then
   if $CTR ps --format '{{.Names}}' | grep -qE '^saber-fn|^saber-flashnext-serve|^saber-27b-tp1-serve'; then
     echo "another saber server or an agent hold holds the cards; stop it or wait:" >&2
@@ -177,12 +200,6 @@ fi
 [ -x "$REPO/$SABER" ] || { echo "no release binary at $SABER" >&2; exit 1; }
 
 CACHE_REAL=$(readlink -f "$REPO/.cache")
-SERVE_CMD="$SABER serve --engine real $TP_ARGS \
-  --hip-lib /opt/rocm/lib/libamdhip64.so.7 --pack /packs/$TIER --prebuilt ${PREBUILT:-prebuilt/gfx1201} \
-  --tokenizer $TOKENIZER --chat-template $CHAT_TEMPLATE \
-  --engine-max-ctx $MAX_CTX --engine-prefill-rows 96,128,192,256,320,384,512,768,1024,1536,2048 \
-  --engine-decode-batches $BATCHES --engine-decode-widths ${WIDTHS:-1,8} --engine-max-seqs $MAX_SEQS --engine-draft-block ${DRAFT_BLOCK:-8} --engine-draft-pack /packs/$DRAFT \
-  --engine-budget-mib ${BUDGET_MIB:-30500} --engine-rectangular-widths --served-model-name $MODEL --host 0.0.0.0 --port $PORT ${ARGS[*]}"
 # FN73: a server that exits is reported with ITS exit code (86 = a rank failed: the log's last
 # line is `saber: FATAL rank R: <reason>`), and this script exits with it -- never a masked 1.
 died() {

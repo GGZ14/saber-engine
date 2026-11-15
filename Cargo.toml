@@ -17,6 +17,7 @@ members = [
   "crates/saber-shadow",
   "crates/saber-test-scratch",
   "crates/saber-cpux",
+  "crates/saber-console",
 ]
 
 [workspace.package]

@@ -1,5 +1,5 @@
 //! The HTTP surface: `/v1/chat/completions`, `/v1/completions`, `/v1/models`,
-//! `/health`, `/metrics`.
+//! `/health`, `/metrics`, and the console's `/v1/stats` + `/v1/requests`.
 //!
 //! **The invariant this module exists to hold: one SSE chunk per engine step.**
 //! BetterBench classifies a stream from `completion_tokens / n_chunks` and reports
@@ -13,14 +13,15 @@ use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use futures_util::StreamExt;
 use serde_json::{Map, Value};
 
+use crate::auth::KeyLabel;
 use crate::detok::IncrementalDetokenizer;
 use crate::engine::{
     EngineRequest, FinishReason, PromptPositionLogprobs, SampledLogprobs, StepEvent, Submission,
@@ -36,6 +37,7 @@ use crate::protocol::{
     DeltaFunctionCallWire, DeltaToolCallWire, FunctionCallWire, LogprobEntry, ModelCard, ModelList,
     ResponseMessage, StreamUsage, ToolCallWire, Usage,
 };
+use crate::requests::{RequestTracker, TrackStart};
 use crate::sampling::SamplingParams;
 use crate::state::ServerState;
 
@@ -47,13 +49,24 @@ pub enum ServeError {
 
 /// The whole `/v1` surface.
 pub fn router(state: Arc<ServerState>) -> Router {
-    Router::new()
+    let auth = state.auth.clone();
+    let r = Router::new()
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/completions", post(completions))
         .route("/v1/models", get(models))
+        .route("/v1/stats", get(stats))
+        .route("/v1/requests", get(recent_requests))
         .route("/health", get(health))
         .route("/metrics", get(metrics))
-        .with_state(state)
+        .with_state(state);
+    // Bearer keys, only when configured (off by default).
+    match auth {
+        Some(keys) => r.layer(axum::middleware::from_fn_with_state(
+            keys,
+            crate::auth::require_key,
+        )),
+        None => r,
+    }
 }
 
 /// Serve until the process ends. `listener` may be bound to port 0, which is how the
@@ -102,6 +115,131 @@ async fn metrics(State(state): State<Arc<ServerState>>) -> Response {
         body,
     )
         .into_response()
+}
+
+/// `GET /v1/stats`: one JSON snapshot for the console -- the state, the model, the
+/// counters, the latency quantiles and the lifetime totals. Read-only; no request body is in it.
+async fn stats(State(state): State<Arc<ServerState>>) -> Response {
+    let es = state.engine.stats();
+    let m = &state.metrics;
+    let lat = m.latency_snapshots();
+    let (prompt, generation) = m.token_totals();
+    let (abort_disconnect, abort_write) = m.abort_paths();
+    let (refused_shape, refused_handler) = m.refusal_paths();
+    let fatal = crate::fatal::get();
+    let st = if fatal.is_some() {
+        "fatal"
+    } else if crate::fatal::stopping() {
+        "stopping"
+    } else {
+        "ready"
+    };
+    let finished: Map<String, Value> = m
+        .finish_counts()
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), Value::from(*v)))
+        .collect();
+    let model = state.engine.model();
+    let accept = (es.spec_decode_num_draft_tokens > 0).then(|| {
+        es.spec_decode_num_accepted_tokens as f64 / es.spec_decode_num_draft_tokens as f64
+    });
+    let empty = |b| crate::hist::HistSnapshot::empty(b);
+    let step = es
+        .step_time
+        .clone()
+        .unwrap_or_else(|| empty(crate::hist::STEP_BOUNDS_US));
+    let queue = es
+        .queue_wait
+        .clone()
+        .unwrap_or_else(|| empty(crate::hist::QUEUE_BOUNDS_US));
+    let body = serde_json::json!({
+        "object": "saber.stats",
+        "state": st,
+        "fatal": fatal.map(|f| f.line()),
+        "uptime_s": state.started.elapsed().as_secs_f64().round(),
+        "model": {
+            "served_model_name": model.served_model_name,
+            "aliases": model.aliases,
+            "max_model_len": model.max_model_len,
+            "root": model.root,
+        },
+        "system_fingerprint": state.system_fingerprint,
+        "auth": state.auth.is_some(),
+        "counters": {
+            "requests_running": es.num_requests_running,
+            "requests_waiting": es.num_requests_waiting,
+            "prompt_tokens_total": prompt,
+            "generation_tokens_total": generation,
+            "request_success_total": finished,
+            "stream_abort_total": {"disconnect": abort_disconnect, "write_failure": abort_write},
+            "request_refused_total": {"shape": refused_shape, "handler": refused_handler},
+            "spec_decode": {
+                "drafts": es.spec_decode_num_drafts,
+                "draft_tokens": es.spec_decode_num_draft_tokens,
+                "accepted_tokens": es.spec_decode_num_accepted_tokens,
+                "acceptance_rate": accept,
+            },
+        },
+        "latency": {
+            "ttft": lat.ttft.summary_json(),
+            "itl": lat.itl.summary_json(),
+            "e2e": lat.e2e.summary_json(),
+            "queue_wait": queue.summary_json(),
+            "step_time": step.summary_json(),
+        },
+        "lifetime": state.requests.lifetime(),
+        "requests_ring": {
+            "capacity": state.requests.capacity(),
+        },
+    });
+    Json(body).into_response()
+}
+
+/// `GET /v1/requests` query: `after` (exclusive id cursor, default 0) and `limit`.
+#[derive(Debug, Default, serde::Deserialize)]
+struct RequestsQuery {
+    after: Option<u64>,
+    limit: Option<usize>,
+}
+
+/// `GET /v1/requests?after=<id>&limit=<n>`: the recent finished requests, oldest first, with ids
+/// past `after`. Token counts and timings only -- never a prompt or a reply.
+async fn recent_requests(
+    State(state): State<Arc<ServerState>>,
+    Query(q): Query<RequestsQuery>,
+) -> Response {
+    let page = state.requests.page(
+        q.after.unwrap_or(0),
+        q.limit.unwrap_or(crate::requests::DEFAULT_PAGE),
+    );
+    Json(serde_json::json!({
+        "object": "list",
+        "data": page.requests,
+        "next_after": page.next_after,
+        "oldest_id": page.oldest_id,
+        "newest_id": page.newest_id,
+        "dropped": page.dropped,
+        "capacity": page.capacity,
+        "boot_id": page.boot_id,
+    }))
+    .into_response()
+}
+
+fn tracker(
+    state: &Arc<ServerState>,
+    start: std::time::Instant,
+    mut info: TrackStart,
+) -> RequestTracker {
+    // With keys on, only the console's own key may tag a request with a console
+    // ref (a client that spoofs one would make the console's poller drop the engine's record)
+    info.client_ref =
+        crate::auth::keep_client_ref(state.auth.as_deref(), info.key.as_deref(), info.client_ref);
+    RequestTracker::new(
+        Arc::clone(&state.metrics),
+        Arc::clone(&state.requests),
+        start,
+        info,
+    )
 }
 
 async fn models(State(state): State<Arc<ServerState>>) -> Json<ModelList> {
@@ -825,8 +963,11 @@ fn render_chat_ids_unguarded(
 
 async fn chat_completions(
     State(state): State<Arc<ServerState>>,
+    label: Option<Extension<KeyLabel>>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
+    let arrived = std::time::Instant::now();
     // THE SHAPE FIRST, AND BEFORE THE MODEL. Prod validates the whole body with pydantic before
     // the handler runs, so a request that is both malformed and names a model that does not exist
     // gets the 400 and not the 404 (ws-v5). `_check_model` is inside the handler; this is not.
@@ -892,6 +1033,7 @@ async fn chat_completions(
         prompt_token_ids: prompt_ids.clone(),
         params: params.clone(),
     };
+    let image_count = images.as_ref().map_or(0, |(b, _)| b.grids.len() as u32);
     let submission = match images {
         None => state.engine.submit(engine_request)?,
         Some((batch, _)) => {
@@ -902,6 +1044,20 @@ async fn chat_completions(
         }
     };
     state.metrics.record_prompt_tokens(prompt_ids.len() as u64);
+    let track = tracker(
+        &state,
+        arrived,
+        TrackStart {
+            endpoint: "/v1/chat/completions",
+            model: model.clone(),
+            key: label.map(|Extension(KeyLabel(l))| l),
+            stream: req.stream,
+            prompt_tokens: prompt_ids.len() as u64,
+            images: image_count,
+            thinking: Some(spec.enable_thinking),
+            client_ref: crate::requests::client_ref(&headers),
+        },
+    );
 
     let id = ids::chat_completion_id();
     let created = now_secs();
@@ -925,6 +1081,7 @@ async fn chat_completions(
             model,
             include_usage,
             ids_back,
+            track,
         ))
     } else {
         chat_blocking(
@@ -938,6 +1095,7 @@ async fn chat_completions(
             created,
             model,
             ids_back,
+            track,
         )
         .await
     }
@@ -955,6 +1113,7 @@ async fn chat_blocking(
     created: u64,
     model: String,
     ids_back: Option<Vec<TokenId>>,
+    mut track: RequestTracker,
 ) -> Result<Response, ApiError> {
     let n = params.n.max(1);
     // One stream, `n` choices interleaved on it. Each choice is run to its own `finished`
@@ -990,6 +1149,7 @@ async fn chat_blocking(
             );
             continue;
         }
+        track.on_event(event.new_tokens.len(), event.cached_tokens);
         let step = runners[index].on_step(&event);
         logprob_entries[index].extend(step.logprobs);
         if step.finished.is_some() {
@@ -1006,9 +1166,12 @@ async fn chat_blocking(
         state.metrics.record_finish(FinishReason::Abort);
         // FN126: a tower-arena refusal is counted as an image refusal (`arena`)
         state.metrics.record_engine_error(&error);
+        let delivered: u64 = runners.iter().map(|r| r.completion_tokens).sum();
+        track.finish(delivered, Some(FinishReason::Abort), 500);
         return Err(ApiError::engine_ended(error));
     }
 
+    let mut first_finish = None;
     let mut choices = Vec::with_capacity(n);
     let mut completion_tokens = 0u64;
     for (index, runner) in runners.iter().enumerate() {
@@ -1028,6 +1191,7 @@ async fn chat_blocking(
             FinishReason::ToolCalls
         };
         state.metrics.record_finish(finish_reason);
+        first_finish.get_or_insert(finish_reason);
 
         choices.push(ChatChoice {
             index: index as u32,
@@ -1046,6 +1210,7 @@ async fn chat_blocking(
         });
     }
     state.metrics.record_generation_tokens(completion_tokens);
+    track.finish(completion_tokens, first_finish, 200);
 
     Ok(Json(ChatCompletionResponse {
         id,
@@ -1075,6 +1240,7 @@ fn chat_stream(
     model: String,
     include_usage: bool,
     ids_back: Option<Vec<TokenId>>,
+    mut track: RequestTracker,
 ) -> Response {
     // Prod's per-chunk `token_ids`: SET on every content and finish chunk (null when not asked).
     let want_ids = ids_back.is_some();
@@ -1107,6 +1273,8 @@ fn chat_stream(
             .collect();
         let mut parsers: Vec<Option<ServeParser>> = (0..n).map(|_| spec.parser()).collect();
         let mut saw_tool_call = vec![false; n];
+        let mut first_finish = None;
+        let mut engine_error = false;
 
         // The opening chunk carries the role and an empty content, as prod does. Its
         // empty content is why a BetterBench-style client does not count it.
@@ -1155,6 +1323,7 @@ fn chat_stream(
                 );
                 continue;
             }
+            track.on_event(event.new_tokens.len(), event.cached_tokens);
             let step = runners[index].on_step(&event);
             let delta = match parsers[index].as_mut() {
                 Some(parser) => parser
@@ -1176,6 +1345,7 @@ fn chat_stream(
                     reason
                 };
                 state.metrics.record_finish(reason);
+                first_finish.get_or_insert(reason);
                 reason.as_str().to_owned()
             });
             // One chunk per StepEvent — the invariant in this module's docs.
@@ -1208,6 +1378,7 @@ fn chat_stream(
             // from its own disconnect.
             if let Some(error) = event.error.as_ref() {
                 state.metrics.record_engine_error(error);
+                engine_error = true;
                 let body = crate::protocol::ApiErrorEnvelope {
                     error: ApiError::engine_ended(error.clone()).body,
                 };
@@ -1257,6 +1428,11 @@ fn chat_stream(
 
         let completion_tokens: u64 = runners.iter().map(|r| r.completion_tokens).sum();
         state.metrics.record_generation_tokens(completion_tokens);
+        track.finish(
+            completion_tokens,
+            first_finish.or(Some(FinishReason::Abort)),
+            if engine_error { 500 } else { 200 },
+        );
         if include_usage {
             let usage_chunk = ChatCompletionChunk {
                 id: id.clone(),
@@ -1408,8 +1584,12 @@ impl<S: futures_util::Stream + Unpin> futures_util::Stream for GuardedStream<S> 
 
 async fn completions(
     State(state): State<Arc<ServerState>>,
+    label: Option<Extension<KeyLabel>>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<CompletionRequest>,
 ) -> Result<Response, ApiError> {
+    let arrived = std::time::Instant::now();
+    let key = label.map(|Extension(KeyLabel(l))| l);
     let model = state.resolve_model(req.model.as_deref())?;
     let (prompt_text, prompt_ids) = match &req.prompt {
         Value::String(text) => (text.clone(), state.codec.encode(text)?),
@@ -1440,6 +1620,20 @@ async fn completions(
             params: params.clone(),
         })?;
         state.metrics.record_prompt_tokens(prompt_ids.len() as u64);
+        let track = tracker(
+            &state,
+            arrived,
+            TrackStart {
+                endpoint: "/v1/completions",
+                model: model.clone(),
+                key,
+                stream: true,
+                prompt_tokens: prompt_ids.len() as u64,
+                images: 0,
+                thinking: None,
+                client_ref: crate::requests::client_ref(&headers),
+            },
+        );
         let opts = CompletionStreamOpts {
             echo: req.echo.unwrap_or(false),
             want_ids: req.return_token_ids.unwrap_or(false),
@@ -1456,6 +1650,7 @@ async fn completions(
             ids::completion_id(),
             now_secs(),
             model,
+            track,
         ));
     }
 
@@ -1469,6 +1664,20 @@ async fn completions(
         prompt_token_ids: prompt_ids.clone(),
         params: params.clone(),
     })?;
+    let mut track = tracker(
+        &state,
+        arrived,
+        TrackStart {
+            endpoint: "/v1/completions",
+            model: model.clone(),
+            key,
+            stream: false,
+            prompt_tokens: prompt_ids.len() as u64,
+            images: 0,
+            thinking: None,
+            client_ref: crate::requests::client_ref(&headers),
+        },
+    );
     // `/v1/completions` runs no parser; its detokenizer keeps the special tokens, as before V9.
     let mut runners: Vec<ChoiceRunner> = (0..n)
         .map(|_| {
@@ -1499,6 +1708,7 @@ async fn completions(
             );
             continue;
         }
+        track.on_event(event.new_tokens.len(), event.cached_tokens);
         let runner = &mut runners[index];
         let logprobs = &mut all_logprobs[index];
         let step = runner.on_step(&event);
@@ -1521,9 +1731,11 @@ async fn completions(
 
     let mut choices = Vec::with_capacity(n);
     let mut completion_tokens = 0u64;
+    let mut first_finish = None;
     for (index, (runner, logprobs)) in runners.into_iter().zip(all_logprobs).enumerate() {
         let finish = runner.finished.unwrap_or(FinishReason::Abort);
         state.metrics.record_finish(finish);
+        first_finish.get_or_insert(finish);
         completion_tokens += runner.completion_tokens;
         let text = if req.echo.unwrap_or(false) {
             format!("{prompt_text}{}", runner.text)
@@ -1545,6 +1757,7 @@ async fn completions(
     }
     state.metrics.record_prompt_tokens(prompt_ids.len() as u64);
     state.metrics.record_generation_tokens(completion_tokens);
+    track.finish(completion_tokens, first_finish, 200);
 
     Ok(Json(CompletionResponse {
         id: ids::completion_id(),
@@ -1590,6 +1803,7 @@ fn completion_stream(
     id: String,
     created: u64,
     model: String,
+    mut track: RequestTracker,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::channel::<Event>(64);
     let n = params.n.max(1);
@@ -1618,6 +1832,8 @@ fn completion_stream(
             })
             .collect();
         let mut has_echoed = vec![false; n];
+        let mut first_finish = None;
+        let mut engine_error = false;
         let mut text_chars = vec![0usize; n];
         let mut produced = vec![0usize; n];
         let chunk_of =
@@ -1641,6 +1857,7 @@ fn completion_stream(
                 );
                 continue;
             }
+            track.on_event(event.new_tokens.len(), event.cached_tokens);
             let step = runners[index].on_step(&event);
             let mut prompt_back = None;
             let text = if opts.echo && !has_echoed[index] {
@@ -1687,6 +1904,7 @@ fn completion_stream(
             produced[index] += step.ids.len();
             let finish_reason = step.finished.map(|reason| {
                 state.metrics.record_finish(reason);
+                first_finish.get_or_insert(reason);
                 reason.as_str().to_owned()
             });
             let fingerprint = (!opts.include_usage && finish_reason.is_some())
@@ -1709,6 +1927,7 @@ fn completion_stream(
             }
             if let Some(error) = event.error.as_ref() {
                 state.metrics.record_engine_error(error);
+                engine_error = true;
                 let body = crate::protocol::ApiErrorEnvelope {
                     error: ApiError::engine_ended(error.clone()).body,
                 };
@@ -1750,6 +1969,11 @@ fn completion_stream(
 
         let completion_tokens: u64 = runners.iter().map(|r| r.completion_tokens).sum();
         state.metrics.record_generation_tokens(completion_tokens);
+        track.finish(
+            completion_tokens,
+            first_finish.or(Some(FinishReason::Abort)),
+            if engine_error { 500 } else { 200 },
+        );
         if opts.include_usage {
             let usage_chunk = CompletionStreamChunk {
                 id: id.clone(),

@@ -19,11 +19,13 @@
 //! The engine itself is behind the [`engine::Engine`] trait; [`engine::MockEngine`]
 //! replays a script so every test here runs without a GPU.
 
+pub mod auth;
 pub mod census;
 pub mod conversation;
 pub mod detok;
 pub mod engine;
 pub mod fatal;
+pub mod hist;
 pub mod ids;
 pub mod images;
 pub mod metrics;
@@ -31,6 +33,7 @@ pub mod parse;
 pub mod prompt_logprobs;
 pub mod protocol;
 pub mod reqcheck;
+pub mod requests;
 pub mod sampler;
 pub mod sampling;
 pub mod server;
