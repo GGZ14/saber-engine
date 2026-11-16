@@ -329,30 +329,34 @@ pub fn chunk_sequence_holds(cut: &[u32], fed: &[(u32, u32)]) -> Result<(), Strin
 /// # Errors
 /// The first KV block or GDN set two sequences share where the law forbids it.
 pub fn isolated_packed(chunks: &[RowState<'_>], decode: &[RowState<'_>]) -> Result<(), String> {
-    let mut pages: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+    // page -> (owner, read-only for that owner)
+    let mut pages: std::collections::HashMap<u32, (String, bool)> =
+        std::collections::HashMap::new();
     let mut sets: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
-    for (k, c) in chunks.iter().enumerate() {
-        let me = format!("chunk {k}");
-        if let Some(prev) = sets.insert(c.gdn_set, me.clone()) {
-            return Err(format!("GDN set {} is {prev}'s and {me}'s", c.gdn_set));
+    for (me, s, is_chunk) in chunks
+        .iter()
+        .enumerate()
+        .map(|(k, c)| (format!("chunk {k}"), c, true))
+        .chain(
+            decode
+                .iter()
+                .enumerate()
+                .map(|(i, d)| (format!("decode sequence {i}"), d, false)),
+        )
+    {
+        if let Some(prev) = sets.insert(s.gdn_set, me.clone()) {
+            return Err(format!("GDN set {} is {prev}'s and {me}'s", s.gdn_set));
         }
-        for b in c.kv_blocks {
-            if let Some(prev) = pages.insert(*b, k) {
-                if prev != k {
-                    return Err(format!("KV block {b} is chunk {prev}'s and {me}'s"));
+        for (i, b) in s.kv_blocks.iter().enumerate() {
+            let ro = i < s.read_only;
+            if let Some((prev, prev_ro)) = pages.get(b) {
+                // Decode rows sharing with decode rows were never checked (n > 1 forks).
+                let both_decode = !is_chunk && prev.starts_with("decode");
+                if !both_decode && !(ro && *prev_ro) {
+                    return Err(format!("KV block {b} is {prev}'s and {me}'s"));
                 }
             }
-        }
-    }
-    for (i, d) in decode.iter().enumerate() {
-        let me = format!("decode sequence {i}");
-        if let Some(prev) = sets.insert(d.gdn_set, me.clone()) {
-            return Err(format!("GDN set {} is {prev}'s and {me}'s", d.gdn_set));
-        }
-        for b in d.kv_blocks {
-            if let Some(k) = pages.get(b) {
-                return Err(format!("KV block {b} is chunk {k}'s and {me}'s"));
-            }
+            pages.insert(*b, (me.clone(), ro));
         }
     }
     Ok(())
@@ -365,6 +369,11 @@ pub struct RowState<'a> {
     pub kv_blocks: &'a [u32],
     /// Its GDN slot set.
     pub gdn_set: u32,
+    /// How many LEADING blocks of `kv_blocks` the step only READS: the pages wholly below the
+    /// sequence's write frontier (`done / block_size`), e.g. a prefix-cache adoption's shared
+    /// pages. A page may sit in two sequences' lists in a packed step only where it is read-only
+    /// for both. 0 = every page may be written (the strict law).
+    pub read_only: usize,
 }
 
 /// P12/P13's contamination law for a fused step: the chunk's sequence and every decode sequence
@@ -482,14 +491,17 @@ mod tests {
         let chunk = RowState {
             kv_blocks: &[10, 11, 12],
             gdn_set: 3,
+            read_only: 0,
         };
         let a = RowState {
             kv_blocks: &[20, 21],
             gdn_set: 4,
+            read_only: 0,
         };
         let b = RowState {
             kv_blocks: &[30],
             gdn_set: 5,
+            read_only: 0,
         };
         assert!(isolated(&chunk, &[a.clone(), b.clone()]).is_ok());
         // Negative controls: P12's stride defect in miniature (a decode row reading the chunk's
@@ -497,12 +509,14 @@ mod tests {
         let stray = RowState {
             kv_blocks: &[30, 12],
             gdn_set: 5,
+            read_only: 0,
         };
         let e = isolated(&chunk, &[a.clone(), stray]).expect_err("shared page");
         assert!(e.contains("KV block 12"), "{e}");
         let twin = RowState {
             kv_blocks: &[40],
             gdn_set: 4,
+            read_only: 0,
         };
         let e = isolated(&chunk, &[a, twin]).expect_err("shared slot");
         assert!(e.contains("GDN set 4"), "{e}");
@@ -625,18 +639,22 @@ mod tests {
         let a = RowState {
             kv_blocks: &[1, 2],
             gdn_set: 3,
+            read_only: 0,
         };
         let b = RowState {
             kv_blocks: &[4],
             gdn_set: 5,
+            read_only: 0,
         };
         let d = RowState {
             kv_blocks: &[9],
             gdn_set: 7,
+            read_only: 0,
         };
         let d2 = RowState {
             kv_blocks: &[9],
             gdn_set: 8,
+            read_only: 0,
         };
         // Two decode rows may share read-only prompt pages (n > 1 branches).
         assert!(isolated_packed(&[a.clone(), b.clone()], &[d.clone(), d2]).is_ok());
@@ -645,20 +663,58 @@ mod tests {
         let b_bad = RowState {
             kv_blocks: &[4, 2],
             gdn_set: 5,
+            read_only: 0,
         };
         let e = isolated_packed(&[a.clone(), b_bad], &[]).expect_err("page");
         assert!(e.contains("KV block 2"), "{e}");
         let d_bad = RowState {
             kv_blocks: &[4],
             gdn_set: 7,
+            read_only: 0,
         };
         let e = isolated_packed(&[a.clone(), b.clone()], &[d_bad]).expect_err("page");
         assert!(e.contains("KV block 4"), "{e}");
         let twin = RowState {
             kv_blocks: &[6],
             gdn_set: 3,
+            read_only: 0,
         };
         let e = isolated_packed(&[a, twin], &[d]).expect_err("set");
         assert!(e.contains("GDN set 3"), "{e}");
+    }
+
+    #[test]
+    fn isolation_allows_shared_read_only_prefix_pages() {
+        // A prefix-cache hit: the chunk's sequence adopted the donor's first two pages, which the
+        // donor's decode rows only read (below both write frontiers).
+        let chunk = RowState {
+            kv_blocks: &[1, 2, 3],
+            gdn_set: 3,
+            read_only: 2,
+        };
+        let donor = RowState {
+            kv_blocks: &[1, 2, 9],
+            gdn_set: 4,
+            read_only: 2,
+        };
+        assert!(isolated_packed(&[chunk.clone()], &[donor]).is_ok());
+        // Controls: the shared page is writable for either side -> refused.
+        let donor_rw = RowState {
+            kv_blocks: &[1, 2, 9],
+            gdn_set: 4,
+            read_only: 1,
+        };
+        let e = isolated_packed(&[chunk.clone()], &[donor_rw]).expect_err("donor writes page 2");
+        assert!(e.contains("KV block 2"), "{e}");
+        let chunk_rw = RowState {
+            read_only: 1,
+            ..chunk
+        };
+        let donor = RowState {
+            kv_blocks: &[1, 2, 9],
+            gdn_set: 4,
+            read_only: 2,
+        };
+        assert!(isolated_packed(&[chunk_rw], &[donor]).is_err());
     }
 }
