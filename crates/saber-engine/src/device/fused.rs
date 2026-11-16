@@ -844,16 +844,18 @@ pub(super) fn fused_step(
     {
         let chunk_state: Vec<saber_sched::mixed_law::RowState<'_>> = cfacts
             .iter()
-            .map(|(slot, _, blocks)| saber_sched::mixed_law::RowState {
+            .map(|(slot, done, blocks)| saber_sched::mixed_law::RowState {
                 kv_blocks: blocks,
                 gdn_set: *slot,
+                read_only: *done as usize / geom.block_size as usize,
             })
             .collect();
         let dec_state: Vec<saber_sched::mixed_law::RowState<'_>> = facts
             .iter()
-            .map(|(slot, _, blocks, _)| saber_sched::mixed_law::RowState {
+            .map(|(slot, done, blocks, _)| saber_sched::mixed_law::RowState {
                 kv_blocks: blocks,
                 gdn_set: *slot,
+                read_only: *done as usize / geom.block_size as usize,
             })
             .collect();
         saber_sched::mixed_law::isolated_packed(&chunk_state, &dec_state)
