@@ -59,6 +59,40 @@ workspace and builds kernels with `hipcc`. It has not yet booted a model; the pr
 carries a newer ROCm (HIP 7.16, ROCr 1.21), and on the public 7.x tags each rank may spin more CPU
 in ROCr's async-event loop.
 
+## Pick a model in 60 seconds
+
+`saber models` knows every published model by name: what it is, how big, whether it is on disk, and how to
+serve it. It needs only the dev image (`tools/build-image.sh`, once) and a built binary (`tools/saber --build`,
+once; `ln -s "$PWD/tools/saber" ~/.local/bin/saber` puts `saber` on your PATH).
+
+```bash
+saber models                        # list: name, aliases, size, downloaded?, drafter (* = the default)
+saber models info w4a8              # repo, served id, drafter, sizes and shapes per TP, where it lives
+saber models pull w4a8              # download it and its drafter (resumable, sha256-verified, checks the disk first)
+saber serve --model w4a8            # serve it on :8080 (prints the model id and a curl line to try)
+saber serve --model mxfp4 --tp 1    # switch: stop the running one (Ctrl-C), serve another (here on one GPU)
+saber models rm mxfp4               # delete it (a drafter another downloaded model uses is kept)
+```
+
+- Names are case-insensitive and have short aliases (`w4a8`, `mxfp4`, `default`); a typo gets a
+  "did you mean". `saber serve` with no `--model` serves the default (the W4A8 27B).
+- **TP** follows your GPUs: two GPUs serve the TP=2 pack, one GPU the TP=1 pack. `--tp 1|2` overrides it,
+  `--device N` picks the GPU at TP=1.
+- `--dry-run` on `pull` and `serve` shows exactly what would be downloaded and the exact engine and container
+  commands, and changes nothing. `--json` on `list` and `info` is for scripts.
+- `serve` offers to download a model that is not there yet (`--yes` answers for you). Every other command
+  works offline: `list`, `info` and `serve` of a downloaded model never touch the network.
+- Any engine flag still works after `--model` and replaces the model's value: `saber serve --model w4a8
+  --port 8081 --engine-max-ctx 131072`.
+- Packs are cached in `~/.cache/saber/packs/<owner>/<repo>/<tp>` (`SABER_PACKS` or `--packs-dir` moves it).
+  Already used `tools/fetch_packs.sh`? `export SABER_PACKS=/mnt/nvme/saber-packs` and the packs it downloaded
+  there are found and served in place (never re-downloaded, never deleted by `saber models rm`).
+- **Your own models:** add a `[[model]]` block to `~/.config/saber/models.toml`; an entry with a shipped
+  model's name replaces it, and `default = "<name>"` there changes the default. See
+  [docs/MODELS.md](docs/MODELS.md) for the schema, the cache layout, TP handling and drafter sharing.
+- Private or gated repos use your own Hugging Face login (`hf auth login`, or `HF_TOKEN`); public ones need
+  nothing.
+
 ## Guided setup (terminal UI)
 
 ```bash
@@ -130,7 +164,7 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' -
 }'
 ```
 
-(Use model id `Qwen3.8-Flash-Next` for Flash-Next, `Qwen3.8-27B-MACaQ-MXFP4` for `--weights macaq`, and `Qwen3.8`
+(Use model id `Qwen3.8-Flash-Next` for Flash-Next, `Qwen3.8-27B-MACaQ-MXFP4-SABER` for `--weights macaq`, and `Qwen3.8`
 for `--weights nvfp4` / `--weights quark`.)
 
 **The MACaQ MXFP4 27B (the previous default, `--weights macaq`).** `tools/fetch_packs.sh 27b-macaq` downloads the target pack
@@ -156,7 +190,7 @@ Task scores tie with the earlier pack (GSM8K 1,282 vs 1,284 of 1,319, thinking m
 215 tok/s single stream and 618 tok/s at concurrency 8, TTFT p50 47 ms, update p99 23.7 ms; decode step
 22.9 / 25.9 / 30.6 ms at batch 1 / 4 / 8; cold prefill about 5,000 tok/s at 4k and 16k; a KV pool of about
 740k tokens. It serves with `tools/serve_27b.sh --weights macaq` (`--weights macaq-mxfp4` is the same; model id
-`Qwen3.8-27B-MACaQ-MXFP4`); the other packs are `--weights quark` (the Quark AWQ pack, same drafter) and
+`Qwen3.8-27B-MACaQ-MXFP4-SABER`); the other packs are `--weights quark` (the Quark AWQ pack, same drafter) and
 `--weights nvfp4` (the NVFP4 pack). **One card:** `tools/fetch_packs.sh 27b-macaq-tp1` +
 `tools/serve_27b.sh --weights macaq --tp 1` (`qwen38-27b-macaq7-bc3-tp1` 20.2 GB + `qwen38-dflash2-drafter-quarkhead-tp1`
 7.7 GB). Its quality was measured (top-5 KL 0.0228 at context 32,768); its KV pool was measured at
@@ -455,12 +489,12 @@ The server listens on port 8080 and exposes `/v1/models`, `/v1/chat/completions`
 
 Both launchers take their own flags first, then pass everything else straight to `saber`.
 
-### 27B: `tools/serve_27b.sh [flags]` (model id `Qwen3.8-27B-MACaQ-W4A8-SABER`; `Qwen3.8-27B-MACaQ-MXFP4` for `--weights macaq`, `Qwen3.8` for `--weights nvfp4` / `quark`)
+### 27B: `tools/serve_27b.sh [flags]` (model id `Qwen3.8-27B-MACaQ-W4A8-SABER`; `Qwen3.8-27B-MACaQ-MXFP4-SABER` for `--weights macaq`, `Qwen3.8` for `--weights nvfp4` / `quark`)
 
 | Flag | What it does |
 |---|---|
 | `--no-build` | Skip the `cargo build`; reuse `.cache/target-container/release/saber`. Use this for every boot after the first (a build takes about two minutes). |
-| `--weights macaq-w4a8\|macaq\|quark\|nvfp4` | Which 27B packs: `macaq-w4a8` (the default: the MACaQ W4A8-iu8 packs, `tools/fetch_packs.sh 27b-macaq-w4a8`), `macaq` (the MACaQ MXFP4 packs, the previous default, `27b-macaq`; `macaq-mxfp4` is the same; model id `Qwen3.8-27B-MACaQ-MXFP4`), `quark` (the Quark AWQ MXFP4 packs, `27b-quark`) or `nvfp4` (the NVFP4 packs, `27b`). |
+| `--weights macaq-w4a8\|macaq\|quark\|nvfp4` | Which 27B packs: `macaq-w4a8` (the default: the MACaQ W4A8-iu8 packs, `tools/fetch_packs.sh 27b-macaq-w4a8`), `macaq` (the MACaQ MXFP4 packs, the previous default, `27b-macaq`; `macaq-mxfp4` is the same; model id `Qwen3.8-27B-MACaQ-MXFP4-SABER`), `quark` (the Quark AWQ MXFP4 packs, `27b-quark`) or `nvfp4` (the NVFP4 packs, `27b`). |
 | `--drafter w4a8\|fp8` | With `macaq-w4a8`: the W4A8-iu8 drafter (the default) or the FP8 one (`DRAFTER=fp8 tools/fetch_packs.sh 27b-macaq-w4a8`). `macaq` and `quark` use the FP8 drafter (`fp8` is accepted, `w4a8` refused); `nvfp4` has no choice. `DRAFTER=...` does the same. |
 | `--tp 1` | Serve on ONE card (TP=1) from the `-tp1` packs of the chosen weights (`tools/fetch_packs.sh 27b-macaq-w4a8-tp1` for the default), on HIP device `DEVICE` (default 0), container `saber-27b-tp1-serve`. `TP=1` in the environment does the same; `--tp 2` (the default) is the two-card server. See "One card (TP=1)". |
 | `--vision` | Accept images (`image_url` parts). Same as `--vision lazy`: the vision tower lives in pinned host RAM and streams through the idle prefill arena per image. No VRAM is billed and the full 262k context stays, at about +30 ms per image. |
@@ -485,7 +519,7 @@ Environment variables (put them before the command):
 | `HIP_DEVICES` | `0,1` | TP=2 only: the two HIP devices |
 | `WIDTHS` | `1,5,8` (nvfp4 / quark: `1,8`) | Speculative verify widths |
 | `DRAFT_BLOCK` | `8` | Drafter block size (`4` halves the GDN slots) |
-| `MODEL` | `Qwen3.8-27B-MACaQ-W4A8-SABER` (macaq: `Qwen3.8-27B-MACaQ-MXFP4`; nvfp4 / quark: `Qwen3.8`) | Served model id |
+| `MODEL` | `Qwen3.8-27B-MACaQ-W4A8-SABER` (macaq: `Qwen3.8-27B-MACaQ-MXFP4-SABER`; nvfp4 / quark: `Qwen3.8`) | Served model id |
 | `WEIGHTS` | `macaq-w4a8` | `macaq` / `quark` / `nvfp4` = the other packs (same as `--weights ...`) |
 | `DRAFTER` | `w4a8` (with `macaq-w4a8`) | `fp8` = the FP8 drafter beside the W4A8 target |
 | `TIER` / `DRAFT` | by `WEIGHTS` and `--tp` | Target / drafter pack folder names under `SABER_PACKS` (default: `qwen38-27b-macaq-w4a8`, `qwen38-dflash2-drafter-w4a8`, `-tp1` at TP=1) |
@@ -651,6 +685,7 @@ sliced from `macaq_iu8.hip` and the had32 sources).
 | Path | What |
 |---|---|
 | `crates/saber-cli` | the `saber` binary |
+| `models.toml`, `docs/MODELS.md` | the model registry `saber models` and `saber serve --model` read, and its schema |
 | `crates/saber-engine`, `-exec`, `-plan`, `-sched` | engine, execution graphs, launch plan, scheduler |
 | `crates/saber-serve` | the OpenAI HTTP plane |
 | `crates/saber-console`, `ui/` | `saber ui`, the browser console (the SPA's source; `ui/dist` is the committed build) |

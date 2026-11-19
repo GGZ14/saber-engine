@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Run the `saber` binary this checkout built (the release build the launchers make in the dev image).
+#
+#   tools/saber models                 # list the models (saber models list)
+#   tools/saber models pull w4a8       # download one
+#   tools/saber serve --model w4a8     # serve it (in the dev container)
+#   tools/saber --build                # build (or rebuild) the release binary in the dev image first
+#
+# Put it on your PATH once, and `saber ...` works from anywhere:
+#   ln -s "$PWD/tools/saber" ~/.local/bin/saber
+#
+# SABER_BIN picks another build (a host path).
+set -uo pipefail
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+REPO=$(cd "$(dirname "$SELF")/.." && pwd)
+BIN=${SABER_BIN:-$REPO/.cache/target-container/release/saber}
+IMG=${SABER_IMAGE:-localhost/saber-dev:latest}
+
+build() {
+  . "$REPO/tools/lib/container.sh"   # CTR = podman or docker
+  mkdir -p "$REPO/.cache/target-container" "$REPO/.cache/cargo-registry"
+  echo "== building the release binary in the dev image ($IMG)" >&2
+  $CTR run --rm "${CTR_USER[@]}" --security-opt label=disable -v "$REPO":/work \
+    -v "$REPO/.cache/cargo-registry":/opt/rust/cargo/registry -e CARGO_TARGET_DIR=/work/.cache/target-container \
+    -w /work --entrypoint bash "$IMG" -c "cargo build --release -p saber-cli 2>&1 | tail -3" >&2
+}
+
+if [ "${1:-}" = --build ]; then
+  shift
+  build || exit 1
+  [ $# -gt 0 ] || exit 0
+fi
+if [ ! -x "$BIN" ]; then
+  echo "error: saber is not built yet ($BIN is missing)" >&2
+  echo "  fix: tools/saber --build   (builds it in the dev image; first run: tools/build-image.sh)" >&2
+  exit 1
+fi
+exec "$BIN" "$@"

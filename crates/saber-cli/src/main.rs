@@ -19,9 +19,12 @@
 //!   a fixed pinned staging ring into one VRAM arena, with per-record readiness and the byte
 //!   ledger in front of the allocation.
 //!
-//! There is **no environment variable anywhere in this binary**. Verbosity, the HIP runtime to
+//! There is **no environment variable in the engine's path**. Verbosity, the HIP runtime to
 //! load, the device to use and every path are command-line arguments, so a run is reproducible
-//! from its command line alone.
+//! from its command line alone. The one exception is the model front door (`saber models`,
+//! `saber serve --model`, the `models` module): it reads `HOME`, `XDG_CONFIG_HOME` /
+//! `XDG_CACHE_HOME`, `SABER_PACKS` and the Hugging Face variables to find the registry, the pack
+//! cache and the user's own token, and it then runs an engine command line that is fully explicit.
 
 mod ar_gate;
 mod bench;
@@ -51,6 +54,7 @@ mod gpu_idle;
 mod layer;
 mod ledger_law;
 mod load;
+mod models;
 mod npy;
 mod park_bench;
 mod plane_flags;
@@ -1654,6 +1658,12 @@ enum Cmd {
     },
 
     /// Serve the OpenAI /v1 plane over the real scheduler, with a mock executor or the real engine
+    ///
+    /// To serve a model by name, use `saber serve --model <name>` (`saber models` lists them;
+    /// `saber serve --model <name> --help` has its options): it finds or downloads the packs and
+    /// composes every flag below from the model's registry entry. A bare `saber serve` serves the
+    /// default model. With `--engine`, `--pack` or `--mock` and no `--model`, the flags below are
+    /// used as given.
     Serve {
         /// Which executor: `mock` (a scripted response, no GPU) or `real` (the whole-model forward
         /// at TP=1 from a device-final pack — the P3 seam)
@@ -3533,6 +3543,13 @@ enum Cmd {
         hip_lib: String,
     },
 
+    /// Models: list, inspect, download and remove the models `saber serve --model` serves
+    ///
+    /// `saber models` lists them; `saber models pull <name>` downloads one (and its drafter);
+    /// `saber serve --model <name>` serves it. The registry is models.toml (shipped) plus
+    /// ~/.config/saber/models.toml (yours); docs/MODELS.md has the schema.
+    Models(models::ModelsArgs),
+
     /// The browser console: a dashboard that supervises the engine (`saber-console`)
     ///
     /// An always-on process on :8090 that serves the UI and owns the engine (`saber engine` /
@@ -3734,7 +3751,35 @@ fn one_served_name(names: Vec<String>) -> anyhow::Result<String> {
     }
 }
 
+/// Where `serve` sits in `argv` (after the global flags), if it is the subcommand.
+fn serve_position(argv: &[String]) -> Option<usize> {
+    let mut i = 1;
+    while i < argv.len() {
+        match argv[i].as_str() {
+            "-v" | "--verbose" => i += 1,
+            "--fatal-watchdog-s" => i += 2,
+            a if a.starts_with("--fatal-watchdog-s=") => i += 1,
+            "serve" => return Some(i),
+            _ => return None,
+        }
+    }
+    None
+}
+
 fn main() -> anyhow::Result<()> {
+    // The model front door (`saber serve --model <name>`, or a bare `saber serve`): it composes
+    // an explicit engine command line, checked by this CLI's own parser, and runs that.
+    let raw: Vec<String> = std::env::args().collect();
+    if let Some(pos) = serve_position(&raw) {
+        if models::front::wants_front_door(&raw[pos + 1..]) {
+            let validate = |argv: &[String]| -> Result<(), String> {
+                Cli::try_parse_from(argv)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            };
+            std::process::exit(models::front::run(&raw[pos + 1..], &validate));
+        }
+    }
     let cli = Cli::parse();
     tracing_subscriber::fmt()
         .with_max_level(if cli.verbose {
@@ -3759,6 +3804,8 @@ fn main() -> anyhow::Result<()> {
 
 fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
     match cmd {
+        Cmd::Models(a) => std::process::exit(models::run(a)),
+
         Cmd::Ui {
             host,
             port,
