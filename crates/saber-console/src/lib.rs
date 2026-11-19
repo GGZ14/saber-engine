@@ -102,20 +102,16 @@ pub fn check_bind(host: &str, admin: &auth::Admin) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The console's bind: the command line, else the config, else 127.0.0.1:8090 (the
-/// wizard's Network step writes the config's). The admin credential: `--admin-token`, else the
-/// config's stored hash, else none.
+/// The console's bind: the command line, else the config, else the LAN (0.0.0.0:8090) when an
+/// admin token guards it, else 127.0.0.1:8090 (the console controls the engine, so an open one
+/// never leaves the loopback). The wizard's Network step writes the config's. The admin
+/// credential: `--admin-token`, else the config's stored hash, else none.
 #[must_use]
 pub fn resolve_bind(
     args: &ConsoleArgs,
     stored: Option<&config::Config>,
 ) -> (String, u16, auth::Admin) {
     let c = stored.map(|c| &c.console);
-    let host = args
-        .host
-        .clone()
-        .or_else(|| c.map(|c| c.host.clone()).filter(|h| !h.is_empty()))
-        .unwrap_or_else(|| "127.0.0.1".into());
     let port = args
         .port
         .or_else(|| c.map(|c| c.port).filter(|&p| p != 0))
@@ -124,6 +120,11 @@ pub fn resolve_bind(
         Some(t) => auth::Admin::Flag(t),
         None => stored.map_or(auth::Admin::None, config::Config::admin),
     };
+    let host = args
+        .host
+        .clone()
+        .or_else(|| c.map(|c| c.host.clone()).filter(|h| !h.is_empty()))
+        .unwrap_or_else(|| if admin.is_set() { "0.0.0.0" } else { "127.0.0.1" }.into());
     (host, port, admin)
 }
 
@@ -354,6 +355,14 @@ mod tests {
             resolve_bind(&args, None),
             ("127.0.0.1".into(), 8090, auth::Admin::None)
         );
+        // no host anywhere: a token-guarded console listens on the LAN, an open one stays on the loopback
+        let mut guarded = config::Config::default();
+        guarded.console.admin_token = "0123456789abcdef".into();
+        guarded.seal().unwrap();
+        assert_eq!(resolve_bind(&args, Some(&guarded)).0, "0.0.0.0");
+        args.admin_token = Some("from-the-flag".into());
+        assert_eq!(resolve_bind(&args, None).0, "0.0.0.0");
+        args.admin_token = None;
         let mut c = config::Config::default();
         c.console.host = "0.0.0.0".into();
         c.console.port = 9000;

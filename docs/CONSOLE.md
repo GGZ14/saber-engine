@@ -189,8 +189,11 @@ already totalled keep their cut.
 
 ## Security
 
-- **Loopback by default.** `saber ui` binds 127.0.0.1 and then only answers a `Host` that names
-  the loopback (a DNS-rebinding guard). Any other bind refuses to start without an admin token.
+- **The bind follows the token.** With an admin token set (the stored hash, or `--admin-token`) and
+  no host chosen, `saber ui` listens on the LAN (`0.0.0.0:8090`). Without one it binds 127.0.0.1 and
+  then only answers a `Host` that names the loopback (a DNS-rebinding guard): an open console never
+  leaves the machine. Any other bind refuses to start without an admin token. `--host` /
+  `HOST=` / the config's `console.host` override the default either way.
 - **The admin token** guards every `/api/*` route and the console's `/metrics` (only the SPA's
   static files, which include the sign-in screen, are served without it). It is stored as a
   salted SHA-256 hash (`console.admin_token_hash`), never as text: make one with
