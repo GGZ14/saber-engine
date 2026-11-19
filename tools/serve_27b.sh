@@ -1,33 +1,36 @@
 #!/usr/bin/env bash
-# Boot Saber's served Qwen3.8-27B for a client to point at. The default weights are the MACaQ MXFP4
-# pack (qwen38-27b-macaq7-bc3: a block-32 Hadamard before every W4A8 GEMM + 19 W8 promotions, all
-# driven by the pack -- the boot log says `macaqhad ON` / `macaqw8 19`), the quarkhead DFlash2 drafter,
-# verify widths 1,5,8, TP=2, model id Qwen3.8-27B-MACaQ-MXFP4; packs from `tools/fetch_packs.sh 27b-macaq`.
+# Boot Saber's served Qwen3.8-27B for a client to point at. The default weights are the MACaQ W4A8-iu8
+# pack (qwen38-27b-macaq-w4a8: every decoder linear an int8-WMMA GEMM over per-row int4 weights, 19
+# per-row int8 W8 ops and per-token int8 activations, all driven by the pack -- the boot log says
+# `macaqiu8 rank R: macaq_iu8/1 ...`), the W4A8-iu8 DFlash2 drafter (qwen38-dflash2-drafter-w4a8, boot line
+# `macaqiu8d`), verify widths 1,5,8, TP=2, model id Qwen3.8-27B-MACaQ-W4A8-SABER; packs from
+# `tools/fetch_packs.sh 27b-macaq-w4a8`. Needs an engine with the iu8 arm (this tree); an engine without it
+# refuses the pack at upload.
 #
 #   tools/serve_27b.sh              # build the release binary in the dev image, then serve on :8080
 #   tools/serve_27b.sh --no-build   # reuse the last container build
 #   tools/serve_27b.sh stop         # stop the server container (whichever of TP=2 / TP=1 is running)
 #   tools/serve_27b.sh --tp 1 [--no-build]   # ONE card (TP=1; or TP=1 in the environment): the -tp1 packs of
-#     the chosen weights (`tools/fetch_packs.sh 27b-macaq-tp1` for the default), on HIP device DEVICE (default 0), container
+#     the chosen weights (`tools/fetch_packs.sh 27b-macaq-w4a8-tp1` for the default), on HIP device DEVICE (default 0), container
 #     saber-27b-tp1-serve; defaults MAX_CTX 131072, MAX_SEQS 1 (one conversation at a time, up to ~128k tokens;
 #     other requests queue), BATCHES = the rungs of 1,2,4,8 up to MAX_SEQS (every env knob below still
 #     overrides). MAX_SEQS=2 or 4 serves several at once (they share the KV: ~171k / ~127k tokens at
 #     MAX_CTX=65536); one card boots up to ~176k context at 1 sequence (163840 leaves ~1.1k spare blocks). `--tp 1 stop` stops only the TP=1 container. TP=2 (`--tp 2`) is the default.
-#   tools/serve_27b.sh --weights macaq|quark|nvfp4 [--tp 1] ...   # which 27B weights (WEIGHTS=... in the environment
-#     does the same). macaq (the default): the MACaQ pack above. quark: amd/Qwen3.8-27B-Quark-AWQ-MXFP4 as
-#     published (qwen38-27b-quark-awq-mxfp4[-tp1], `tools/fetch_packs.sh 27b-quark[-tp1]` or tools/build_packs.sh).
-#     Both use the qwen38-dflash2-drafter-quarkhead[-tp1] drafter and the Quark checkpoint's own tokenizer
-#     (.cache/quark27b.tokenizer.json). nvfp4: the NVFP4->MXFP4 devfinal pack + fp8-head drafter (the previous
-#     default; `tools/fetch_packs.sh 27b[-tp1]`), model id Qwen3.8, widths 1,8.
-#     TIER / DRAFT / MODEL / TOKENIZER / CHAT_TEMPLATE override any of them (paths as the container sees them).
-#   tools/serve_27b.sh --weights macaq-w4a8 [--drafter w4a8|fp8] [--tp 1] ...   # the MACaQ W4A8-iu8 pack (an OPTION,
-#     not the default): every decoder linear an int8-WMMA GEMM (per-row int4 weights, 19 per-row int8 W8 ops,
-#     per-token int8 activations), model id Qwen3.8-27B-MACaQ-W4A8-SABER, widths 1,5,8; the boot log says
-#     `macaqiu8 rank R: macaq_iu8/1 ...`. Packs: qwen38-27b-macaq-w4a8/tp2 (or /tp1) + the drafter
-#     qwen38-dflash2-drafter-w4a8/tp2 (the W4A8-iu8 DFlash2 drafter, boot line `macaqiu8d`; the default for this
-#     weights choice) or, with `--drafter fp8` (DRAFTER=fp8), qwen38-dflash2-drafter-fp8/tp2 (the FP8 drafter);
-#     `tools/fetch_packs.sh 27b-macaq-w4a8[-tp1]` (DRAFTER=fp8 for the FP8 drafter). Needs an engine with the iu8
-#     arm (this tree); an engine without it refuses the pack at upload.
+#   tools/serve_27b.sh --weights macaq-w4a8|macaq|quark|nvfp4 [--drafter w4a8|fp8] [--tp 1] ...   # which 27B
+#     weights (WEIGHTS=... in the environment does the same). macaq-w4a8 (the default): the W4A8-iu8 pack above
+#     with the W4A8-iu8 drafter, or with `--drafter fp8` (DRAFTER=fp8) the FP8 DFlash2 drafter
+#     (qwen38-dflash2-drafter-fp8[-tp1], `DRAFTER=fp8 tools/fetch_packs.sh 27b-macaq-w4a8[-tp1]`).
+#     macaq (also spelled macaq-mxfp4; the default before the W4A8-iu8 pack): the MACaQ MXFP4 pack
+#     (qwen38-27b-macaq7-bc3[-tp1]: a block-32 Hadamard before every W4A8 GEMM + 19 W8 promotions, boot log
+#     `macaqhad ON` / `macaqw8 19`), model id Qwen3.8-27B-MACaQ-MXFP4, widths 1,5,8, `tools/fetch_packs.sh
+#     27b-macaq[-tp1]`. quark: amd/Qwen3.8-27B-Quark-AWQ-MXFP4 as published (qwen38-27b-quark-awq-mxfp4[-tp1],
+#     `tools/fetch_packs.sh 27b-quark[-tp1]` or tools/build_packs.sh). macaq and quark use the FP8
+#     qwen38-dflash2-drafter-quarkhead[-tp1] drafter (`--drafter fp8` names it; the W4A8-iu8 drafter is paired
+#     with macaq-w4a8 only). All three use the Quark checkpoint's own tokenizer (.cache/quark27b.tokenizer.json).
+#     nvfp4: the NVFP4->MXFP4 devfinal pack + fp8-head drafter (`tools/fetch_packs.sh 27b[-tp1]`), model id
+#     Qwen3.8, widths 1,8. TIER / DRAFT / MODEL / TOKENIZER / CHAT_TEMPLATE override any of them (TIER / DRAFT:
+#     folder names under SABER_PACKS, e.g. TIER=qwen38-27b-macaq-w4a8/tp2 for a by-hand download that kept the
+#     Hugging Face repo's tp2/ folder; the others: paths as the container sees them).
 #   SERVE_PREFIX="/opt/rocm/bin/rocprofv3 --kernel-trace -f csv -d DIR --" tools/serve_27b.sh ...   # CMP27D: a DIAGNOSTIC tool wrapped around `saber serve` (both ranks)
 #   PORT=8100 MAX_CTX=16384 WIDTHS=1,5,8 tools/serve_27b.sh ...   # port / per-sequence context (default 262144) / verify-width ladder (default 1,5,8; 1,8 for --weights nvfp4 / quark)
 #   DRAFT_BLOCK=4 WIDTHS=1,4 tools/serve_27b.sh ...   # P27-7: the drafter's block (default 8; 4 = the priced option, GDN slots 65 -> 33)
@@ -43,7 +46,8 @@
 #   tools/serve_27b.sh --no-build --warm-prompts ~/pi-system.txt   # FN66: prefill your system prompt(s)
 #     once at boot (prefix caching turns on); see docs/HOWTO-SERVE.md "Warm prompts"
 # Extra arguments after the subcommand are passed to `saber serve`. OpenAI-compatible: /v1/models,
-# /v1/chat/completions, /v1/completions; model id Qwen3.8-27B-MACaQ-MXFP4 (MODEL=...; Qwen3.8 for --weights nvfp4). Logs: podman logs -f saber-27b-serve (or docker logs ...). Docker works too: SABER_CONTAINER=docker.
+# /v1/chat/completions, /v1/completions; model id Qwen3.8-27B-MACaQ-W4A8-SABER (MODEL=...; Qwen3.8-27B-MACaQ-MXFP4 for
+# --weights macaq, Qwen3.8 for --weights nvfp4 / quark). Logs: podman logs -f saber-27b-serve (or docker logs ...). Docker works too: SABER_CONTAINER=docker.
 set -uo pipefail
 REPO=${SABER_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}   # SABER_REPO: a hold run from a worktree serves from the main checkout's .cache
 . "$REPO/tools/lib/container.sh"   # CTR = podman or docker (SABER_CONTAINER=docker to force)
@@ -52,7 +56,7 @@ SHARED=${SABER_SHARED:-$HOME/saber-cache}
 # The launcher's own leading words, in any order: `--tp 1|2`, `--no-build`, `stop`.
 TP_GIVEN=${TP:+env}
 TP=${TP:-2}
-WEIGHTS=${WEIGHTS:-macaq}
+WEIGHTS=${WEIGHTS:-macaq-w4a8}
 DRAFTER=${DRAFTER:-}
 BUILD=1
 STOP=0
@@ -99,26 +103,33 @@ fi
 # The console in front (docs/CONSOLE.md): `SABER_CONSOLE=1 tools/serve_27b.sh [--no-build] [args]` runs `saber ui`
 # (tools/serve_console.sh), which starts THIS preset's engine from ~/.config/saber/config.toml (seeded from
 # this launcher on a first run) and serves the dashboard on 127.0.0.1:8090. The headless path below is unchanged.
-# The console's 27B preset is the default weights (the MACaQ pack) at either TP: `--tp 1` seeds a single-card
+# The console's 27B preset is the default weights (the W4A8-iu8 pack and drafter) at either TP: `--tp 1` seeds a single-card
 # config (engine.tp = 1, DEVICE = the card); other packs are picked on its Settings page.
 if [ "${SABER_CONSOLE:-0}" = 1 ]; then
-  [ "$WEIGHTS" = macaq ] || { echo "SABER_CONSOLE=1: the console's 27B preset is the default weights; run this launcher without SABER_CONSOLE for --weights $WEIGHTS (or pick the pack on the console's Settings page)" >&2; exit 2; }
+  [ "$WEIGHTS" = macaq-w4a8 ] && [ "${DRAFTER:-w4a8}" = w4a8 ] || { echo "SABER_CONSOLE=1: the console's 27B preset is the default weights and drafter; run this launcher without SABER_CONSOLE for --weights $WEIGHTS${DRAFTER:+ --drafter $DRAFTER} (or pick the packs on the console's Settings page)" >&2; exit 2; }
   NB=(); [ "$BUILD" = 0 ] && NB=(--no-build)
   DEVICE=${DEVICE:-0} exec "$REPO/tools/serve_console.sh" --preset qwen27b --tp "$TP" "${NB[@]}" "$@"
 fi
 
+# Q / QD: the target / drafter folder names' stems (qwen38-27b-$Q, qwen38-dflash2-drafter$QD; -tp1 at TP=1),
+# QF: the fetch_packs.sh target's stem.
 case "$WEIGHTS" in
-  macaq) Q=macaq7-bc3; QD=-quarkhead; QF=-macaq; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-MXFP4}; WIDTHS=${WIDTHS:-1,5,8} ;;
-  quark) Q=quark-awq-mxfp4; QD=-quarkhead; QF=-quark; MODEL=${MODEL:-Qwen3.8} ;;
-  nvfp4) Q=nvfp4-devfinal; QD=; QF=; MODEL=${MODEL:-Qwen3.8} ;;
-  macaq-w4a8) QF=-macaq-w4a8; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-W4A8-SABER}; WIDTHS=${WIDTHS:-1,5,8}
+  macaq-w4a8)
     DRAFTER=${DRAFTER:-w4a8}
     case "$DRAFTER" in w4a8 | fp8) ;; *) echo "--drafter $DRAFTER: w4a8 (the default) or fp8" >&2; exit 2 ;; esac
-    # the Hugging Face layout: one folder a model, the TP=2 pack in tp2/, the TP=1 pack in tp1/
-    TIER=${TIER:-qwen38-27b-macaq-w4a8/tp$TP}; DRAFT=${DRAFT:-qwen38-dflash2-drafter-$DRAFTER/tp$TP} ;;
-  *) echo "--weights $WEIGHTS: macaq (the default), quark, nvfp4 or macaq-w4a8" >&2; exit 2 ;;
+    Q=macaq-w4a8; QD=-$DRAFTER; QF=-macaq-w4a8; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-W4A8-SABER}; WIDTHS=${WIDTHS:-1,5,8} ;;
+  macaq | macaq-mxfp4) Q=macaq7-bc3; QD=-quarkhead; QF=-macaq; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-MXFP4}; WIDTHS=${WIDTHS:-1,5,8} ;;
+  quark) Q=quark-awq-mxfp4; QD=-quarkhead; QF=-quark; MODEL=${MODEL:-Qwen3.8} ;;
+  nvfp4) Q=nvfp4-devfinal; QD=; QF=; MODEL=${MODEL:-Qwen3.8} ;;
+  *) echo "--weights $WEIGHTS: macaq-w4a8 (the default), macaq (= macaq-mxfp4), quark or nvfp4" >&2; exit 2 ;;
 esac
-[ -z "$DRAFTER" ] || [ "$WEIGHTS" = macaq-w4a8 ] || { echo "--drafter: only --weights macaq-w4a8 has a drafter choice" >&2; exit 2; }
+# --drafter: macaq-w4a8 takes w4a8 or fp8 (above); macaq / quark already use the FP8 drafter, so fp8 is the
+# only choice there; nvfp4 has its own fp8-head drafter (no choice).
+case "$WEIGHTS:${DRAFTER:-}" in
+  macaq-w4a8:* | *: | macaq:fp8 | macaq-mxfp4:fp8 | quark:fp8) ;;
+  nvfp4:*) echo "--drafter: --weights nvfp4 has no drafter choice" >&2; exit 2 ;;
+  *) echo "--drafter $DRAFTER: --weights $WEIGHTS uses the FP8 drafter (fp8); the W4A8-iu8 drafter is paired with --weights macaq-w4a8" >&2; exit 2 ;;
+esac
 CNAME=${CNAME:-$TP_DEF_CNAME}
 if [ "$TP" = 2 ]; then
   MAX_CTX=${MAX_CTX:-262144}
@@ -147,6 +158,7 @@ else
   fi
   FETCH=27b$QF-tp1
 fi
+[ "$WEIGHTS:$DRAFTER" != macaq-w4a8:fp8 ] || FETCH="$FETCH (with DRAFTER=fp8)"
 if [ "$WEIGHTS" != nvfp4 ]; then TOKENIZER=${TOKENIZER:-/work/.cache/quark27b.tokenizer.json}
 else TOKENIZER=${TOKENIZER:-/work/.cache/template_corpus.tokenizer.json}; fi
 CHAT_TEMPLATE=${CHAT_TEMPLATE:-/work/.cache/template_corpus.jinja}

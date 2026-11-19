@@ -52,8 +52,9 @@ refused only by what holds its card: a Saber container whose `HIP_VISIBLE_DEVICE
 (or is unset), or the shared or that card's lock file.
 
 The console's presets are the launchers' default boots: `tools/serve_flashnext.sh`, and
-`tools/serve_27b.sh` with the MACaQ pack at TP=2 or, with `--tp 1`, on one card (a test runs the
-launchers in their `SABER_PRINT_CMD=1` mode and compares the command lines). The TP is a choice of
+`tools/serve_27b.sh` with its default packs (the MACaQ W4A8-iu8 target and drafter) at TP=2 or,
+with `--tp 1`, on one card (a test runs the launchers in their `SABER_PRINT_CMD=1` mode and
+compares the command lines). The TP is a choice of
 its own (the wizard's Model step, the Settings Engine panel, `tools/saber-setup --tp 1`); another
 27B pack is a flag override on the Settings page. If your clone is not at `~/saber`, the console
 finds it from the binary's location (`<repo>/.cache/target-container/release/saber`); otherwise set
@@ -128,9 +129,9 @@ layout" at the bottom of the page forgets it).
   uses the engine's own ledger law (`lean`: budget 31,744 MiB, KV headroom 848 MiB, in place of
   `--engine-budget-mib` / `--engine-kv-headroom-mib`; `--engine-ledger today` keeps the flags).
 - **KV cache: context vs sequences.** The estimate follows the engine's own 27B ledger (fitted to
-  five TP=1 boots of the MACaQ `-tp1` pair within 0.1 %, and within 1 % of the NVFP4 pair's measured
+  five TP=1 boots of the MACaQ MXFP4 `-tp1` pair within 0.1 %, and within 1 % of the NVFP4 pair's measured
   168,768 tokens) and shows, beside the figure, what fewer sequences or a shorter context would
-  give, computed by the same law. Measured at TP=1 (one R9700, MACaQ, 2026-11-14):
+  give, computed by the same law. Measured at TP=1 (one R9700, MACaQ MXFP4, 2026-11-14):
 
   | context | sequences (batches) | KV tokens |
   |---|---|---|
@@ -152,7 +153,7 @@ layout" at the bottom of the page forgets it).
   the sequences and lower the context.
 - **The boot check.** The engine refuses to start when one sequence at the max context does
   not fit the ledger's KV blocks (`max_ctx / 16 + 1`); the estimate computes the same check, so a
-  context past the ceiling is a field error naming it (at TP=1, MACaQ, 1 sequence: ~177k; the
+  context past the ceiling is a field error naming it (at TP=1, MACaQ MXFP4, 1 sequence: ~177k; the
   tip shows the ceiling for each sequence count). The TP=1 default is one conversation of up to
   131,072 tokens with ~62k tokens spare for the prefix cache; the Settings Engine panel's
   Sequences control serves several at once (2 or 4, which share the KV).

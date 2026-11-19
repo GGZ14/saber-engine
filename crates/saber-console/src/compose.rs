@@ -35,13 +35,26 @@ pub const FN_AGENT_DEFAULTS: &[(&str, Option<&str>)] = &[
 /// flag would leave the engine's default, on, in place.
 pub const ON_OFF_FLAGS: &[&str] = &["--enable-prefix-caching"];
 
+/// The 27B at TP=2: `tools/serve_27b.sh`'s default packs (the MACaQ W4A8-iu8 target and the
+/// W4A8-iu8 DFlash2 drafter) and its served model id.
+pub mod tp2 {
+    /// The target pack (under `<nvme>/saber-packs`, mounted at `/packs`).
+    pub const PACK: &str = "qwen38-27b-macaq-w4a8";
+    /// The DFlash2 drafter pack.
+    pub const DRAFT_PACK: &str = "qwen38-dflash2-drafter-w4a8";
+}
+
+/// The 27B's served model id (`--served-model-name`) at either TP.
+pub const QWEN27B_MODEL: &str = "Qwen3.8-27B-MACaQ-W4A8-SABER";
+
 /// The 27B on ONE card: `tools/serve_27b.sh --tp 1`'s defaults (the `-tp1` packs of the default
 /// weights, the single-card context / sequence / batch ladder, its container name).
 pub mod tp1 {
-    /// The single-card target pack (under `<nvme>/saber-packs`, mounted at `/packs`).
-    pub const PACK: &str = "qwen38-27b-macaq7-bc3-tp1";
-    /// The single-card DFlash2 drafter pack.
-    pub const DRAFT_PACK: &str = "qwen38-dflash2-drafter-quarkhead-tp1";
+    /// The single-card target pack (under `<nvme>/saber-packs`, mounted at `/packs`): the
+    /// MACaQ W4A8-iu8 pack.
+    pub const PACK: &str = "qwen38-27b-macaq-w4a8-tp1";
+    /// The single-card DFlash2 drafter pack (the W4A8-iu8 drafter).
+    pub const DRAFT_PACK: &str = "qwen38-dflash2-drafter-w4a8-tp1";
     /// Per-sequence context: one conversation of up to 128k tokens (the user's default of
     /// 2026-11-14; one card's ledger leaves ~62k tokens spare beside it for the prefix cache).
     pub const MAX_CTX: u64 = 131_072;
@@ -52,11 +65,13 @@ pub mod tp1 {
     pub const BATCH_LADDER: &str = "1,2,4,8";
     /// The batches of the launcher's TP=1 default boot.
     pub const BATCHES: &str = "1";
-    /// The TP=1 defaults before 2026-11-14 (4 sequences at 65,536, batches 1,2,4): what a
-    /// version-4 file's TP=1 overrides restate.
+    /// The TP=1 defaults before 2026-11-14 (4 sequences at 65,536, batches 1,2,4, the MACaQ
+    /// MXFP4 packs): what a version-4 file's TP=1 overrides restate.
     pub const V4_MAX_CTX: u64 = 65_536;
     pub const V4_MAX_SEQS: u64 = 4;
     pub const V4_BATCHES: &str = "1,2,4";
+    pub const V4_PACK: &str = "qwen38-27b-macaq7-bc3-tp1";
+    pub const V4_DRAFT_PACK: &str = "qwen38-dflash2-drafter-quarkhead-tp1";
     /// The container the launcher names a TP=1 server.
     pub const CONTAINER: &str = "saber-27b-tp1-serve";
 }
@@ -189,7 +204,7 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
             let (pack, draft) = if one {
                 (tp1::PACK, tp1::DRAFT_PACK)
             } else {
-                ("qwen38-27b-macaq7-bc3", "qwen38-dflash2-drafter-quarkhead")
+                (tp2::PACK, tp2::DRAFT_PACK)
             };
             let max_ctx = if one { tp1::MAX_CTX } else { 262_144 }.to_string();
             let max_seqs = if one { tp1::MAX_SEQS } else { 8 }.to_string();
@@ -211,7 +226,7 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
                 f("--engine-draft-pack", format!("/packs/{draft}")),
                 f("--engine-budget-mib", "30500"),
                 sw("--engine-rectangular-widths"),
-                f("--served-model-name", "Qwen3.8-27B-MACaQ-MXFP4"),
+                f("--served-model-name", QWEN27B_MODEL),
                 f("--host", "0.0.0.0"),
                 f("--port", &port),
             ]);

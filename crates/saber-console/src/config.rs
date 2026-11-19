@@ -309,11 +309,16 @@ impl EngineConfig {
             |v: Option<&FlagValue>, want: &str| v.and_then(FlagValue::arg).as_deref() == Some(want);
         // the old single-card context / sequences stay overrides (the file keeps the boot it had;
         // the TP=1 default is 1 sequence at 131,072 since 2026-11-14); the batches go: the
-        // console derives them from the sequences (the old 1,2,4 = 4 sequences' ladder)
+        // console derives them from the sequences (the old 1,2,4 = 4 sequences' ladder); the
+        // packs that file restated (the MACaQ MXFP4 -tp1 pair, the TP=1 default then) go too, so
+        // it serves the current default packs (tools/saber-setup drops them the same way)
         for (k, want) in [
             ("--engine-decode-batches", tp1::V4_BATCHES.to_string()),
-            ("--pack", format!("/packs/{}", tp1::PACK)),
-            ("--engine-draft-pack", format!("/packs/{}", tp1::DRAFT_PACK)),
+            ("--pack", format!("/packs/{}", tp1::V4_PACK)),
+            (
+                "--engine-draft-pack",
+                format!("/packs/{}", tp1::V4_DRAFT_PACK),
+            ),
         ] {
             if same(self.flags.get(k), &want) {
                 self.flags.remove(k);
