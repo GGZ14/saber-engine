@@ -1,0 +1,69 @@
+schema_version = 1
+plugin = "attn_glue_hadi8"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/attn_glue_hadi8.hip"
+source_sha256 = "b577578e02d38df4f0d9a4a5b08910ea00d8e5522b219e6dfa35c6b92e98572c"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "d57c6145d79aed00fd3bb1cc36cbd7df03e5dd00f336c25e9c02611a8825b140"
+hsaco = "attn_glue_hadi8.hsaco"
+hsaco_sha256 = "92f72dc5f0e2aa42451cc659c320da3f8f6d4b8a27808a71a505a0f39ed787ed"
+
+[[kernel]]
+name = "attn_gate_quant_hadi8_t256_tiled1"
+symbol = "attn_gate_quant_hadi8_t256_tiled1.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 80
+sgpr_count = 33
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "core"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "gate"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "hd"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "gs"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "had_t"

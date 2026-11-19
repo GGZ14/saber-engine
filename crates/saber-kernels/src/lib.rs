@@ -20,6 +20,7 @@
 pub mod abi;
 pub mod codeobj;
 pub mod dflash;
+pub mod dflash_iu8;
 pub mod flashnext;
 pub mod fn19;
 pub mod fn22;
@@ -30,6 +31,7 @@ pub mod glue;
 pub mod head;
 pub mod ladder;
 pub mod macaq;
+pub mod macaq_iu8;
 pub mod macaq_w8;
 pub mod manifest;
 pub mod moe;
@@ -122,10 +124,21 @@ pub fn rule_table_for_plugin(plugin: &str) -> Option<&'static str> {
         "attn_glue" => "attn_glue_gfx1201.toml",
         // the gate twin is a route of the glue rules (`macaq::had_twin` renames it).
         "attn_glue_had" => "attn_glue_gfx1201.toml",
+        // the int8 gate twin follows its had32 twin's table.
+        "attn_glue_hadi8" => "attn_glue_gfx1201.toml",
         // the form-c W8 promotions' per-token W8A8 bodies. No policy row binds them: the 27B
         // planner names them by `macaq_w8::cell` (the band is data in that module), keyed to the
         // instrument table so adding them re-keys nothing.
         "macaq_w8" => "noop_gfx1201.toml",
+        // the iu8 GEMMs (named by `macaq_iu8::cell`, the band is data there) and the int8
+        // producer twins (renamed from their had32 twins by `macaq_iu8::i8_twin`, like the had32 twins
+        // follow their parents' tables).
+        "macaq_iu8" => "noop_gfx1201.toml",
+        // the iu8 decode pair + row 3 (`macaq_iu8::{pair, ar_nq}`, bound by the planner's folds).
+        "macaq_iu8f" => "noop_gfx1201.toml",
+        // the iu8 drafter's int8 producer twins (`dflash_iu8::resolve_*`, bound by the drafter plan on an
+        // iu8 drafter pack only).
+        "dflash_hadi8" => "noop_gfx1201.toml",
         "head" => "head_gfx1201.toml",
         "noop" => "noop_gfx1201.toml",
         // T6's shadow digest: an instrument with no launch policy (its geometry is the digest's
@@ -400,6 +413,21 @@ pub mod prebuilt {
         (
             "mxfp4_gemm_decode_arnq_had.hsaco",
             "mxfp4_gemm_decode_arnq_had32_bk128_ks4_tm1_wperm1_nt1",
+        ),
+        // the W4A8-iu8 pack's bodies (`crate::macaq_iu8`): the int8-WMMA GEMMs (per-row
+        // int4 / int8 weights, per-token int8 A, A-tiled at every M) and the per-token INT8 twins of
+        // the had32 producers (`tools/gen_macaq_iu8.py`). Named only by the 27B planner's
+        // `KernelOp::GemmI4A8` / `GemmI8A8` routes and `macaq_iu8::i8_twin`.
+        ("macaq_iu8.hsaco", "macaq_iu8_dec_w4_tm1"),
+        // the iu8 fused decode bodies (`tools/gen_macaq_iu8f.py`): the decode pair and row 3.
+        ("macaq_iu8f.hsaco", "macaq_iu8f_pair_w4_tm1"),
+        // the iu8 drafter's per-token int8 producer twins (named only by `dflash_iu8`).
+        ("dflash_hadi8.hsaco", "dflash_hadi8_act_t256g1"),
+        ("mxfp4_hadi8.hsaco", "add_rms_quant_hadi8_t256_tiled1"),
+        ("attn_glue_hadi8.hsaco", "attn_gate_quant_hadi8_t256_tiled1"),
+        (
+            "saber_ar_hadi8.hsaco",
+            "saber_ar_oneshot_2rank_exact_nq_ssqfma_hadi8_bf16",
         ),
         // T4's RACE-CHECK twins: the served all-reduces (row 3 included) with
         // `hip/ar_race_check.h`'s payload / flag / counter checks inserted and nothing else

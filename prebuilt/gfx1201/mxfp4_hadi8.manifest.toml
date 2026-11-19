@@ -1,0 +1,291 @@
+schema_version = 1
+plugin = "mxfp4_hadi8"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/mxfp4_hadi8.hip"
+source_sha256 = "7f059016492d10734a603deb45de665fb9c60c6211e4ae679ddd33ae05d354f3"
+flags = "--genco --offload-arch=gfx1201 -O3"
+build_hash = "f6f8f8628fda534eca87f581fdfe82bdda4a0b39c4a04d7ae8f26c283cab4605"
+hsaco = "mxfp4_hadi8.hsaco"
+hsaco_sha256 = "a051e2011159879f9194f096b6707accf3c1573be4b8d051d13b7c514dbcf9e9"
+
+[[kernel]]
+name = "add_rms_quant_hadi8_t256_tiled1"
+symbol = "add_rms_quant_hadi8_t256_tiled1.kd"
+kernarg_segment_size = 64
+kernarg_segment_align = 8
+group_segment_fixed_size = 64
+private_segment_fixed_size = 0
+vgpr_count = 80
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "y"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "res"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "res_out"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "had_t"
+
+[[kernel]]
+name = "add_rms_quant_hadi8_t512_tiled1"
+symbol = "add_rms_quant_hadi8_t512_tiled1.kd"
+kernarg_segment_size = 64
+kernarg_segment_align = 8
+group_segment_fixed_size = 128
+private_segment_fixed_size = 0
+vgpr_count = 80
+sgpr_count = 28
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "y"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "res"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "res_out"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "had_t"
+
+[[kernel]]
+name = "gdn_norm_quant_hadi8_t256_tiled1"
+symbol = "gdn_norm_quant_hadi8_t256_tiled1.kd"
+kernarg_segment_size = 64
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 93
+sgpr_count = 26
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "z"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "by_value"
+name = "zs"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "had_t"
+
+[[kernel]]
+name = "silu_mul_quant_hadi8_t256_tiled1"
+symbol = "silu_mul_quant_hadi8_t256_tiled1.kd"
+kernarg_segment_size = 40
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 89
+sgpr_count = 22
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "gu"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "had_t"
+
+[[kernel]]
+name = "silu_mul_quant_hadi8_t512_tiled1"
+symbol = "silu_mul_quant_hadi8_t512_tiled1.kd"
+kernarg_segment_size = 40
+kernarg_segment_align = 8
+group_segment_fixed_size = 64
+private_segment_fixed_size = 0
+vgpr_count = 89
+sgpr_count = 22
+wavefront_size = 32
+max_flat_workgroup_size = 512
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "gu"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "had_t"
