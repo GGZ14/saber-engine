@@ -11,6 +11,9 @@ default weights are the MACaQ MXFP4 pack ([`Launch80/Qwen3.8-27B-MACaQ-MXFP4-SAB
 caching on by default and optional vision.
 It also runs on **one card** (TP=1, `tools/serve_27b.sh --tp 1`) with smaller context and concurrency
 defaults; see "One card (TP=1)" below.
+An optional **MACaQ W4A8-iu8** pack of the same model (`tools/serve_27b.sh --weights macaq-w4a8`) runs every
+decoder linear on the R9700's int8 matrix cores, with lower KL to BF16 and faster decode; see "The MACaQ
+W4A8-iu8 27B" below.
 **Qwen3.8 Flash-Next** (MoE) is served by the same binary.
 
 ## What you need
@@ -153,6 +156,71 @@ Task scores tie with the earlier pack (GSM8K 1,282 vs 1,284 of 1,319, thinking m
 `tools/serve_27b.sh --tp 1` (`qwen38-27b-macaq7-bc3-tp1` 20.2 GB + `qwen38-dflash2-drafter-quarkhead-tp1`
 7.7 GB). Its quality was measured (top-5 KL 0.0228 at context 32,768); its KV pool was measured at
 boot (below), its speed has not been.
+
+**The MACaQ W4A8-iu8 27B (an option, not the default).** The default pack's per-channel scales and Hadamard
+basis with integer weights: every decoder linear's weights are per-row int4 (one f32 scale an output row; the same 19 output-side
+projections as the default pack are per-row int8 instead), activations are per-token symmetric int8
+(absmax / 127) in the same Hadamard basis, and each GEMM is a pure int32 integer loop on gfx1201's int8 WMMA
+(`v_wmma_i32_16x16x16_iu8`) with both scales applied once in the epilogue. The lm_head (BF16), the KV cache
+(fp8) and everything outside the linears are the default pack's. **The pack drives the engine:** the boot log
+says `macaqiu8 rank R: macaq_iu8/1 ... (304 iu8 GEMMs: 285 W4 per-row int4 + 19 W8 per-row int8 ...)`, and a
+W4A8-iu8 drafter pack adds `macaqiu8d rank R: ...`; no flag is needed, and an ordinary pack boots as before.
+It needs an engine built from this tree: an older binary refuses the pack at upload (it asks for MXFP4
+records the pack does not carry), and this engine refuses an iu8 pack whose manifest names another format
+version (`macaq_iu8/1` for the target, `macaq_iu8d/1` for the drafter).
+
+| Hugging Face repo | contents | TP=2 (`tp2/`) | TP=1 (`tp1/`) |
+|---|---|--:|--:|
+| [`Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER) | the target pack + tokenizer + chat template | 20.5 GB | 19.5 GB |
+| [`Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER) | the W4A8-iu8 DFlash2 drafter (its five linear sites on the same int8 GEMMs) | 7.3 GB | 6.8 GB |
+| [`Launch80/Qwen3.8-27B-DFlash2-Drafter-FP8-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-DFlash2-Drafter-FP8-SABER) | the FP8 DFlash2 drafter (the same packs as `qwen38-dflash2-drafter-quarkhead[-tp1]`) | 8.2 GB | 7.7 GB |
+
+Each repo holds one model, the TP=2 pack in `tp2/` and the TP=1 pack in `tp1/`, so you download only the
+folder you serve:
+
+```bash
+tools/fetch_packs.sh 27b-macaq-w4a8             # TP=2 target + the W4A8-iu8 drafter (DRAFTER=fp8: the FP8 one)
+tools/fetch_packs.sh 27b-macaq-w4a8-tp1         # the same for one card
+tools/serve_27b.sh --weights macaq-w4a8         # model id Qwen3.8-27B-MACaQ-W4A8-SABER; --tp 1, --drafter fp8
+# or by hand, one TP folder only (PACKS = the SABER_PACKS directory the launcher reads):
+hf download Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER --include 'tp1/*' --local-dir "$PACKS/qwen38-27b-macaq-w4a8"
+hf download Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER --include 'tp1/*' --local-dir "$PACKS/qwen38-dflash2-drafter-w4a8"
+#   (the launcher also needs .cache/quark27b.tokenizer.json: the target repo's tokenizer.json, the same file)
+```
+
+Quality, engine top-5 KL vs BF16 (76 held-out 32k-token windows, paired bootstrap; the same
+measurement as the default pack's table above):
+
+| | W4A8-iu8 pack | MACaQ MXFP4 pack (the default) |
+|---|--:|--:|
+| top-5 KL, TP=2 | **0.02134** (-5.5 %, 95 % CI [-8.7, -2.0]) | 0.02258 |
+| top-5 KL, TP=1 | **0.02065** (-9.4 %, 95 % CI [-13.3, -4.7]) | 0.02279 |
+| top-1 agreement with BF16 (TP=2) | 94.22 % | 94.19 % |
+| perplexity, TP=2 (BF16 4.879) | 4.901 | 4.910 |
+
+GSM8K 488 of 500 (the default pack 486-487 in the same runs) and the 32k / 120k needle tests pass. Speed at
+TP=2 on two R9700s (262,144 context, 8 sequences, verify widths 1,5,8, the FP8 drafter on both sides, two
+boots each, the same binary):
+
+| | W4A8-iu8 pack | MACaQ MXFP4 pack |
+|---|--:|--:|
+| decode step, batch 1 / batch 8 | 21.6 / 29.3 ms | 22.9-23.0 / 31.1-31.3 ms |
+| BetterBench `--quick` single stream | 229-231 tok/s | 222-225 tok/s |
+| BetterBench `--quick` concurrency 8 | 640-644 tok/s | 606-614 tok/s |
+| TTFT p50 (single) / update p99 | 38 ms / 22.5 ms | 47-48 ms / 23.8 ms |
+| cold prefill 4k / 16k | 5,263-5,269 / 5,190-5,192 tok/s | 5,152-5,174 / 5,125-5,132 tok/s |
+
+The W4A8-iu8 drafter on top of the W4A8 target (same binary, two boots each): batch-1 step -2.7 %, batch-1
+decode +7.3 % (151-152 vs 140-141 tok/s), BetterBench single stream +2.9 %, accepted tokens per step +1.6 %
+(95 % CI [-0.7, +4.0]); batch-8 step 28.9 vs 29.2-29.4 ms (the drafter's own batch-8 GEMM routing in this
+tree), and the target's KL is unchanged (the drafter only proposes).
+At TP=1 (one R9700, 32,768 context) the W4A8 target's step is 35.6 vs 37.2 ms (batch 1) and 46.4 vs 48.8 ms
+(batch 8) against the default pack; the W4A8 drafter adds +4.7 % batch-1 decode there, with accepted tokens per
+step -0.4 % (95 % CI [-2.3, +1.4]). Greedy outputs with the W4A8 drafter are not byte-identical to the FP8
+drafter's: the accepted-token schedule changes where the target's GDN state (stored f16) is rounded, which moves
+near-tie tokens; the task scores are the same. The calibration and export tooling for these packs is not part of
+this release; the packs are published ready-made, and `saber-packplan --macaq-had --macaq-iu8 presets.json:VARIANT`
+plans such a pack's record set.
 
 **One card (TP=1).** A pack is cut for one TP degree: its rows and columns are already sharded per
 rank, so the TP=2 packs above (`rank0.pack` + `rank1.pack`) cannot be loaded on one card. Each Hugging
@@ -381,7 +449,8 @@ Both launchers take their own flags first, then pass everything else straight to
 | Flag | What it does |
 |---|---|
 | `--no-build` | Skip the `cargo build`; reuse `.cache/target-container/release/saber`. Use this for every boot after the first (a build takes about two minutes). |
-| `--weights macaq\|quark\|nvfp4` | Which 27B packs: `macaq` (the default, `tools/fetch_packs.sh 27b-macaq`), `quark` (the Quark AWQ MXFP4 packs, `27b-quark`) or `nvfp4` (the NVFP4 packs, `27b`; the previous default). |
+| `--weights macaq\|quark\|nvfp4\|macaq-w4a8` | Which 27B packs: `macaq` (the default, `tools/fetch_packs.sh 27b-macaq`), `quark` (the Quark AWQ MXFP4 packs, `27b-quark`), `nvfp4` (the NVFP4 packs, `27b`; the previous default) or `macaq-w4a8` (the MACaQ W4A8-iu8 packs, `27b-macaq-w4a8`; model id `Qwen3.8-27B-MACaQ-W4A8-SABER`). |
+| `--drafter w4a8\|fp8` | `--weights macaq-w4a8` only: the W4A8-iu8 drafter (the default for those weights) or the FP8 one. `DRAFTER=...` does the same. |
 | `--tp 1` | Serve on ONE card (TP=1) from the `-tp1` packs of the chosen weights (`tools/fetch_packs.sh 27b-macaq-tp1` for the default), on HIP device `DEVICE` (default 0), container `saber-27b-tp1-serve`. `TP=1` in the environment does the same; `--tp 2` (the default) is the two-card server. See "One card (TP=1)". |
 | `--vision` | Accept images (`image_url` parts). Same as `--vision lazy`: the vision tower lives in pinned host RAM and streams through the idle prefill arena per image. No VRAM is billed and the full 262k context stays, at about +30 ms per image. |
 | `--vision on` | Keep the tower resident (about 1.9 GiB a rank). Needs `MAX_CTX=131072`. |
@@ -406,8 +475,9 @@ Environment variables (put them before the command):
 | `WIDTHS` | `1,5,8` (nvfp4 / quark: `1,8`) | Speculative verify widths |
 | `DRAFT_BLOCK` | `8` | Drafter block size (`4` halves the GDN slots) |
 | `MODEL` | `Qwen3.8-27B-MACaQ-MXFP4` (nvfp4 / quark: `Qwen3.8`) | Served model id |
-| `WEIGHTS` | `macaq` | `quark` / `nvfp4` = the other packs (same as `--weights ...`) |
-| `TIER` / `DRAFT` | by `WEIGHTS` and `--tp` | Target / drafter pack folder names under `SABER_PACKS` |
+| `WEIGHTS` | `macaq` | `quark` / `nvfp4` / `macaq-w4a8` = the other packs (same as `--weights ...`) |
+| `DRAFTER` | `w4a8` (only with `macaq-w4a8`) | `fp8` = the FP8 drafter beside the W4A8 target |
+| `TIER` / `DRAFT` | by `WEIGHTS` and `--tp` | Target / drafter pack folder names under `SABER_PACKS` (`macaq-w4a8`: `qwen38-27b-macaq-w4a8/tp2`, `qwen38-dflash2-drafter-w4a8/tp2`, `/tp1` at TP=1) |
 | `TOKENIZER` / `CHAT_TEMPLATE` | `.cache/quark27b.tokenizer.json` (nvfp4: `.cache/template_corpus.tokenizer.json`) / `.cache/template_corpus.jinja` | As paths the container sees (`/work/...` = the repo) |
 | `SABER_PACKS` | `/mnt/nvme/saber-packs` | Where the weight packs live |
 | `SABER_SHARED` | `~/saber-cache` | Scratch and logs shared between runs |
@@ -524,7 +594,7 @@ pinned, checksummed Node inside the dev image, no GPU) and the result is committ
 
 ## Reproducing the code objects
 
-`prebuilt/gfx1201/` holds 121 compiled GPU code objects. Each has a manifest next to it recording the
+`prebuilt/gfx1201/` holds 127 compiled GPU code objects. Each has a manifest next to it recording the
 source file, its sha256, the compiler flags, a build hash (sha256 of the preprocessed source plus
 flags) and the object's own sha256. The sources are in `crates/saber-kernels/hip`.
 
@@ -533,7 +603,7 @@ the file; `tools/verify_prebuilt.py --table` lists it per object.
 
 | Objects | ROCm | TheRock commit | LLVM (`ROCm/llvm-project`) | Patches on LLVM |
 |---|---|---|---|---|
-| 69 | 10.1.0rc3 (HIP 7.16.26385) | `b324869fb311` | `d6f6cb69` (clang 24.0.0git) | none |
+| 75 | 10.1.0rc3 (HIP 7.16.26385) | `b324869fb311` | `d6f6cb69` (clang 24.0.0git) | none |
 | 52 | 7.14.0rc3 (HIP 7.14.60850) | `418cd5f63abb` | `46fcb339` (clang 23.0.0git) | 2 TheRock patches, both `hipcc` driver path handling (Windows include path, `HIP_PATH` precedence); the clang string carries `+PATCHED:` for them |
 
 Saber applies no patches to LLVM. The container image from `tools/build-image.sh` uses the public
@@ -550,7 +620,8 @@ tools/verify_prebuilt.py --rebuilt /abs/path/inside/repo/rebuilt
 the dynamic symbol-table sections, so file hashes never match. `verify_prebuilt.py` compares `.text`,
 `.rodata` and the register limits, and only against a rebuild by the same compiler. When we ran it,
 every shipped object matched: 64 of 64 on ROCm 10.1 and 52 of 52 on ROCm 7.14, none different (the five
-MACaQ objects added since, all ROCm 10.1, were checked the same way: 5 of 5).
+MACaQ objects added since, all ROCm 10.1, were checked the same way: 5 of 5; so were the six W4A8-iu8 objects
+`macaq_iu8`, `macaq_iu8f`, `mxfp4_hadi8`, `attn_glue_hadi8`, `saber_ar_hadi8` and `dflash_hadi8`: 6 of 6).
 
 The MXFP4 GEMM sources were derived from `tools/reference/ref_mxfp4_fp8.hip` by
 `tools/gen_hip_sources.py`. The committed `.hip` files are the inputs that were compiled, not the
@@ -559,7 +630,10 @@ generator output: they have been renamed since, and the generator no longer repr
 
 Two MACaQ sources are derived and reproducible: `tools/gen_macaq_w8pt.py --check` (the per-token-scale
 W8A8 bodies, from the Flash-Next W8 sources) and `tools/gen_arnq_had.py --check` (the Hadamard twin of the
-decode GEMM's reduce epilogue) regenerate them exactly.
+decode GEMM's reduce epilogue) regenerate them exactly. The W4A8-iu8 path adds two more:
+`tools/gen_macaq_iu8.py --check` (the per-token int8 twins of the Hadamard producers, from their had32 sources)
+and `tools/gen_macaq_iu8f.py --check` (the fused decode pair, the reduce-epilogue row and the prefill band tiles,
+sliced from `macaq_iu8.hip` and the had32 sources).
 
 ## Layout
 
