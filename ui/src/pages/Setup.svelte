@@ -3,7 +3,7 @@
   // launch. Every step is saved on the server (config.toml [setup]), so a reload resumes here.
   // Back is always open; Next passes the step's gate (the server enforces the same gates).
   import { onMount, onDestroy } from 'svelte';
-  import { api, stream, bytes, int, setToken } from '../lib/api.js';
+  import { api, stream, bytes, int, setToken, login } from '../lib/api.js';
   import { ui, guarded, refreshStatus } from '../lib/store.svelte.js';
   import { W, loadSetup, loadSystem, loadCatalog, followDownloads, setupCall, copyText, gb } from '../lib/setup.svelte.js';
   import DownloadRow from '../lib/DownloadRow.svelte';
@@ -140,7 +140,7 @@
     const r = await setupCall('/api/setup/network', body);
     if (!r.ok) return false;
     // this browser keeps the token and the key, so the console and the playground keep working
-    if (body.admin_token) setToken(body.admin_token);
+    if (body.admin_token) { setToken(body.admin_token); login(body.admin_token).catch(() => {}); }
     if (keyVal) { try { localStorage.setItem('saber-playground-key', keyVal); } catch (e) {} }
     return true;
   }

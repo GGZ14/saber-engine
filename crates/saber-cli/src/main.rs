@@ -3575,6 +3575,12 @@ enum Cmd {
         #[arg(long)]
         gen_admin_token: bool,
 
+        /// Run without an admin token (an open console). Beyond the loopback only private-network
+        /// clients on local hostnames are served, and a warning prints at start. Default: a token
+        /// is made on the first start and a sign-in link printed.
+        #[arg(long)]
+        no_auth: bool,
+
         /// The config store (default: ~/.config/saber/config.toml).
         #[arg(long)]
         config: Option<PathBuf>,
@@ -3811,6 +3817,7 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
             port,
             admin_token,
             gen_admin_token,
+            no_auth,
             config,
             engine,
             mock_port,
@@ -3820,6 +3827,7 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
             port,
             admin_token,
             gen_admin_token,
+            no_auth,
             config,
             engine,
             mock_port,

@@ -236,6 +236,7 @@ async fn proxy_poller_and_api_against_a_mock_engine() {
         schema: Arc::new(json!({})),
         auth: Arc::new(saber_console::auth::Auth::open()),
         loopback: true,
+        open_lan: false,
         proxy: Arc::new(Proxy::new(Some(store.clone()))),
         usage: Some(store.clone()),
     };

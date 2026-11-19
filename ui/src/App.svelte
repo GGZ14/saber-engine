@@ -2,7 +2,7 @@
   // The console shell: the page nav, the global time range + auto-refresh, the theme, the
   // admin-token gate. Pages live in ./pages and reload on `ui.tick` (each refresh) and range.
   import { onMount, onDestroy } from 'svelte';
-  import { setToken, getToken, api, AuthError, RateLimited } from './lib/api.js';
+  import { setToken, getToken, api, login as loginApi, logoutServer, consumeSignInLink, AuthError, RateLimited } from './lib/api.js';
   import { ui, RANGES, REFRESH, setRange, setRefresh, applyTheme, refreshStatus, refreshWho, startRefresh } from './lib/store.svelte.js';
   import Overview from './pages/Overview.svelte';
   import Throughput from './pages/Throughput.svelte';
@@ -49,8 +49,8 @@
     if (!t) return;
     loggingIn = true;
     loginError = '';
-    setToken(t);
     try {
+      await loginApi(t);
       const a = await api('/api/auth');
       tokenInput = '';
       ui.needToken = false;
@@ -71,13 +71,14 @@
     }
   }
   function logout() {
-    setToken('');
+    logoutServer();
     ui.who = null;
     ui.needToken = true;
   }
 
   onMount(async () => {
     // first run: the wizard shows while config.toml is absent or the setup is not finished
+    await consumeSignInLink();
     await refreshWho();
     const s = ui.needToken ? null : await loadSetup();
     if (s?.needed && !location.hash.replace(/^#\/?/, '')) location.hash = '#setup';
@@ -126,7 +127,7 @@
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
       {#if getToken() && !ui.needToken}
-        <button class="btn small" onclick={logout} title="Forget the admin token in this tab">Sign out</button>
+        <button class="btn small" onclick={logout} title="Sign out: forget this browser">Sign out</button>
       {/if}
       <div class="seg" role="radiogroup" aria-label="Theme">
         {#each ['system', 'light', 'dark'] as m}
@@ -146,7 +147,7 @@
   {#if ui.needToken}
     <section class="panel login" aria-labelledby="login-h">
       <h1 id="login-h">Sign in</h1>
-      <p>This console needs its admin token. It is kept in this browser tab only (closing the tab forgets it).</p>
+      <p>This console needs its admin token. Once signed in, this browser stays signed in for 30 days (Sign out forgets it). The console printed a sign-in link when it started; the token is also in <code>~/.config/saber/admin-token</code> on the server.</p>
       <form onsubmit={(e) => { e.preventDefault(); login(); }}>
         <label for="token">Admin token</label>
         <div class="row">

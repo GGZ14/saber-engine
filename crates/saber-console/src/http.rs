@@ -47,6 +47,9 @@ pub struct AppState {
     /// The admin credential (swapped in place by a rotate) and the limiter.
     pub auth: Arc<crate::auth::Auth>,
     pub loopback: bool,
+    /// `--no-auth` beyond the loopback: no token, but only private-network peers and hostnames
+    /// are served ([`lan_guard`]).
+    pub open_lan: bool,
     /// The `/v1` proxy and the usage store.
     pub proxy: Arc<crate::proxy::Proxy>,
     pub usage: Option<Arc<UsageStore>>,
@@ -108,7 +111,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/keys/{label}", axum::routing::delete(keys_delete))
         .route("/api/auth/keys/{label}/revoke", post(keys_revoke))
         .route("/api/audit", get(audit_list))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth));
+        .route_layer(middleware::from_fn_with_state(state.clone(), auth))
+        // sign in / out: no admin credential yet (login checks the token itself)
+        .route("/api/auth/login", post(auth_login))
+        .route("/api/auth/logout", post(auth_logout));
     // the /v1 proxy checks its own keys (crate::proxy), not the admin plane's header rules
     let v1 = Router::new()
         .route("/v1/{*rest}", axum::routing::any(crate::proxy::handle))
@@ -116,6 +122,7 @@ pub fn router(state: AppState) -> Router {
     api.merge(v1)
         .fallback(static_file)
         .layer(middleware::from_fn_with_state(state.clone(), host_guard))
+        .layer(middleware::from_fn_with_state(state.clone(), lan_guard))
         .with_state(state)
 }
 
@@ -197,7 +204,9 @@ async fn auth(State(st): State<AppState>, mut req: Request, next: Next) -> Respo
             .map(|v| v.trim().to_string());
         let given = bearer.or_else(|| query_token(req.uri()));
         let presented = given.as_deref().is_some_and(|g| !g.is_empty());
-        if !given.is_some_and(|g| st.auth.check_admin(&g)) {
+        let session = session_cookie(req.headers())
+            .is_some_and(|v| st.auth.session_check(&v, crate::now_ms()));
+        if !session && !given.is_some_and(|g| st.auth.check_admin(&g)) {
             // a WRONG token counts (a guess); no token at all (a signed-out page) does not
             if presented {
                 st.auth.limiter.fail(ip);
@@ -246,6 +255,147 @@ async fn auth(State(st): State<AppState>, mut req: Request, next: Next) -> Respo
         tokio::task::spawn_blocking(move || c.audit.record(&e));
     }
     resp
+}
+
+/// The value of the remember-me cookie, when the browser sent one.
+fn session_cookie(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .find_map(|kv| {
+            kv.trim()
+                .strip_prefix(crate::auth::SESSION_COOKIE)
+                .and_then(|r| r.strip_prefix('='))
+                .map(str::to_string)
+        })
+}
+
+fn session_set_cookie(value: &str, max_age_s: u64) -> String {
+    // HttpOnly: a page script can never read it; SameSite=Strict: another site's request never
+    // carries it (the mutating calls also need the X-Saber-Console header)
+    format!(
+        "{}={value}; Path=/; Max-Age={max_age_s}; HttpOnly; SameSite=Strict",
+        crate::auth::SESSION_COOKIE
+    )
+}
+
+#[derive(Deserialize)]
+struct LoginBody {
+    token: String,
+}
+
+/// `POST /api/auth/login {"token"}`: check the admin token and remember this browser (a signed
+/// 30-day cookie). A wrong token counts toward the failed-auth limit.
+async fn auth_login(State(st): State<AppState>, req: Request) -> Response {
+    let ip = client_ip(&req);
+    if req.headers().get("x-saber-console").is_none() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "login needs the X-Saber-Console: 1 header"})),
+        )
+            .into_response();
+    }
+    if let Some(left) = st.auth.limiter.blocked(ip) {
+        return too_many(left, false);
+    }
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 4096).await else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let Ok(body) = serde_json::from_slice::<LoginBody>(&bytes) else {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "expected {\"token\": ...}"})))
+            .into_response();
+    };
+    if !st.auth.required() {
+        return Json(json!({"ok": true, "required": false})).into_response();
+    }
+    if !st.auth.check_admin(body.token.trim()) {
+        st.auth.limiter.fail(ip);
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "admin token required"})),
+        )
+            .into_response();
+    }
+    st.auth.limiter.ok(ip);
+    let mut resp = Json(json!({"ok": true, "required": true})).into_response();
+    if let Some(v) = st.auth.session_mint(crate::now_ms()) {
+        if let Ok(h) = session_set_cookie(&v, crate::auth::SESSION_TTL.as_secs()).parse() {
+            resp.headers_mut().insert(header::SET_COOKIE, h);
+        }
+    }
+    resp
+}
+
+/// `POST /api/auth/logout`: forget this browser (the cookie is cleared).
+async fn auth_logout(req: Request) -> Response {
+    if req.headers().get("x-saber-console").is_none() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let mut resp = Json(json!({"ok": true})).into_response();
+    if let Ok(h) = session_set_cookie("", 0).parse() {
+        resp.headers_mut().insert(header::SET_COOKIE, h);
+    }
+    resp
+}
+
+/// True for an address on a private network: loopback, RFC 1918, link-local, unique-local.
+#[must_use]
+pub fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v) => v.is_loopback() || v.is_private() || v.is_link_local(),
+        IpAddr::V6(v) => {
+            if let Some(v4) = v.to_ipv4_mapped() {
+                return is_private_ip(IpAddr::V4(v4));
+            }
+            v.is_loopback() || (v.segments()[0] & 0xfe00) == 0xfc00 || (v.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// A `Host` an open (`--no-auth`) console answers: an IP literal, `localhost`, or a local
+/// name (no dot, or `.local` / `.lan` / `.home.arpa` / `.internal`). A public name that resolves
+/// to this machine (DNS rebinding) is refused.
+#[must_use]
+pub fn host_is_lan(h: &str) -> bool {
+    let host = if let Some(rest) = h.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        h.rsplit_once(':').map_or(h, |(a, _)| a)
+    };
+    host.parse::<std::net::IpAddr>().is_ok()
+        || !host.contains('.')
+        || [".local", ".lan", ".home.arpa", ".internal"]
+            .iter()
+            .any(|sfx| host.ends_with(sfx))
+}
+
+/// `--no-auth` beyond the loopback: only private-network peers and local hostnames are served,
+/// and a browser's cross-site request (an `Origin` that is not this host) is refused.
+async fn lan_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    if st.open_lan {
+        let peer_ok = is_private_ip(client_ip(&req));
+        let host = req.headers().get(header::HOST).and_then(|v| v.to_str().ok());
+        let host_ok = host.is_some_and(host_is_lan);
+        let origin_ok = req
+            .headers()
+            .get(header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .is_none_or(|o| {
+                o.split_once("://")
+                    .is_some_and(|(_, authority)| Some(authority) == host)
+            });
+        if !peer_ok || !host_ok || !origin_ok {
+            return (
+                StatusCode::FORBIDDEN,
+                "this console without a token answers private-network clients on local hostnames only",
+            )
+                .into_response();
+        }
+    }
+    next.run(req).await
 }
 
 /// A handler's note for the audit entry of its call (a response header, never a secret).
@@ -1078,6 +1228,7 @@ async fn auth_info(State(st): State<AppState>, who: Option<axum::Extension<Who>>
         "required": admin.is_set(),
         "source": admin.source(),
         "loopback": st.loopback,
+        "open_lan": st.open_lan,
         "rate_limit": {
             "max_fails": crate::auth::Limiter::MAX_FAILS,
             "window_s": crate::auth::Limiter::WINDOW.as_secs(),
@@ -1285,6 +1436,7 @@ async fn static_file(
     if path.starts_with("api/") {
         // an unknown /api path tells an unauthenticated caller nothing
         let ok = !st.auth.required()
+            || session_cookie(&headers).is_some_and(|v| st.auth.session_check(&v, crate::now_ms()))
             || headers
                 .get(header::AUTHORIZATION)
                 .and_then(|v| v.to_str().ok())
@@ -1353,6 +1505,23 @@ fn hex_prefix(b: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_open_console_serves_private_peers_and_local_names_only() {
+        use std::net::IpAddr;
+        for ip in ["127.0.0.1", "10.1.2.3", "172.16.0.9", "192.168.12.36", "169.254.1.1", "::1", "fd00::5", "fe80::1", "::ffff:192.168.1.5"] {
+            assert!(is_private_ip(ip.parse::<IpAddr>().unwrap()), "{ip}");
+        }
+        for ip in ["8.8.8.8", "93.184.216.34", "172.32.0.1", "2606:4700::1111"] {
+            assert!(!is_private_ip(ip.parse::<IpAddr>().unwrap()), "{ip}");
+        }
+        for h in ["192.168.12.47:8090", "localhost:8090", "[::1]:8090", "myserver:8090", "box.local", "nas.lan:8090", "x.home.arpa"] {
+            assert!(host_is_lan(h), "{h}");
+        }
+        for h in ["evil.example.com", "evil.example.com:8090", "rebind.attacker.net"] {
+            assert!(!host_is_lan(h), "{h}");
+        }
+    }
 
     #[test]
     fn loopback_hosts() {

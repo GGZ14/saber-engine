@@ -10,8 +10,12 @@
 #   tools/serve_flashnext.sh --ui     # the same, from a launcher (`--preset flashnext` / `--preset qwen27b`)
 #   tools/serve_console.sh --preset qwen27b --tp 1   # first run only: the 27B on ONE card (engine.tp = 1; DEVICE=N picks
 #                                                #   the card, default 0); `tools/serve_27b.sh --ui --tp 1` does the same
-#   HOST=0.0.0.0 tools/serve_console.sh          # reachable from other machines: needs an admin token, made once with
-#                                                #   `.cache/target-container/release/saber ui --gen-admin-token`
+#   (default)                                    # listens on the LAN (0.0.0.0:8090) behind an admin token: the first start makes
+#                                                #   one and prints a sign-in link (http://<this-machine>:8090/#token=...); a browser
+#                                                #   that opens it stays signed in for 30 days. The token is also kept in
+#                                                #   ~/.config/saber/admin-token (0600).
+#   tools/serve_console.sh --no-auth             # no token: private-network clients on local hostnames only, with a warning
+#   HOST=127.0.0.1 tools/serve_console.sh        # this machine only (no token needed)
 #   tools/serve_console.sh -- --admin-token X    # anything after `--` goes to `saber ui`
 #
 # Env: HOST (bind, default the config's or 127.0.0.1), CONSOLE_PORT (default the config's or 8090),
@@ -38,6 +42,7 @@ UI_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
+    --no-auth) UI_ARGS+=(--no-auth); shift ;;
     --mock) MOCK=1; shift ;;
     --preset) PRESET=${2:-}; shift; [ $# -gt 0 ] && shift ;;
     --preset=*) PRESET=${1#*=}; shift ;;

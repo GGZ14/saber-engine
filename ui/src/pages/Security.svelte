@@ -2,7 +2,7 @@
   // The console's credentials and the audit log. The admin token and every /v1 key are
   // stored as salted hashes: a new one is shown ONCE, here, when it is made. Keys are per label
   // (their label rides each usage row) and are revoked (refused at once) before they are deleted.
-  import { api, when, setToken } from '../lib/api.js';
+  import { api, when, setToken, login } from '../lib/api.js';
   import { copyText } from '../lib/setup.svelte.js';
   import { ui, guarded } from '../lib/store.svelte.js';
 
@@ -33,7 +33,7 @@
     if (info?.required && !confirm('Make a new admin token? The current one stops working at once (this tab switches to the new one).')) return;
     act(async () => {
       const r = await api('/api/auth/admin-token', { method: 'POST' });
-      setToken(r.token);
+      await login(r.token); // a fresh remember-me cookie for the new token
       shown = { kind: 'admin', label: 'admin', secret: r.token };
     });
   }

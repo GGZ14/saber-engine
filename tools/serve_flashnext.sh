@@ -5,7 +5,7 @@
 #   tools/serve_flashnext.sh --no-build # reuse the last container build
 #   tools/serve_flashnext.sh stop       # stop the Saber console if one runs (it stops its own engine), then the server container
 #   tools/serve_flashnext.sh stop --keep-console   # the engine container only; the console stays up
-#   tools/serve_flashnext.sh --ui [--no-build]     # the browser console in front on :8090 (== SABER_CONSOLE=1; docs/CONSOLE.md)
+#   tools/serve_flashnext.sh --ui [--no-build]     # the browser console in front on :8090 (== SABER_CONSOLE=1; docs/CONSOLE.md; add --no-auth for an open console)
 #   PORT=8100 tools/serve_flashnext.sh  # another port
 #   SERVE_PREFIX="/opt/rocm/bin/rocprofv3 --kernel-trace -f csv -d DIR --" tools/serve_flashnext.sh --no-build   # ATTN-OPT-3: a DIAGNOSTIC tool around `saber engine` (both ranks)
 #   tools/serve_flashnext.sh --no-build --record-routes   # (or SABER_RECORD_ROUTES=1) record the routes YOUR traffic takes
