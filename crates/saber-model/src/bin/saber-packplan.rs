@@ -44,6 +44,9 @@ fn main() -> ExitCode {
     // the form-c W8 promotions (`Graph::with_macaq_w8`), from a MACaQ presets map
     // (`presets.json:VARIANT`, its `w8` = {layer: [out|o|down, ...]}).
     let mut macaq_w8: Option<String> = None;
+    // the W4A8-iu8 pack (`Graph::with_macaq_iu8`): every decoder linear per-row int4 / int8, the
+    // W8 set from a MACaQ presets map (the same `presets.json:VARIANT` form as --macaq-w8).
+    let mut macaq_iu8: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -53,6 +56,10 @@ fn main() -> ExitCode {
             },
             "--dflash" => dflash = true,
             "--macaq-had" => macaq_had = true,
+            "--macaq-iu8" => match args.next() {
+                Some(v) => macaq_iu8 = Some(v),
+                None => return fail("--macaq-iu8 needs presets.json:VARIANT"),
+            },
             "--macaq-w8" => match args.next() {
                 Some(v) => macaq_w8 = Some(v),
                 None => return fail("--macaq-w8 needs presets.json:VARIANT"),
@@ -91,7 +98,7 @@ fn main() -> ExitCode {
                 eprintln!(
                     "usage: saber-packplan [--tp N] [--head auto|bf16|fp8|mxfp4 (default auto)] \
                      [--checkpoint DIR] [--config path/to/config.json] [--macaq-had] \
-                     [--macaq-w8 presets.json:VARIANT]"
+                     [--macaq-w8 presets.json:VARIANT] [--macaq-iu8 presets.json:VARIANT]"
                 );
                 eprintln!(
                     "       saber-packplan --dflash [--tp N] [--spec K] [--rope-max-pos P] \
@@ -161,6 +168,15 @@ fn main() -> ExitCode {
         Ok(v) => v,
         Err(e) => return fail(&e),
     };
+    if macaq_iu8.is_some() && (macaq_w8.is_some() || !macaq_had) {
+        return fail(
+            "--macaq-iu8 needs --macaq-had and excludes --macaq-w8 (its W8 ops are int8, not e4m3)",
+        );
+    }
+    let iu8_ops = match macaq_iu8.as_deref().map(read_w8_map).transpose() {
+        Ok(v) => v,
+        Err(e) => return fail(&e),
+    };
     let graph = match Graph::qwen38_27b(cfg, tp)
         .and_then(|g| match head {
             "bf16" => g.with_bf16_head(),
@@ -170,6 +186,10 @@ fn main() -> ExitCode {
         .and_then(|g| if macaq_had { g.with_macaq_had() } else { Ok(g) })
         .and_then(|g| match &w8_ops {
             Some(ops) => g.with_macaq_w8(ops),
+            None => Ok(g),
+        })
+        .and_then(|g| match &iu8_ops {
+            Some(ops) => g.with_macaq_iu8(ops),
             None => Ok(g),
         }) {
         Ok(g) => g,
@@ -211,6 +231,12 @@ fn main() -> ExitCode {
         "macaq_w8": w8_ops.as_ref().map(|o| serde_json::json!({
             "map": macaq_w8,
             "ops": o.iter().collect::<Vec<_>>(),
+        })),
+        "macaq_iu8": iu8_ops.as_ref().map(|o| serde_json::json!({
+            "format": saber_kernels::macaq_iu8::FORMAT,
+            "map": macaq_iu8,
+            "w8_ops": o.iter().collect::<Vec<_>>(),
+            "ops": graph.macaq_iu8().len(),
         })),
         "unused_record_prefixes": graph
             .unused_records()

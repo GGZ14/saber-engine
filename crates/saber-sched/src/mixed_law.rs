@@ -697,14 +697,15 @@ mod tests {
             gdn_set: 4,
             read_only: 2,
         };
-        assert!(isolated_packed(&[chunk.clone()], &[donor]).is_ok());
+        assert!(isolated_packed(std::slice::from_ref(&chunk), &[donor]).is_ok());
         // Controls: the shared page is writable for either side -> refused.
         let donor_rw = RowState {
             kv_blocks: &[1, 2, 9],
             gdn_set: 4,
             read_only: 1,
         };
-        let e = isolated_packed(&[chunk.clone()], &[donor_rw]).expect_err("donor writes page 2");
+        let e = isolated_packed(std::slice::from_ref(&chunk), &[donor_rw])
+            .expect_err("donor writes page 2");
         assert!(e.contains("KV block 2"), "{e}");
         let chunk_rw = RowState {
             read_only: 1,

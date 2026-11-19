@@ -233,6 +233,23 @@ impl DraftTier {
         max_seqs: u32,
         rerank: saber_model::dflash_graph::RerankHead,
     ) -> Result<Self, ForwardError> {
+        Self::plan_with_iu8(tp, block, max_ctx, max_seqs, rerank, false)
+    }
+
+    /// [`DraftTier::plan_with`] on an iu8 drafter pack when `iu8` (the pack's fact,
+    /// [`crate::macaq::draft_iu8`]): the record set, the billed weights and every plan built from this tier's
+    /// config are the iu8 drafter's.
+    ///
+    /// # Errors
+    /// As [`DraftTier::plan`].
+    pub fn plan_with_iu8(
+        tp: u32,
+        block: u32,
+        max_ctx: u32,
+        max_seqs: u32,
+        rerank: saber_model::dflash_graph::RerankHead,
+        iu8: bool,
+    ) -> Result<Self, ForwardError> {
         if block < 2 {
             return Err(ForwardError::Device(format!(
                 "a drafter tier at block {block}: the DFlash2 block is \
@@ -251,7 +268,7 @@ impl DraftTier {
                  15 — prod runs 7"
             )));
         }
-        let cfg = DflashConfig::qwen38_dflash2(tp.max(1), block.saturating_sub(1));
+        let cfg = DflashConfig::qwen38_dflash2(tp.max(1), block.saturating_sub(1)).with_iu8(iu8);
         let graph = DraftGraph::build(cfg.clone()).with_rerank_head(rerank);
         let kv = graph.kv_cache(block_size());
         let per_seq_blocks = max_ctx.div_ceil(kv.block_size);

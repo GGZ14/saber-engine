@@ -1182,6 +1182,22 @@ impl<'g> BlockPlan<'g> {
                         .map(|f| (f, vec![FoldKind::Nq]));
                 }
             }
+            // an iu8 plan's decode GEMMs take the same two folds (row 3, then the pair) on the
+            // `macaq_iu8f` bodies; rows 4 and the wht fold have no iu8 form.
+            if matches!(op.kernel, KernelOp::GemmI4A8 | KernelOp::GemmI8A8) {
+                if let (Some(ar), Some(norm)) = (ops.get(i + 1), ops.get(i + 2)) {
+                    fusion = plan
+                        .gemm_ar_fusion(op, ar, norm, &consumers, mxfp4, saber_rules)?
+                        .map(|f| (f, vec![FoldKind::GemmAr, FoldKind::GemmArNorm]));
+                }
+                if fusion.is_none() {
+                    if let Some(next) = ops.get(i + 1) {
+                        fusion = plan
+                            .pair_fusion(op, next, mxfp4, saber_rules)?
+                            .map(|f| (f, vec![FoldKind::GemmPair]));
+                    }
+                }
+            }
             if op.kernel == KernelOp::GemmW4A8 {
                 // Row 3 first: where it fires, the GEMM carries the reduce and its norm.
                 if let (Some(ar), Some(norm)) = (ops.get(i + 1), ops.get(i + 2)) {
@@ -1874,9 +1890,31 @@ fn has_had(op: &ModelOp) -> bool {
 /// ([`saber_kernels::macaq::had_twin`], refused by name when there is none) -- else unchanged.
 fn had_desc(op: &ModelOp, desc: LaunchDescriptor) -> Result<LaunchDescriptor> {
     if !has_had(op) {
+        if writes_i8(op) {
+            return Err(Error::Refused(format!(
+                "{}: an iu8 edge is written only by a had32 producer's int8 twin, and this op binds no \
+                 macaq_had32 record",
+                op.name
+            )));
+        }
         return Ok(desc);
     }
-    saber_kernels::macaq::had_twin(&desc).map_err(|e| Error::Refused(format!("{}: {e}", op.name)))
+    let had = saber_kernels::macaq::had_twin(&desc)
+        .map_err(|e| Error::Refused(format!("{}: {e}", op.name)))?;
+    // an iu8 edge's producer is the had32 twin's per-token INT8 twin (A-tiled at every M).
+    if writes_i8(op) {
+        return saber_kernels::macaq_iu8::i8_twin(&had)
+            .map_err(|e| Error::Refused(format!("{}: {e}", op.name)));
+    }
+    Ok(had)
+}
+
+/// Does this producer feed iu8 GEMMs ([`Graph::with_macaq_iu8`] fixes its quantized output edge
+/// A-TILED INT8 at every M)?
+fn writes_i8(op: &ModelOp) -> bool {
+    op.outputs
+        .first()
+        .is_some_and(|e| e.rule == saber_model::graph::LayoutRule::Fixed(Layout::ATiledI8))
 }
 
 /// does this producer feed a form-c W8 promotion ([`Graph::with_macaq_w8`] fixes its output
@@ -1921,7 +1959,7 @@ fn elem_bytes(layout: Layout) -> u64 {
         Layout::Bf16 => 2,
         // Int8 is the Paro tier's A side; this block is the NVFP4 tier, but the width is the
         // same one byte and naming it keeps the match exhaustive rather than defaulted.
-        Layout::RowMajorFp8 | Layout::ATiledFp8 | Layout::Int8 => 1,
+        Layout::RowMajorFp8 | Layout::ATiledFp8 | Layout::Int8 | Layout::ATiledI8 => 1,
         Layout::Fp32State => 4,
         Layout::F16State => 2,
     }
@@ -2061,7 +2099,9 @@ impl<'g> Planner<'g> {
                 | KernelOp::GemmBf16
                 | KernelOp::GemmBf16Head
                 | KernelOp::GemmFp8Head
-                | KernelOp::GemmW8A8,
+                | KernelOp::GemmW8A8
+                | KernelOp::GemmI4A8
+                | KernelOp::GemmI8A8,
                 Geometry::Gemm { n, .. },
                 0,
             ) => *n,
@@ -2199,8 +2239,8 @@ impl<'g> Planner<'g> {
         for (i, edge) in op.outputs.iter().enumerate() {
             let layout = edge.rule.resolve_under(self.m, self.law);
             let cols = self.edge_cols(op, i)?;
-            // The A-tiled layout pads to whole 16-row fragments; nothing else does.
-            let rows = if layout == Layout::ATiledFp8 {
+            // The A-tiled layouts pad to whole 16-row fragments; nothing else does.
+            let rows = if matches!(layout, Layout::ATiledFp8 | Layout::ATiledI8) {
                 u64::from(self.m).div_ceil(16) * 16
             } else {
                 u64::from(self.m)
@@ -2215,7 +2255,10 @@ impl<'g> Planner<'g> {
                 span,
                 &op.name,
             );
-            if matches!(layout, Layout::RowMajorFp8 | Layout::ATiledFp8) {
+            if matches!(
+                layout,
+                Layout::RowMajorFp8 | Layout::ATiledFp8 | Layout::ATiledI8
+            ) {
                 self.push(
                     format!("{}.scale", edge.name),
                     BufferKind::EdgeScale,
@@ -2513,8 +2556,9 @@ impl<'g> Planner<'g> {
         mxfp4: &LaunchRules,
         rules: &SaberRules,
     ) -> Result<Option<Fusion>> {
+        let iu8 = matches!(gemm.kernel, KernelOp::GemmI4A8 | KernelOp::GemmI8A8);
         if !self.fuse_gemm_ar
-            || gemm.kernel != KernelOp::GemmW4A8
+            || !(gemm.kernel == KernelOp::GemmW4A8 || iu8)
             || ar.kernel != KernelOp::AllReduce
         {
             return Ok(None);
@@ -2536,12 +2580,22 @@ impl<'g> Planner<'g> {
         let [g] = &descs[..] else {
             return Ok(None);
         };
-        let Ok(desc) = saber_kernels::rules::gemm_decode_ar_nq((g, *shape), &nq_desc, mxfp4) else {
+        // an iu8 GEMM folds into the `macaq_iu8f` row 3 (its `_nq` is the int8 twin, `had_t`
+        // rides in from `nq_fusion`); a shape that body refuses stays three ops.
+        let desc = if iu8 {
+            let Ok(d) = saber_kernels::macaq_iu8::ar_nq(g, &nq_desc) else {
+                return Ok(None);
+            };
+            d
+        } else if let Ok(d) = saber_kernels::rules::gemm_decode_ar_nq((g, *shape), &nq_desc, mxfp4)
+        {
+            d
+        } else {
             return Ok(None);
         };
         // a had32 epilogue makes row 3 its had32 twin (the `had_t` binding rides in from
         // `nq_fusion`).
-        let desc = if saber_kernels::macaq::is_twin(&nq_desc) {
+        let desc = if !iu8 && saber_kernels::macaq::is_twin(&nq_desc) {
             saber_kernels::macaq::had_twin(&desc)
                 .map_err(|e| Error::Refused(format!("{}: {e}", gemm.name)))?
         } else {
@@ -2870,9 +2924,9 @@ impl<'g> Planner<'g> {
         mxfp4: &LaunchRules,
         rules: &SaberRules,
     ) -> Result<Option<Fusion>> {
+        let iu8 = first.kernel == KernelOp::GemmI4A8 && second.kernel == KernelOp::GemmI4A8;
         if !self.fuse_gemm_pair
-            || first.kernel != KernelOp::GemmW4A8
-            || second.kernel != KernelOp::GemmW4A8
+            || !(iu8 || (first.kernel == KernelOp::GemmW4A8 && second.kernel == KernelOp::GemmW4A8))
         {
             return Ok(None);
         }
@@ -2902,8 +2956,17 @@ impl<'g> Planner<'g> {
         let ([d0], [d1]) = (&d0[..], &d1[..]) else {
             return Ok(None);
         };
-        let Ok(desc) = saber_kernels::rules::gemm_decode_pair((d0, *s0), (d1, *s1), mxfp4) else {
-            return Ok(None);
+        // two iu8 W4 halves pair on the `macaq_iu8f` body (each half its unpaired descriptor).
+        let desc = if iu8 {
+            match saber_kernels::macaq_iu8::pair(d0, d1) {
+                Ok(d) => d,
+                Err(_) => return Ok(None),
+            }
+        } else {
+            match saber_kernels::rules::gemm_decode_pair((d0, *s0), (d1, *s1), mxfp4) {
+                Ok(d) => d,
+                Err(_) => return Ok(None),
+            }
         };
         let mut bindings = self.bindings(first, &r0, rules.ar.max_bytes)?;
         for (name, src) in self.bindings(second, &r1, rules.ar.max_bytes)? {
@@ -3089,6 +3152,11 @@ impl<'g> Planner<'g> {
             return Ok(());
         };
         let declared = edge.rule.resolve_under(self.m, self.law);
+        // an int8 edge's producer is renamed to its A-tiled int8 twin at every M by
+        // [`had_desc`] (`macaq_iu8::i8_twin` refuses a parent without one), whatever the parent's band.
+        if declared == Layout::ATiledI8 {
+            return Ok(());
+        }
         let wrote = if writes_tiled {
             Layout::ATiledFp8
         } else {
@@ -3145,6 +3213,31 @@ impl<'g> Planner<'g> {
                 }
                 let desc = saber_kernels::macaq_w8::resolve(m, n, k, saber_kernels::macaq_w8::RING)
                     .map_err(refused)?;
+                Route::Kernel {
+                    descs: vec![desc],
+                    shape: Shape::new(m, n, k),
+                }
+            }
+            // an iu8 GEMM -- the int8-WMMA band (`saber_kernels::macaq_iu8`) on its producer's
+            // A-tiled int8 edge (refused by name on any other layout).
+            KernelOp::GemmI4A8 | KernelOp::GemmI8A8 => {
+                let Geometry::Gemm { n, k, .. } = op.geometry else {
+                    return Err(Error::Refused(format!("{}: not a GEMM geometry", op.name)));
+                };
+                let a = &op.inputs[0].edge;
+                let layout = self.lookup(a).map(|b| b.layout);
+                if layout != Some(Layout::ATiledI8) {
+                    return Err(Error::Refused(format!(
+                        "{}: an iu8 GEMM reads A-tiled int8 only, and its A edge `{a}` carries {layout:?}",
+                        op.name
+                    )));
+                }
+                let w = if op.kernel == KernelOp::GemmI4A8 {
+                    saber_kernels::macaq_iu8::WKind::I4
+                } else {
+                    saber_kernels::macaq_iu8::WKind::I8
+                };
+                let desc = saber_kernels::macaq_iu8::resolve(w, m, n, k).map_err(refused)?;
                 Route::Kernel {
                     descs: vec![desc],
                     shape: Shape::new(m, n, k),
@@ -3946,6 +4039,21 @@ impl<'g> Planner<'g> {
             KernelOp::GemmBf16Head => {
                 bind!("a", self.at(&op.inputs[0].edge)?);
                 bind!("w", self.weight(&format!("{}.w", op.name))?);
+                bind!("c", self.at(out_edge(0)?)?);
+            }
+            // the iu8 body: the int8 twin's A-tiled rows + their per-token scale, the fragment-
+            // ordered codes (layout 17 / 18) + the row scale (layout 19).
+            KernelOp::GemmI4A8 | KernelOp::GemmI8A8 => {
+                let sfx = if op.kernel == KernelOp::GemmI4A8 {
+                    "wi4"
+                } else {
+                    "wi8"
+                };
+                let a = &op.inputs[0].edge;
+                bind!("a", self.at(a)?);
+                bind!("as", self.scale_of(a)?);
+                bind!("w", self.weight(&format!("{}.{sfx}", op.name))?);
+                bind!("ws", self.weight(&format!("{}.{sfx}s", op.name))?);
                 bind!("c", self.at(out_edge(0)?)?);
             }
             // the per-token W8A8 body: the producer's e4m3 rows + their per-token scale, the

@@ -3343,14 +3343,138 @@ pub const SIG_DFLASH_WALK: &[SigArg] = &[
 /// FN23: `fn23_offsets`, the card-side pre-flight of the argument offsets the walk unpacks.
 pub const SIG_FN23_OFFSETS: &[SigArg] = &[p("out", 4)];
 
+/// MACaQ iu8 (`crate::macaq_iu8`): the iu8 decode band `macaq_iu8_dec_{w4,w8}_tm{1..4}` -- A-tiled int8 A,
+/// fragment-ordered W (int4 nibbles or int8), the per-token and per-row f32 scales, the split-K int32
+/// partials + the self-resetting n-block counters, bf16 C.
+pub const SIG_MACAQ_IU8_DEC: &[SigArg] = &[
+    p("a", 1),
+    p("w", 1),
+    p("as", 4),
+    p("ws", 4),
+    p("decode_partial", 4),
+    p("decode_counter", 4),
+    p("c", 2),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+];
+
+/// The iu8 prefill tile `macaq_iu8_pf_{w4,w8}_tn4_lbk64` (no split, no workspace).
+pub const SIG_MACAQ_IU8_PF: &[SigArg] = &[
+    p("a", 1),
+    p("w", 1),
+    p("as", 4),
+    p("ws", 4),
+    p("c", 2),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+];
+
+/// MACaQ iu8 (`crate::dflash_iu8`): the iu8 drafter's act-quant twin `dflash_hadi8_act_t{T}g{G}` -- one workgroup a
+/// row: the bf16 input, the A-tiled int8 codes, the per-token f32 scale, K, the MACaQ `t` of this rank's columns.
+pub const SIG_DFLASH_HADI8_ACT: &[SigArg] = &[
+    p("x", 2),
+    p("q", 1),
+    p("scales", 4),
+    a("n", I32),
+    p("had_t", 4),
+];
+
+/// The iu8 drafter's conv-prepare twin `dflash_hadi8_conv_t{T}g{G}` (the parent's conv operands, then the
+/// int8 outputs, the parent's scalars, `had_t`).
+pub const SIG_DFLASH_HADI8_CONV: &[SigArg] = &[
+    p("x", 2),
+    p("coeff", 2),
+    p("base", 2),
+    p("q", 1),
+    p("scales", 4),
+    a("h", I32),
+    a("groups", I32),
+    a("block_size", I32),
+    a("side", I32),
+    p("had_t", 4),
+];
+
+/// The iu8 drafter's silu twin `dflash_hadi8_silu_t{T}g{G}` (`[T, 2N]` gate then up).
+pub const SIG_DFLASH_HADI8_SILU: &[SigArg] = &[
+    p("gate_up", 2),
+    p("q", 1),
+    p("scales", 4),
+    a("n", I32),
+    p("had_t", 4),
+];
+
+/// MACaQ iu8 (`crate::macaq_iu8::pair`): the iu8 decode pair `macaq_iu8f_pair_w4_tm{1..4}` -- the shared A
+/// tile + per-token scale, then each half's W / row scale / split-K workspaces / C, then M, K and each half's
+/// N, split count and n-block count.
+pub const SIG_MACAQ_IU8F_PAIR: &[SigArg] = &[
+    p("a", 1),
+    p("as", 4),
+    p("w", 1),
+    p("ws", 4),
+    p("decode_partial", 4),
+    p("decode_counter", 4),
+    p("c", 2),
+    p("w_b", 1),
+    p("ws_b", 4),
+    p("decode_partial_b", 4),
+    p("decode_counter_b", 4),
+    p("c_b", 2),
+    a("m", I32),
+    a("k", I32),
+    a("n", I32),
+    a("ks", I32),
+    a("nb", I32),
+    a("n_b", I32),
+    a("ks_b", I32),
+    a("nb_b", I32),
+];
+
+/// MACaQ iu8 (`crate::macaq_iu8::ar_nq`): iu8 fusion-map row 3 `macaq_iu8f_arnq_hadi8_{w4,w8}_tm1` -- the iu8
+/// decode GEMM's ten arguments, the exact reduce's regions, the `_nq` epilogue's buffers (int8 A-tiled `q_out`),
+/// the arrival counter, the epilogue's scalars, `ep_rows`, `had_t`.
+pub const SIG_MACAQ_IU8F_ARNQ: &[SigArg] = &[
+    p("a", 1),
+    p("w", 1),
+    p("as", 4),
+    p("ws", 4),
+    p("decode_partial", 4),
+    p("decode_counter", 4),
+    p("c", 2),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+    a("ar_peer_scratch", Buffer),
+    a("ar_scratch", Buffer),
+    p("residual", 2),
+    p("norm_w", 2),
+    p("q_out", 1),
+    p("scale_out", 4),
+    p("res_out", 2),
+    a("ar_peer_flags", Buffer),
+    a("ar_flags", Buffer),
+    a("ar_seq", Buffer),
+    a("ar_tiles", Buffer),
+    a("k16", I32),
+    a("slot_stride16", I32),
+    a("eps", F32),
+    a("drain", I32),
+    a("acq", I32),
+    a("ep_rows", I32),
+    p("had_t", 4),
+];
+
 /// a `*_had32_*` producer twin's signature is its PARENT's (the name with the twin prefix
 /// mapped back, `crate::macaq::TWINS`) plus one trailing `had_t` f32 buffer. Built once per parent.
 fn macaq_twin_signature(kernel: &str) -> Option<&'static [SigArg]> {
     use std::collections::BTreeMap;
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<BTreeMap<String, &'static [SigArg]>>> = OnceLock::new();
+    // an `*_hadi8_*` int8 twin takes its had32 twin's list (the same arguments, `had_t` last).
     let (_, pk, _, tk) = crate::macaq::TWINS
         .iter()
+        .chain(crate::macaq_iu8::I8_TWIN_PARENTS.iter())
         .find(|(_, _, _, tk)| kernel.starts_with(tk))?;
     let parent = format!("{pk}{}", &kernel[tk.len()..]);
     let base = signature_for(&parent)?;
@@ -3372,7 +3496,13 @@ pub fn signature_for(kernel: &str) -> Option<&'static [SigArg]> {
     if let Some(sig) = macaq_twin_signature(kernel) {
         return Some(sig);
     }
-    let sig = if kernel.starts_with("dflash_gemm_a8w8") {
+    let sig = if kernel.starts_with("dflash_hadi8_act_") {
+        SIG_DFLASH_HADI8_ACT
+    } else if kernel.starts_with("dflash_hadi8_conv_") {
+        SIG_DFLASH_HADI8_CONV
+    } else if kernel.starts_with("dflash_hadi8_silu_") {
+        SIG_DFLASH_HADI8_SILU
+    } else if kernel.starts_with("dflash_gemm_a8w8") {
         SIG_DFLASH_GEMM
     } else if kernel.starts_with("dflash_selector_walk") {
         SIG_DFLASH_WALK
@@ -3498,6 +3628,21 @@ pub fn signature_for(kernel: &str) -> Option<&'static [SigArg]> {
     {
         // FN61e: the multi-row W8A8 tiles take FN61c's ldc signature
         SIG_FN_T8_A8W8_LDC
+    } else if kernel.starts_with("macaq_iu8_dec_") {
+        SIG_MACAQ_IU8_DEC
+    } else if kernel.starts_with("macaq_iu8_pf_") {
+        SIG_MACAQ_IU8_PF
+    } else if kernel.starts_with("macaq_iu8f_pair_") || kernel.starts_with("macaq_iu8f_pairb_") {
+        // the ba-first pair takes the pair's arguments
+        SIG_MACAQ_IU8F_PAIR
+    } else if kernel.starts_with("macaq_iu8f_dec_") {
+        // the mid decode band (M 65..128) takes the decode band's arguments
+        SIG_MACAQ_IU8_DEC
+    } else if kernel.starts_with("macaq_iu8f_pf_") {
+        // the small prefill tiles (and the parametric ones) take the prefill tile's arguments
+        SIG_MACAQ_IU8_PF
+    } else if kernel.starts_with("macaq_iu8f_arnq_") {
+        SIG_MACAQ_IU8F_ARNQ
     } else if kernel == "fn_t8r_a8w8_gather_m16n64" {
         SIG_FN_T8R_GATHER
     } else if kernel == "fn_t8_bgemm_m16_ldc" || kernel == "fn_t8p_bgemm_m64_ldc" {

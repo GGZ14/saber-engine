@@ -704,8 +704,8 @@ pub fn with_tp(cfg: &Config, tp: u32, device: Option<u32>, catalog: &Catalog) ->
         match (t, flag) {
             (1, "--pack") => crate::compose::tp1::PACK,
             (1, _) => crate::compose::tp1::DRAFT_PACK,
-            (_, "--pack") => "qwen38-27b-macaq7-bc3",
-            _ => "qwen38-dflash2-drafter-quarkhead",
+            (_, "--pack") => crate::compose::tp2::PACK,
+            _ => crate::compose::tp2::DRAFT_PACK,
         }
     };
     for flag in ["--pack", "--engine-draft-pack"] {
@@ -890,7 +890,7 @@ mod tests {
         );
         // the 27B: container paths for the packs, the tokenizer files into the paths
         let m27 = c.model("27b").unwrap();
-        for n in ["qwen38-27b-macaq7-bc3", "qwen38-dflash2-drafter-quarkhead"] {
+        for n in ["qwen38-27b-macaq-w4a8", "qwen38-dflash2-drafter-w4a8"] {
             std::fs::create_dir_all(roots.packs.join(n)).unwrap();
         }
         std::fs::create_dir_all(&roots.repo_cache).unwrap();
@@ -908,9 +908,7 @@ mod tests {
         assert!(!out.engine.flags.contains_key("--fn-max-ctx"));
         assert_eq!(
             out.engine.flags.get("--engine-draft-pack"),
-            Some(&FlagValue::Str(
-                "/packs/qwen38-dflash2-drafter-quarkhead".into()
-            ))
+            Some(&FlagValue::Str("/packs/qwen38-dflash2-drafter-w4a8".into()))
         );
         assert_eq!(
             out.engine.paths.tokenizer,
@@ -938,6 +936,26 @@ mod tests {
         assert_eq!(ids, ["target", "drafter", "tokenizer"]);
         assert!(one.components[0].name.contains("tp1"));
         assert_eq!(one.components[0].pack_magic, ["rank0.pack"]);
+        // the catalog's 27B is the presets' own (the launcher's default weights at each TP)
+        use crate::compose::{tp1, tp2, QWEN27B_MODEL};
+        let names = |m: &Model| -> Vec<String> {
+            m.components[..2].iter().map(|x| x.name.clone()).collect()
+        };
+        assert_eq!(names(m27), [tp2::PACK, tp2::DRAFT_PACK]);
+        assert_eq!(names(&one), [tp1::PACK, tp1::DRAFT_PACK]);
+        assert_eq!(m27.packs, names(m27));
+        assert_eq!(one.packs, names(&one));
+        assert_eq!(m27.name, QWEN27B_MODEL);
+        assert_eq!(
+            (m27.fetch.as_str(), one.fetch.as_str()),
+            ("27b-macaq-w4a8", "27b-macaq-w4a8-tp1")
+        );
+        for (m, d) in [(m27, "tp2"), (&one, "tp1")] {
+            for x in &m.components[..2] {
+                assert_eq!(x.source.path, d, "{}", x.name);
+                assert!(x.required.contains(&"manifest.json".to_string()));
+            }
+        }
         // the TP=2 entry is unchanged by the fold, and TP=2 of a TP=2-only model is itself
         assert_eq!(m27.at_tp(2), *m27);
         assert_eq!(fnx.at_tp(1), *fnx);
@@ -989,8 +1007,8 @@ mod tests {
         assert_eq!(
             packs(&out),
             (
-                Some("/packs/qwen38-27b-macaq7-bc3-tp1".into()),
-                Some("/packs/qwen38-dflash2-drafter-quarkhead-tp1".into())
+                Some("/packs/qwen38-27b-macaq-w4a8-tp1".into()),
+                Some("/packs/qwen38-dflash2-drafter-w4a8-tp1".into())
             )
         );
         out.validate().unwrap();
@@ -1020,7 +1038,7 @@ mod tests {
         stock.engine.preset = Preset::Qwen27b;
         stock.engine.flags.insert(
             "--pack".into(),
-            FlagValue::Str("/packs/qwen38-27b-macaq7-bc3".into()),
+            FlagValue::Str("/packs/qwen38-27b-macaq-w4a8".into()),
         );
         stock.engine.flags.insert(
             "--engine-draft-pack".into(),
@@ -1031,6 +1049,19 @@ mod tests {
         assert_eq!(
             s1.engine.flags.get("--engine-draft-pack"),
             Some(&FlagValue::Str("/packs/my-own-drafter".into()))
+        );
+        // the MACaQ MXFP4 pack (the 27B default before the W4A8-iu8 pack) is not in the catalog:
+        // a config that names it keeps it
+        let mut mx = Config::default();
+        mx.engine.preset = Preset::Qwen27b;
+        mx.engine.flags.insert(
+            "--pack".into(),
+            FlagValue::Str("/packs/qwen38-27b-macaq7-bc3".into()),
+        );
+        let m2 = with_tp(&mx, 1, None, &c);
+        assert_eq!(
+            m2.engine.flags.get("--pack"),
+            Some(&FlagValue::Str("/packs/qwen38-27b-macaq7-bc3".into()))
         );
         // Flash-Next: only the field moves (its validate refuses 1)
         let f = with_tp(&Config::default(), 1, None, &c);

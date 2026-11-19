@@ -5,23 +5,23 @@
   "models": [
     {
       "id": "27b",
-      "name": "Qwen3.8-27B-MACaQ-MXFP4",
-      "title": "Qwen3.8-27B-MACaQ-MXFP4 (dense, DFlash2 drafter)",
+      "name": "Qwen3.8-27B-MACaQ-W4A8-SABER",
+      "title": "Qwen3.8-27B-MACaQ-W4A8 (dense, DFlash2 drafter)",
       "kind": "27B",
       "preset": "qwen27b",
-      "description": "The dense 27B model (the MACaQ MXFP4 pack) with the DFlash2 block drafter: the fastest single-stream decode on two cards, a 262,144-token context, eight concurrent sequences.",
+      "description": "The dense 27B model (the MACaQ W4A8-iu8 pack: int4 weights and int8 activations on the R9700's int8 matrix cores) with the W4A8-iu8 DFlash2 block drafter: the fastest single-stream decode on two cards, a 262,144-token context, eight concurrent sequences.",
       "launcher": "tools/serve_27b.sh",
       "container": "saber-27b-serve",
       "packs": [
-        "qwen38-27b-macaq7-bc3",
-        "qwen38-dflash2-drafter-quarkhead"
+        "qwen38-27b-macaq-w4a8",
+        "qwen38-dflash2-drafter-w4a8"
       ],
       "extra_files": [
         ".cache/quark27b.tokenizer.json",
         ".cache/template_corpus.jinja"
       ],
-      "download_gb": 29,
-      "note": "about 29 GB of packs",
+      "download_gb": 28,
+      "note": "about 28 GB of packs",
       "fit": {
         "min_gpus": 2,
         "arch_prefixes": [
@@ -37,15 +37,15 @@
       "components": [
         {
           "id": "target",
-          "label": "27B target pack (MACaQ MXFP4)",
+          "label": "27B target pack (MACaQ W4A8-iu8)",
           "dest": "packs",
-          "name": "qwen38-27b-macaq7-bc3",
+          "name": "qwen38-27b-macaq-w4a8",
           "aliases": [],
           "flag": "--pack",
-          "approx_bytes": 21300000000,
+          "approx_bytes": 20543143513,
           "source": {
-            "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER",
-            "path": "qwen38-27b-macaq7-bc3"
+            "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER",
+            "path": "tp2"
           },
           "pack_magic": [
             "rank0.pack",
@@ -57,21 +57,23 @@
         },
         {
           "id": "drafter",
-          "label": "DFlash2 drafter pack",
+          "label": "W4A8-iu8 DFlash2 drafter pack",
           "dest": "packs",
-          "name": "qwen38-dflash2-drafter-quarkhead",
+          "name": "qwen38-dflash2-drafter-w4a8",
           "aliases": [],
           "flag": "--engine-draft-pack",
-          "approx_bytes": 8200000000,
+          "approx_bytes": 7260439156,
           "source": {
-            "hf_repo": "Launch80/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER",
-            "path": "qwen38-dflash2-drafter-quarkhead"
+            "hf_repo": "Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER",
+            "path": "tp2"
           },
           "pack_magic": [
             "rank0.pack",
             "rank1.pack"
           ],
-          "required": []
+          "required": [
+            "manifest.json"
+          ]
         },
         {
           "id": "tokenizer",
@@ -80,7 +82,7 @@
           "layout": "files",
           "approx_bytes": 20100000,
           "source": {
-            "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER",
+            "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER",
             "path": ""
           },
           "files": [
@@ -97,17 +99,17 @@
           ]
         }
       ],
-      "fetch": "27b-macaq",
+      "fetch": "27b-macaq-w4a8",
       "tp1": {
-        "description": "The dense 27B model (the MACaQ MXFP4 pack) on ONE card (TP=1): the single-card packs, a 65,536-token context and four concurrent sequences by default (one card's KV pool is far smaller than two cards').",
+        "description": "The dense 27B model (the MACaQ W4A8-iu8 pack) on ONE card (TP=1): the single-card packs, a 131,072-token context and one conversation at a time by default (one card's KV pool is far smaller than two cards').",
         "container": "saber-27b-tp1-serve",
         "packs": [
-          "qwen38-27b-macaq7-bc3-tp1",
-          "qwen38-dflash2-drafter-quarkhead-tp1"
+          "qwen38-27b-macaq-w4a8-tp1",
+          "qwen38-dflash2-drafter-w4a8-tp1"
         ],
-        "download_gb": 28,
-        "note": "about 28 GB of single-card (TP=1) packs",
-        "fetch": "27b-macaq-tp1",
+        "download_gb": 26,
+        "note": "about 26 GB of single-card (TP=1) packs",
+        "fetch": "27b-macaq-w4a8-tp1",
         "fit": {
           "min_gpus": 1,
           "arch_prefixes": [
@@ -123,15 +125,15 @@
         "components": [
           {
             "id": "target",
-            "label": "27B target pack (MACaQ MXFP4, one card)",
+            "label": "27B target pack (MACaQ W4A8-iu8, one card)",
             "dest": "packs",
-            "name": "qwen38-27b-macaq7-bc3-tp1",
+            "name": "qwen38-27b-macaq-w4a8-tp1",
             "aliases": [],
             "flag": "--pack",
-            "approx_bytes": 20228825088,
+            "approx_bytes": 19507176443,
             "source": {
-              "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER",
-              "path": "qwen38-27b-macaq7-bc3-tp1"
+              "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER",
+              "path": "tp1"
             },
             "pack_magic": [
               "rank0.pack"
@@ -142,20 +144,22 @@
           },
           {
             "id": "drafter",
-            "label": "DFlash2 drafter pack (one card)",
+            "label": "W4A8-iu8 DFlash2 drafter pack (one card)",
             "dest": "packs",
-            "name": "qwen38-dflash2-drafter-quarkhead-tp1",
+            "name": "qwen38-dflash2-drafter-w4a8-tp1",
             "aliases": [],
             "flag": "--engine-draft-pack",
-            "approx_bytes": 7668350976,
+            "approx_bytes": 6804645643,
             "source": {
-              "hf_repo": "Launch80/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER",
-              "path": "qwen38-dflash2-drafter-quarkhead-tp1"
+              "hf_repo": "Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER",
+              "path": "tp1"
             },
             "pack_magic": [
               "rank0.pack"
             ],
-            "required": []
+            "required": [
+              "manifest.json"
+            ]
           },
           {
             "id": "tokenizer",
@@ -164,7 +168,7 @@
             "layout": "files",
             "approx_bytes": 20100000,
             "source": {
-              "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER",
+              "hf_repo": "Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER",
               "path": ""
             },
             "files": [

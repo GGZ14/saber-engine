@@ -96,6 +96,12 @@ pub enum LayoutId {
     /// The per-output-row scale of [`LayoutId::Fp8Channel`] as `f32` `[N]`: an exact widening of
     /// the checkpoint's `bf16` `weight_scale`, the dtype prod's `ChannelQuantScaleParameter` holds.
     F32ChannelScale = 16,
+    /// Per-row int4 codes in the iu8 GEMMs' W-fragment order (the A-tiled order's W counterpart).
+    I4RowFrag = 17,
+    /// Per-row int8 codes (the iu8 pack's W8 ops) in the iu8 GEMMs' W-fragment order.
+    I8RowFrag = 18,
+    /// The f32 row scale of an iu8 record (one an output row).
+    Iu8RowScale = 19,
 }
 
 /// The first id no released builder may write. Ids at or above this are for experiments that must
@@ -104,7 +110,7 @@ pub const PRIVATE_BASE: u32 = 0x1000_0000;
 
 impl LayoutId {
     /// Every id this build knows, in wire order.
-    pub const ALL: [LayoutId; 17] = [
+    pub const ALL: [LayoutId; 20] = [
         LayoutId::Raw,
         LayoutId::Mxfp4Wperm,
         LayoutId::Mxfp4BlockScale,
@@ -122,6 +128,9 @@ impl LayoutId {
         LayoutId::Bf16FromFp8Channel,
         LayoutId::Fp8Channel,
         LayoutId::F32ChannelScale,
+        LayoutId::I4RowFrag,
+        LayoutId::I8RowFrag,
+        LayoutId::Iu8RowScale,
     ];
 
     /// Wire value.
@@ -151,6 +160,9 @@ impl LayoutId {
             LayoutId::Bf16FromFp8Channel => "bf16_from_fp8_channel",
             LayoutId::Fp8Channel => "fp8_channel",
             LayoutId::F32ChannelScale => "f32_channel_scale",
+            LayoutId::I4RowFrag => "i4_row_frag",
+            LayoutId::I8RowFrag => "i8_row_frag",
+            LayoutId::Iu8RowScale => "iu8_row_scale",
         }
     }
 
@@ -217,10 +229,10 @@ mod tests {
         for l in LayoutId::ALL {
             assert_eq!(LayoutId::from_id(l.id()).unwrap(), l);
         }
-        assert!(LayoutId::from_id(17).is_err(), "17 is not allocated yet");
+        assert!(LayoutId::from_id(20).is_err(), "20 is not allocated yet");
         assert!(LayoutId::from_id(PRIVATE_BASE).is_err());
         assert!(LayoutId::describe(PRIVATE_BASE).contains("private"));
-        assert!(LayoutId::describe(17).contains("unknown"));
+        assert!(LayoutId::describe(20).contains("unknown"));
     }
 
     #[test]
