@@ -22,7 +22,7 @@
 #     (qwen38-dflash2-drafter-fp8[-tp1], `DRAFTER=fp8 tools/fetch_packs.sh 27b-macaq-w4a8[-tp1]`).
 #     macaq (also spelled macaq-mxfp4; the default before the W4A8-iu8 pack): the MACaQ MXFP4 pack
 #     (qwen38-27b-macaq7-bc3[-tp1]: a block-32 Hadamard before every W4A8 GEMM + 19 W8 promotions, boot log
-#     `macaqhad ON` / `macaqw8 19`), model id Qwen3.8-27B-MACaQ-MXFP4, widths 1,5,8, `tools/fetch_packs.sh
+#     `macaqhad ON` / `macaqw8 19`), model id Qwen3.8-27B-MACaQ-MXFP4-SABER, widths 1,5,8, `tools/fetch_packs.sh
 #     27b-macaq[-tp1]`. quark: amd/Qwen3.8-27B-Quark-AWQ-MXFP4 as published (qwen38-27b-quark-awq-mxfp4[-tp1],
 #     `tools/fetch_packs.sh 27b-quark[-tp1]` or tools/build_packs.sh). macaq and quark use the FP8
 #     qwen38-dflash2-drafter-quarkhead[-tp1] drafter (`--drafter fp8` names it; the W4A8-iu8 drafter is paired
@@ -46,7 +46,7 @@
 #   tools/serve_27b.sh --no-build --warm-prompts ~/pi-system.txt   # FN66: prefill your system prompt(s)
 #     once at boot (prefix caching turns on); see docs/HOWTO-SERVE.md "Warm prompts"
 # Extra arguments after the subcommand are passed to `saber serve`. OpenAI-compatible: /v1/models,
-# /v1/chat/completions, /v1/completions; model id Qwen3.8-27B-MACaQ-W4A8-SABER (MODEL=...; Qwen3.8-27B-MACaQ-MXFP4 for
+# /v1/chat/completions, /v1/completions; model id Qwen3.8-27B-MACaQ-W4A8-SABER (MODEL=...; Qwen3.8-27B-MACaQ-MXFP4-SABER for
 # --weights macaq, Qwen3.8 for --weights nvfp4 / quark). Logs: podman logs -f saber-27b-serve (or docker logs ...). Docker works too: SABER_CONTAINER=docker.
 set -uo pipefail
 REPO=${SABER_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}   # SABER_REPO: a hold run from a worktree serves from the main checkout's .cache
@@ -118,7 +118,7 @@ case "$WEIGHTS" in
     DRAFTER=${DRAFTER:-w4a8}
     case "$DRAFTER" in w4a8 | fp8) ;; *) echo "--drafter $DRAFTER: w4a8 (the default) or fp8" >&2; exit 2 ;; esac
     Q=macaq-w4a8; QD=-$DRAFTER; QF=-macaq-w4a8; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-W4A8-SABER}; WIDTHS=${WIDTHS:-1,5,8} ;;
-  macaq | macaq-mxfp4) Q=macaq7-bc3; QD=-quarkhead; QF=-macaq; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-MXFP4}; WIDTHS=${WIDTHS:-1,5,8} ;;
+  macaq | macaq-mxfp4) Q=macaq7-bc3; QD=-quarkhead; QF=-macaq; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-MXFP4-SABER}; WIDTHS=${WIDTHS:-1,5,8} ;;
   quark) Q=quark-awq-mxfp4; QD=-quarkhead; QF=-quark; MODEL=${MODEL:-Qwen3.8} ;;
   nvfp4) Q=nvfp4-devfinal; QD=; QF=; MODEL=${MODEL:-Qwen3.8} ;;
   *) echo "--weights $WEIGHTS: macaq-w4a8 (the default), macaq (= macaq-mxfp4), quark or nvfp4" >&2; exit 2 ;;

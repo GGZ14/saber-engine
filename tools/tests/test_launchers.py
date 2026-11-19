@@ -86,7 +86,7 @@ class ServePrintTest(unittest.TestCase):
                 f = self.boot("--weights", name, "--tp", tp)
                 self.assertEqual(f["--pack"], f"/packs/qwen38-27b-macaq7-bc3{sfx}")
                 self.assertEqual(f["--engine-draft-pack"], f"/packs/qwen38-dflash2-drafter-quarkhead{sfx}")
-                self.assertEqual(f["--served-model-name"], "Qwen3.8-27B-MACaQ-MXFP4")
+                self.assertEqual(f["--served-model-name"], "Qwen3.8-27B-MACaQ-MXFP4-SABER")
                 self.assertEqual(f["--engine-decode-widths"], "1,5,8")
             # its drafter is the FP8 one, so --drafter fp8 names the same boot
             self.assertEqual(self.boot("--weights", name, "--drafter", "fp8"), self.boot("--weights", name))
