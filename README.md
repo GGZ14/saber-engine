@@ -580,7 +580,7 @@ Without a vision flag the 27B refuses an image part by name.
 
 | Task | Command |
 |---|---|
-| Stop the server | `tools/serve_27b.sh stop` |
+| Stop the server (and the console, if it runs; `--keep-console` keeps it) | `tools/serve_27b.sh stop` |
 | Reuse the last build | `tools/serve_27b.sh --no-build` |
 | Another port | `PORT=8100 tools/serve_27b.sh ...` |
 | Smaller context | `MAX_CTX=65536 tools/serve_27b.sh ...` |

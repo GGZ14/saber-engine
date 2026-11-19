@@ -9,7 +9,9 @@
 #
 #   tools/serve_27b.sh              # build the release binary in the dev image, then serve on :8080
 #   tools/serve_27b.sh --no-build   # reuse the last container build
-#   tools/serve_27b.sh stop         # stop the server container (whichever of TP=2 / TP=1 is running)
+#   tools/serve_27b.sh stop         # stop the Saber console if one runs (it stops its own engine), then the server container (whichever of TP=2 / TP=1 is running)
+#   tools/serve_27b.sh stop --keep-console   # stop the engine container only; the console stays up
+#   tools/serve_27b.sh --ui [--no-build]     # the browser console in front on :8090 (== SABER_CONSOLE=1; docs/CONSOLE.md)
 #   tools/serve_27b.sh --tp 1 [--no-build]   # ONE card (TP=1; or TP=1 in the environment): the -tp1 packs of
 #     the chosen weights (`tools/fetch_packs.sh 27b-macaq-w4a8-tp1` for the default), on HIP device DEVICE (default 0), container
 #     saber-27b-tp1-serve; defaults MAX_CTX 131072, MAX_SEQS 1 (one conversation at a time, up to ~128k tokens;
@@ -53,13 +55,14 @@ REPO=${SABER_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}   # SABER_R
 . "$REPO/tools/lib/container.sh"   # CTR = podman or docker (SABER_CONTAINER=docker to force)
 IMG=${SABER_IMAGE:-localhost/saber-dev:latest}
 SHARED=${SABER_SHARED:-$HOME/saber-cache}
-# The launcher's own leading words, in any order: `--tp 1|2`, `--no-build`, `stop`.
+# The launcher's own leading words, in any order: `--tp 1|2`, `--no-build`, `--ui`, `stop`, `--keep-console`.
 TP_GIVEN=${TP:+env}
 TP=${TP:-2}
 WEIGHTS=${WEIGHTS:-macaq-w4a8}
 DRAFTER=${DRAFTER:-}
 BUILD=1
 STOP=0
+KEEP_CONSOLE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --tp) TP=${2:-}; TP_GIVEN=flag; shift; [ $# -gt 0 ] && shift ;;
@@ -69,6 +72,8 @@ while [ $# -gt 0 ]; do
     --weights=*) WEIGHTS=${1#*=}; shift ;;
     --drafter) DRAFTER=${2:-}; shift; [ $# -gt 0 ] && shift ;;
     --drafter=*) DRAFTER=${1#*=}; shift ;;
+    --ui) SABER_CONSOLE=1; shift ;;
+    --keep-console) KEEP_CONSOLE=1; shift ;;
     stop) STOP=1; shift ;;
     *) break ;;
   esac
@@ -87,6 +92,8 @@ ulimit -c 0
 mkdir -p "$OUT"
 
 if [ "$STOP" = 1 ]; then
+  # The console goes first: on SIGTERM it stops the engine it started and exits, so it cannot relaunch one.
+  if [ "$KEEP_CONSOLE" = 0 ]; then . "$REPO/tools/lib/console.sh"; console_stop || exit 1; fi
   # `stop` stops the CNAME given, else the TP the command names, else whichever 27B server runs.
   if [ -n "${CNAME:-}" ]; then names=("$CNAME")
   elif [ -n "$TP_GIVEN" ]; then names=("$TP_DEF_CNAME")

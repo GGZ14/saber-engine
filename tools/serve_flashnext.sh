@@ -3,7 +3,9 @@
 #
 #   tools/serve_flashnext.sh            # build the release binary in the dev image, then serve on :8080 (prod's usual port)
 #   tools/serve_flashnext.sh --no-build # reuse the last container build
-#   tools/serve_flashnext.sh stop       # stop the server container
+#   tools/serve_flashnext.sh stop       # stop the Saber console if one runs (it stops its own engine), then the server container
+#   tools/serve_flashnext.sh stop --keep-console   # the engine container only; the console stays up
+#   tools/serve_flashnext.sh --ui [--no-build]     # the browser console in front on :8090 (== SABER_CONSOLE=1; docs/CONSOLE.md)
 #   PORT=8100 tools/serve_flashnext.sh  # another port
 #   SERVE_PREFIX="/opt/rocm/bin/rocprofv3 --kernel-trace -f csv -d DIR --" tools/serve_flashnext.sh --no-build   # ATTN-OPT-3: a DIAGNOSTIC tool around `saber engine` (both ranks)
 #   tools/serve_flashnext.sh --no-build --record-routes   # (or SABER_RECORD_ROUTES=1) record the routes YOUR traffic takes
@@ -87,7 +89,18 @@ OUT=$SHARED/serve-flashnext
 ulimit -c 0
 mkdir -p "$OUT"
 
+# `--ui` (anywhere) = SABER_CONSOLE=1; `--keep-console` only qualifies `stop`.
+_args=(); KEEP_CONSOLE=0
+for _a in "$@"; do
+  case "$_a" in
+    --ui) SABER_CONSOLE=1 ;;
+    --keep-console) KEEP_CONSOLE=1 ;;
+    *) _args+=("$_a") ;;
+  esac
+done
+set -- ${_args[@]+"${_args[@]}"}
 if [ "${1:-}" = stop ]; then
+  if [ "$KEEP_CONSOLE" = 0 ]; then . "$REPO/tools/lib/console.sh"; console_stop || exit 1; fi
   $CTR rm -f "$CNAME" >/dev/null 2>&1 && echo "stopped $CNAME" || echo "$CNAME was not running"
   exit 0
 fi
