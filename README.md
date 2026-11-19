@@ -372,8 +372,8 @@ usage history and per-label API keys.
 
 ```bash
 tools/serve_console.sh                              # build, then the console on 127.0.0.1:8090
-SABER_CONSOLE=1 tools/serve_27b.sh --no-build       # or: a launcher with the console in front
-SABER_CONSOLE=1 tools/serve_27b.sh --tp 1 --no-build  # the 27B on one card (the console's TP choice)
+tools/serve_27b.sh --ui --no-build                    # or: a launcher with the console in front (SABER_CONSOLE=1 still works)
+tools/serve_27b.sh --ui --tp 1 --no-build               # the 27B on one card (the console's TP choice)
 tools/serve_console.sh --mock                       # try it without GPUs
 ```
 
@@ -588,7 +588,7 @@ Without a vision flag the 27B refuses an image part by name.
 | Logs | `podman logs -f saber-27b-serve` (or `docker logs -f ...`) |
 | Exit code of a dead server | `podman wait saber-27b-serve` |
 | Flash-Next | `tools/serve_flashnext.sh` |
-| The browser console in front | `SABER_CONSOLE=1 tools/serve_27b.sh` or `tools/serve_console.sh` |
+| The browser console in front | `tools/serve_27b.sh --ui` or `tools/serve_console.sh` |
 
 ### Troubleshooting
 
