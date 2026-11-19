@@ -59,6 +59,40 @@ workspace and builds kernels with `hipcc`. It has not yet booted a model; the pr
 carries a newer ROCm (HIP 7.16, ROCr 1.21), and on the public 7.x tags each rank may spin more CPU
 in ROCr's async-event loop.
 
+## Pick a model in 60 seconds
+
+`saber models` knows every published model by name: what it is, how big, whether it is on disk, and how to
+serve it. It needs only the dev image (`tools/build-image.sh`, once) and a built binary (`tools/saber --build`,
+once; `ln -s "$PWD/tools/saber" ~/.local/bin/saber` puts `saber` on your PATH).
+
+```bash
+saber models                        # list: name, aliases, size, downloaded?, drafter (* = the default)
+saber models info w4a8              # repo, served id, drafter, sizes and shapes per TP, where it lives
+saber models pull w4a8              # download it and its drafter (resumable, sha256-verified, checks the disk first)
+saber serve --model w4a8            # serve it on :8080 (prints the model id and a curl line to try)
+saber serve --model mxfp4 --tp 1    # switch: stop the running one (Ctrl-C), serve another (here on one GPU)
+saber models rm mxfp4               # delete it (a drafter another downloaded model uses is kept)
+```
+
+- Names are case-insensitive and have short aliases (`w4a8`, `mxfp4`, `default`); a typo gets a
+  "did you mean". `saber serve` with no `--model` serves the default (the W4A8 27B).
+- **TP** follows your GPUs: two GPUs serve the TP=2 pack, one GPU the TP=1 pack. `--tp 1|2` overrides it,
+  `--device N` picks the GPU at TP=1.
+- `--dry-run` on `pull` and `serve` shows exactly what would be downloaded and the exact engine and container
+  commands, and changes nothing. `--json` on `list` and `info` is for scripts.
+- `serve` offers to download a model that is not there yet (`--yes` answers for you). Every other command
+  works offline: `list`, `info` and `serve` of a downloaded model never touch the network.
+- Any engine flag still works after `--model` and replaces the model's value: `saber serve --model w4a8
+  --port 8081 --engine-max-ctx 131072`.
+- Packs are cached in `~/.cache/saber/packs/<owner>/<repo>/<tp>` (`SABER_PACKS` or `--packs-dir` moves it).
+  Already used `tools/fetch_packs.sh`? `export SABER_PACKS=/mnt/nvme/saber-packs` and the packs it downloaded
+  there are found and served in place (never re-downloaded, never deleted by `saber models rm`).
+- **Your own models:** add a `[[model]]` block to `~/.config/saber/models.toml`; an entry with a shipped
+  model's name replaces it, and `default = "<name>"` there changes the default. See
+  [docs/MODELS.md](docs/MODELS.md) for the schema, the cache layout, TP handling and drafter sharing.
+- Private or gated repos use your own Hugging Face login (`hf auth login`, or `HF_TOKEN`); public ones need
+  nothing.
+
 ## Guided setup (terminal UI)
 
 ```bash
@@ -651,6 +685,7 @@ sliced from `macaq_iu8.hip` and the had32 sources).
 | Path | What |
 |---|---|
 | `crates/saber-cli` | the `saber` binary |
+| `models.toml`, `docs/MODELS.md` | the model registry `saber models` and `saber serve --model` read, and its schema |
 | `crates/saber-engine`, `-exec`, `-plan`, `-sched` | engine, execution graphs, launch plan, scheduler |
 | `crates/saber-serve` | the OpenAI HTTP plane |
 | `crates/saber-console`, `ui/` | `saber ui`, the browser console (the SPA's source; `ui/dist` is the committed build) |

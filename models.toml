@@ -1,0 +1,139 @@
+# The Saber model registry: what `saber models` lists, pulls and removes and what
+# `saber serve --model <name>` serves. docs/MODELS.md describes every field.
+#
+# This file is compiled into the `saber` binary. To add or change a model WITHOUT rebuilding,
+# put a file with the same layout at ~/.config/saber/models.toml ($XDG_CONFIG_HOME/saber/models.toml):
+# an entry there with the same `name` replaces the one here, any other entry is added, and its
+# `default = "..."` (if any) picks the model `saber serve` uses when `--model` is not given.
+#
+# Adding a model is adding a [[model]] block: no code change.
+
+schema = 1
+default = "Qwen3.8-27B-MACaQ-W4A8-SABER"
+endpoint = "https://huggingface.co"
+
+# ---------------------------------------------------------------------------------------------
+# Targets: the models you serve.
+# ---------------------------------------------------------------------------------------------
+
+[[model]]
+name = "Qwen3.8-27B-MACaQ-W4A8-SABER"
+aliases = ["w4a8", "default", "27b", "macaq-w4a8"]
+kind = "target"
+description = "Qwen3.8-27B in Saber's W4A8 integer format (per-row int4 weights, per-token int8 activations on RDNA4's int8 matrix cores) with the W4A8 DFlash2 drafter. The fastest 27B: 262k context and 8 concurrent sequences on two cards."
+repo = "Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER"
+served_id = "Qwen3.8-27B-MACaQ-W4A8-SABER"
+drafter = "Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER"
+requires_tag = "macaq_iu8/1"
+license = "Apache-2.0 (weights derived from Qwen/Qwen3.8-27B; see the repo's LICENSE and README)"
+files = ["tokenizer.json", "qwen-fixed-v22.3.jinja"]
+tokenizer = "tokenizer.json"
+chat_template = "qwen-fixed-v22.3.jinja"
+engine_args = ["--engine-rectangular-widths"]
+default_tp = 2
+
+[model.tp.2]
+path = "tp2"
+bytes = 20543143513
+legacy_dirs = ["qwen38-27b-macaq-w4a8"]
+max_ctx = 262144
+max_seqs = 8
+prefill_rows = "96,128,192,256,320,384,512,768,1024,1536,2048"
+decode_batches = "1,2,3,4,8"
+decode_widths = "1,5,8"
+draft_block = 8
+budget_mib = 30500
+tail_args = ["--vision", "lazy"]
+
+[model.tp.1]
+path = "tp1"
+bytes = 19507176443
+legacy_dirs = ["qwen38-27b-macaq-w4a8-tp1"]
+max_ctx = 131072
+max_seqs = 1
+prefill_rows = "96,128,192,256,320,384,512,768,1024,1536,2048"
+decode_batches = "1"
+decode_widths = "1,5,8"
+draft_block = 8
+budget_mib = 30500
+
+[[model]]
+name = "Qwen3.8-27B-MACaQ-MXFP4-SABER"
+aliases = ["mxfp4", "macaq", "macaq-mxfp4"]
+kind = "target"
+description = "Qwen3.8-27B in the MACaQ MXFP4 format (a block-32 Hadamard before every 4-bit GEMM, 19 W8 promotions) with the FP8 DFlash2 drafter. The default before the W4A8 pack; slightly slower, kept for comparison."
+repo = "Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER"
+served_id = "Qwen3.8-27B-MACaQ-MXFP4"
+drafter = "Qwen3.8-27B-DFlash2-Drafter-FP8-SABER"
+license = "Apache-2.0 (weights derived from Qwen/Qwen3.8-27B; see the repo's LICENSE and README)"
+files = ["tokenizer.json", "qwen-fixed-v22.3.jinja"]
+tokenizer = "tokenizer.json"
+chat_template = "qwen-fixed-v22.3.jinja"
+engine_args = ["--engine-rectangular-widths"]
+default_tp = 2
+
+[model.tp.2]
+path = "qwen38-27b-macaq7-bc3"
+bytes = 21264311660
+legacy_dirs = ["qwen38-27b-macaq7-bc3"]
+max_ctx = 262144
+max_seqs = 8
+prefill_rows = "96,128,192,256,320,384,512,768,1024,1536,2048"
+decode_batches = "1,2,3,4,8"
+decode_widths = "1,5,8"
+draft_block = 8
+budget_mib = 30500
+
+[model.tp.1]
+path = "qwen38-27b-macaq7-bc3-tp1"
+bytes = 20229631204
+legacy_dirs = ["qwen38-27b-macaq7-bc3-tp1"]
+max_ctx = 131072
+max_seqs = 1
+prefill_rows = "96,128,192,256,320,384,512,768,1024,1536,2048"
+decode_batches = "1"
+decode_widths = "1,5,8"
+draft_block = 8
+budget_mib = 30500
+
+# ---------------------------------------------------------------------------------------------
+# Drafters: pulled automatically with the target that names them, shared between targets
+# (downloaded once, kept while any downloaded target still uses them).
+# ---------------------------------------------------------------------------------------------
+
+[[model]]
+name = "Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER"
+aliases = ["drafter-w4a8", "dflash2-w4a8"]
+kind = "drafter"
+description = "The DFlash2 block drafter in the W4A8 integer format, paired with the W4A8 27B."
+repo = "Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER"
+requires_tag = "macaq_iu8d/1"
+license = "Apache-2.0 (see the repo's LICENSE and README)"
+
+[model.tp.2]
+path = "tp2"
+bytes = 7260439156
+legacy_dirs = ["qwen38-dflash2-drafter-w4a8"]
+
+[model.tp.1]
+path = "tp1"
+bytes = 6804645643
+legacy_dirs = ["qwen38-dflash2-drafter-w4a8-tp1"]
+
+[[model]]
+name = "Qwen3.8-27B-DFlash2-Drafter-FP8-SABER"
+aliases = ["drafter-fp8", "dflash2-fp8"]
+kind = "drafter"
+description = "The DFlash2 block drafter in FP8. Pairs with the MXFP4 27B, and with the W4A8 27B via `--drafter drafter-fp8`."
+repo = "Launch80/Qwen3.8-27B-DFlash2-Drafter-FP8-SABER"
+license = "Apache-2.0 (see the repo's LICENSE and README)"
+
+[model.tp.2]
+path = "tp2"
+bytes = 8189210744
+legacy_dirs = ["qwen38-dflash2-drafter-fp8", "qwen38-dflash2-drafter-quarkhead"]
+
+[model.tp.1]
+path = "tp1"
+bytes = 7668395208
+legacy_dirs = ["qwen38-dflash2-drafter-fp8-tp1", "qwen38-dflash2-drafter-quarkhead-tp1"]
