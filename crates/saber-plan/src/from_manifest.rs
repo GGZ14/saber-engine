@@ -642,6 +642,40 @@ pub const SEPARATELY_PLANNED: &[(&str, &str)] = &[
          `saber_kernels::macaq::had_twin` inside `Planner::gemm_ar_fusion` (see `mxfp4_had`)",
     ),
     (
+        "macaq_iu8",
+        "MACaQ iu8: the W4A8-iu8 pack's int8-WMMA GEMMs, named only by the 27B planner's \
+         `KernelOp::GemmI4A8` / `GemmI8A8` routes through `saber_kernels::macaq_iu8::cell` (the band is \
+         data there) -- never a route row (a row would let `select` bind an int8 body against an MXFP4 pack)",
+    ),
+    (
+        "dflash_hadi8",
+        "MACaQ iu8: the iu8 drafter's per-token INT8 producer twins, named only by `saber_kernels::dflash_iu8` inside \
+         the drafter plan (`saber_engine::draft_plan`) on an iu8 drafter pack -- never a route row",
+    ),
+    (
+        "macaq_iu8f",
+        "MACaQ iu8: the iu8 decode pair and fusion-map row 3, named only by `saber_kernels::macaq_iu8::{pair, \
+         ar_nq}` inside `Planner::pair_fusion` / `Planner::gemm_ar_fusion` on an iu8 plan; the small-chunk \
+         band (`macaq_iu8f_dec_*_tm{5..8}`, `macaq_iu8f_pf_*_bm{128,64}`; the parametric tiles `macaq_iu8f_pf_*_t*w*n*k*[p]`), named only \
+         by `macaq_iu8::cell` -- never a route row",
+    ),
+    (
+        "mxfp4_hadi8",
+        "MACaQ iu8: the per-token INT8 twins of the had32 producers, named only by \
+         `saber_kernels::macaq_iu8::i8_twin` from the had32 twin's descriptor when the edge is \
+         `a_tiled_i8` -- never a route row",
+    ),
+    (
+        "attn_glue_hadi8",
+        "MACaQ iu8: the INT8 twin of `attn_gate_quant_had32`, named only by `macaq_iu8::i8_twin` (see \
+         `mxfp4_hadi8`)",
+    ),
+    (
+        "saber_ar_hadi8",
+        "MACaQ iu8: the INT8 twin of the `_nq` epilogue's had32 twin, named only by `macaq_iu8::i8_twin` \
+         inside `Planner::nq_fusion` (see `mxfp4_hadi8`)",
+    ),
+    (
         "mxfp4_gemm_decode_smq",
         "fusion-map row 4 (ws-h40): the gate_up decode GEMM + `silu_mul_quant` in one dispatch, \
          bound by the block planner's fold (`Planner::smq_fusion` -> \

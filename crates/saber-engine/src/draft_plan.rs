@@ -66,6 +66,7 @@ use saber_kernels::dflash::{self, DflashOp, DflashRules, DflashShape};
 use saber_kernels::head::{self, HeadOp, HeadRules, HeadShape};
 use saber_kernels::rules::{ArgValue, LaunchDescriptor, Shape};
 use saber_kernels::saber::{self, SaberRules};
+use saber_kernels::{dflash_iu8, macaq_iu8};
 use saber_model::dflash_graph::DflashConfig;
 
 use crate::forward::ForwardError;
@@ -360,23 +361,23 @@ impl DraftPlan {
             let p = |s: &str| format!("bb.l{l}.{s}");
             a.alloc(&p("coeff_a"), m * kp_n * 2);
             a.alloc(&p("coeff_m"), m * kp_n * 2);
-            a.alloc(&p("aq"), m * h);
+            a.alloc(&p("aq"), edge8(cfg, m, h));
             a.alloc(&p("as"), m * h.div_ceil(128) * 4);
             a.alloc(&p("qkv"), m * qkv_n * 2);
             a.alloc(&p("q_rot"), m * qn * 2);
             a.alloc(&p("k_rot"), m * nkv * hd * 2);
             a.alloc(&p("attn_out"), m * qn * 2);
-            a.alloc(&p("oq"), m * qn);
+            a.alloc(&p("oq"), edge8(cfg, m, qn));
             a.alloc(&p("os"), m * qn.div_ceil(128) * 4);
             a.alloc(&p("o"), m * h * 2);
             a.alloc(&p("normed2"), m * h * 2);
             // FOUR bytes: the residual between the layer's two halves is fp32 in prod's compiled
             // drafter (F29) -- `conv_add_rms_open` writes it and `_close` reads it.
             a.alloc(&p("resid2"), m * h * 4);
-            a.alloc(&p("mq"), m * h);
+            a.alloc(&p("mq"), edge8(cfg, m, h));
             a.alloc(&p("ms"), m * h.div_ceil(128) * 4);
             a.alloc(&p("gate_up"), m * 2 * inter * 2);
-            a.alloc(&p("dq"), m * inter);
+            a.alloc(&p("dq"), edge8(cfg, m, inter));
             a.alloc(&p("ds"), m * inter.div_ceil(128) * 4);
             a.alloc(&p("down"), m * h * 2);
             a.alloc(&p("out_norm"), m * h * 2);
@@ -604,6 +605,17 @@ impl DraftPlan {
     }
 }
 
+/// The bytes of one quantised activation edge of `rows x k`: e4m3 row-major for the FP8 drafter, the A-TILED int8
+/// order (16-row tiles, `dflash_iu8::tiled_bytes`) for an iu8 drafter -- whose GEMMs read whole 16-row
+/// fragments and never store from the rows past M.
+fn edge8(cfg: &DflashConfig, rows: u64, k: u64) -> u64 {
+    if cfg.iu8 {
+        saber_kernels::dflash_iu8::tiled_bytes(rows, k)
+    } else {
+        rows * k
+    }
+}
+
 /// The context store's regions, at `shape.ctx_rows` — the first thing every proposal's arena lays
 /// out, and the WHOLE of the wide store's (H35).
 fn lay_context_store(a: &mut DraftArena, cfg: &DflashConfig, shape: DraftShape) {
@@ -614,7 +626,7 @@ fn lay_context_store(a: &mut DraftArena, cfg: &DflashConfig, shape: DraftShape) 
     let aux_k = u64::from(cfg.target_layers) * h;
     let kv_n = u64::from(cfg.context_kv_n());
     let half = u64::from(cfg.layers) * ctx * nkv * hd * 2;
-    a.alloc("ctx.aux.q", ctx * aux_k);
+    a.alloc("ctx.aux.q", edge8(cfg, ctx, aux_k));
     a.alloc("ctx.aux.scales", ctx * aux_k.div_ceil(128) * 4);
     a.alloc("ctx.states", ctx * h * 2);
     a.alloc("ctx.normed", ctx * h * 2);
@@ -898,6 +910,41 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// One iu8 drafter linear -- the int8 twin of its producer has already written `a` (A-tiled) and
+    /// `as` (f32 `[m]`); this is the iu8 W4 GEMM on the target's bodies (`macaq_iu8::resolve_draft`, `WKind::I4`: the drafter's own rows, else the target's cell) over the
+    /// op's `.wi4` / `.wi4s` records, at the shape its persistent split-K counter is keyed by.
+    #[allow(clippy::too_many_arguments)]
+    fn iu8_gemm(
+        &mut self,
+        name: &str,
+        phase: DraftPhase,
+        op: &str,
+        (m, n, k): (u32, u32, u32),
+        a: DeviceAddr,
+        as_: DeviceAddr,
+        c: DeviceAddr,
+    ) -> Result<(), ForwardError> {
+        let w = self.w(op, "wi4")?;
+        let ws = self.w(op, "wi4s")?;
+        let desc = macaq_iu8::resolve_draft(macaq_iu8::WKind::I4, m, n, k)
+            .map_err(|e| ForwardError::Device(format!("{name} (iu8): {e}")))?;
+        self.push_desc(
+            name,
+            phase,
+            desc,
+            Shape::new(m, n, k),
+            &[("a", a), ("as", as_), ("w", w), ("ws", ws), ("c", c)],
+        )
+    }
+
+    /// An iu8 producer twin's descriptor, refused by name.
+    fn iu8_desc(
+        name: &str,
+        d: saber_kernels::Result<LaunchDescriptor>,
+    ) -> Result<LaunchDescriptor, ForwardError> {
+        d.map_err(|e| ForwardError::Device(format!("{name} (iu8): {e}")))
+    }
+
     // ---- phase 1 -----------------------------------------------------------------------------
 
     fn context_store(&mut self) -> Result<(), ForwardError> {
@@ -923,29 +970,53 @@ impl Builder<'_> {
         })?;
 
         let p = DraftPhase::ContextStore;
-        self.push(
-            "aux_hidden_projection.quant",
-            p,
-            DflashOp::ActQuant,
-            DflashShape::new(ctx, aux_k, aux_k),
-            &[("x", aux), ("q", aq), ("scales", aqs)],
-        )?;
-        let w_aux = self.w("aux_hidden_projection", "w")?;
-        let ws_aux = self.w("aux_hidden_projection", "ws")?;
-        let op = self.blockscale(ctx);
-        self.push(
-            "aux_hidden_projection",
-            p,
-            op,
-            DflashShape::new(ctx, h, aux_k),
-            &[
-                ("a", aq),
-                ("as", aqs),
-                ("w", w_aux),
-                ("ws", ws_aux),
-                ("c", states),
-            ],
-        )?;
+        if cfg.iu8 {
+            let t = self.w("aux_hidden_projection", "t")?;
+            let d = Self::iu8_desc(
+                "aux_hidden_projection.quant",
+                dflash_iu8::resolve_act(ctx, aux_k),
+            )?;
+            self.push_desc(
+                "aux_hidden_projection.quant",
+                p,
+                d,
+                Shape::new(ctx, aux_k, aux_k),
+                &[("x", aux), ("q", aq), ("scales", aqs), ("had_t", t)],
+            )?;
+            self.iu8_gemm(
+                "aux_hidden_projection",
+                p,
+                "aux_hidden_projection",
+                (ctx, h, aux_k),
+                aq,
+                aqs,
+                states,
+            )?;
+        } else {
+            self.push(
+                "aux_hidden_projection.quant",
+                p,
+                DflashOp::ActQuant,
+                DflashShape::new(ctx, aux_k, aux_k),
+                &[("x", aux), ("q", aq), ("scales", aqs)],
+            )?;
+            let w_aux = self.w("aux_hidden_projection", "w")?;
+            let ws_aux = self.w("aux_hidden_projection", "ws")?;
+            let op = self.blockscale(ctx);
+            self.push(
+                "aux_hidden_projection",
+                p,
+                op,
+                DflashShape::new(ctx, h, aux_k),
+                &[
+                    ("a", aq),
+                    ("as", aqs),
+                    ("w", w_aux),
+                    ("ws", ws_aux),
+                    ("c", states),
+                ],
+            )?;
+        }
         let w_hn = self.w("context_kv.hidden_norm", "weight")?;
         self.push(
             "context_kv.hidden_norm",
@@ -1141,35 +1212,66 @@ impl Builder<'_> {
                 &[("a", normed), ("w", w_kpa), ("c", coeff_a)],
             )?;
             let base_a = self.w(&n("attention_conv.prepare"), "base")?;
-            self.push(
-                &n("attention_conv.prepare"),
-                p,
-                DflashOp::GroupedConvQuant,
-                DflashShape::conv(m, h, groups, cfg.block_size, 0),
-                &[
-                    ("x", normed),
-                    ("coeff", coeff_a),
-                    ("base", base_a),
-                    ("q", aq),
-                    ("scales", as_),
-                ],
-            )?;
-            let w_qkv = self.w(&n("attn.qkv"), "w")?;
-            let ws_qkv = self.w(&n("attn.qkv"), "ws")?;
-            let op = self.blockscale(m);
-            self.push(
-                &n("attn.qkv"),
-                p,
-                op,
-                DflashShape::new(m, qkv_n, h),
-                &[
-                    ("a", aq),
-                    ("as", as_),
-                    ("w", w_qkv),
-                    ("ws", ws_qkv),
-                    ("c", qkv),
-                ],
-            )?;
+            if cfg.iu8 {
+                let t = self.w(&n("attn.qkv"), "t")?;
+                let d = Self::iu8_desc(
+                    &n("attention_conv.prepare"),
+                    dflash_iu8::resolve_conv(m, h, groups, cfg.block_size, 0),
+                )?;
+                self.push_desc(
+                    &n("attention_conv.prepare"),
+                    p,
+                    d,
+                    Shape::new(m, h, h),
+                    &[
+                        ("x", normed),
+                        ("coeff", coeff_a),
+                        ("base", base_a),
+                        ("q", aq),
+                        ("scales", as_),
+                        ("had_t", t),
+                    ],
+                )?;
+                self.iu8_gemm(
+                    &n("attn.qkv"),
+                    p,
+                    &n("attn.qkv"),
+                    (m, qkv_n, h),
+                    aq,
+                    as_,
+                    qkv,
+                )?;
+            } else {
+                self.push(
+                    &n("attention_conv.prepare"),
+                    p,
+                    DflashOp::GroupedConvQuant,
+                    DflashShape::conv(m, h, groups, cfg.block_size, 0),
+                    &[
+                        ("x", normed),
+                        ("coeff", coeff_a),
+                        ("base", base_a),
+                        ("q", aq),
+                        ("scales", as_),
+                    ],
+                )?;
+                let w_qkv = self.w(&n("attn.qkv"), "w")?;
+                let ws_qkv = self.w(&n("attn.qkv"), "ws")?;
+                let op = self.blockscale(m);
+                self.push(
+                    &n("attn.qkv"),
+                    p,
+                    op,
+                    DflashShape::new(m, qkv_n, h),
+                    &[
+                        ("a", aq),
+                        ("as", as_),
+                        ("w", w_qkv),
+                        ("ws", ws_qkv),
+                        ("c", qkv),
+                    ],
+                )?;
+            }
             // THE DRAFTER'S OWN q/k NORM + ROPE, which is `dflash_qk` and not `attn_glue`:
             // ws-f28 found that the glue op is the TARGET's GemmaRMSNorm (`1 + w`) over ATen's
             // reduction with a non-contracting rope, and the drafter's is the reference server's plain `RMSNorm`
@@ -1263,27 +1365,50 @@ impl Builder<'_> {
                     ("out", attn_out),
                 ],
             )?;
-            self.push(
-                &n("attn.o_proj.quant"),
-                p,
-                // NOT `ActQuant`: this one is INSIDE the drafter's compiled region, where
-                // inductor strength-reduces `absmax / 448` into a reciprocal multiply, and
-                // `model.fc`'s (above) is eager and divides. One source line, two programs, and
-                // `DflashRules` binds one symbol per op (F31).
-                DflashOp::ActQuantRecip,
-                DflashShape::new(m, qn, qn),
-                &[("x", attn_out), ("q", oq), ("scales", os)],
-            )?;
-            let w_o = self.w(&n("attn.o_proj"), "w")?;
-            let ws_o = self.w(&n("attn.o_proj"), "ws")?;
-            let op = self.blockscale(m);
-            self.push(
-                &n("attn.o_proj"),
-                p,
-                op,
-                DflashShape::new(m, h, qn),
-                &[("a", oq), ("as", os), ("w", w_o), ("ws", ws_o), ("c", o)],
-            )?;
+            if cfg.iu8 {
+                // ROW-PARALLEL at TP > 1: `t` is this rank's slice of the input columns and the per-token amax
+                // is this rank's (as the target's row-parallel inputs).
+                let t = self.w(&n("attn.o_proj"), "t")?;
+                let d = Self::iu8_desc(&n("attn.o_proj.quant"), dflash_iu8::resolve_act(m, qn))?;
+                self.push_desc(
+                    &n("attn.o_proj.quant"),
+                    p,
+                    d,
+                    Shape::new(m, qn, qn),
+                    &[("x", attn_out), ("q", oq), ("scales", os), ("had_t", t)],
+                )?;
+                self.iu8_gemm(
+                    &n("attn.o_proj"),
+                    p,
+                    &n("attn.o_proj"),
+                    (m, h, qn),
+                    oq,
+                    os,
+                    o,
+                )?;
+            } else {
+                self.push(
+                    &n("attn.o_proj.quant"),
+                    p,
+                    // NOT `ActQuant`: this one is INSIDE the drafter's compiled region, where
+                    // inductor strength-reduces `absmax / 448` into a reciprocal multiply, and
+                    // `model.fc`'s (above) is eager and divides. One source line, two programs, and
+                    // `DflashRules` binds one symbol per op (F31).
+                    DflashOp::ActQuantRecip,
+                    DflashShape::new(m, qn, qn),
+                    &[("x", attn_out), ("q", oq), ("scales", os)],
+                )?;
+                let w_o = self.w(&n("attn.o_proj"), "w")?;
+                let ws_o = self.w(&n("attn.o_proj"), "ws")?;
+                let op = self.blockscale(m);
+                self.push(
+                    &n("attn.o_proj"),
+                    p,
+                    op,
+                    DflashShape::new(m, h, qn),
+                    &[("a", oq), ("as", os), ("w", w_o), ("ws", ws_o), ("c", o)],
+                )?;
+            }
             // ROW-PARALLEL, so the layer's first reduce. In place over `o`, which holds this
             // rank's partial sum until it does.
             self.all_reduce(&n("attn.all_reduce"), p, o, u64::from(m), u64::from(h))?;
@@ -1316,61 +1441,115 @@ impl Builder<'_> {
                 &[("a", normed2), ("w", w_kpm), ("c", coeff_m)],
             )?;
             let base_m = self.w(&n("mlp_conv.prepare"), "base")?;
-            self.push(
-                &n("mlp_conv.prepare"),
-                p,
-                DflashOp::GroupedConvQuant,
-                DflashShape::conv(m, h, groups, cfg.block_size, 0),
-                &[
-                    ("x", normed2),
-                    ("coeff", coeff_m),
-                    ("base", base_m),
-                    ("q", mq),
-                    ("scales", ms),
-                ],
-            )?;
-            let w_gu = self.w(&n("mlp.gate_up"), "w")?;
-            let ws_gu = self.w(&n("mlp.gate_up"), "ws")?;
-            // CMP27K: the rules' blockscale route, or (the `gateup_m64` knob, 33..64 rows) the
-            // one-weight-pass 64-row tile -- the same kernargs, 0 bytes differing.
-            let gu = dflash::resolve_blockscale_gateup(m, 2 * inter, h, self.rules)
-                .map_err(|e| ForwardError::Device(format!("{}: {e}", n("mlp.gate_up"))))?;
-            self.push_desc(
-                &n("mlp.gate_up"),
-                p,
-                gu,
-                Shape::new(m, 2 * inter, h),
-                &[
-                    ("a", mq),
-                    ("as", ms),
-                    ("w", w_gu),
-                    ("ws", ws_gu),
-                    ("c", gate_up),
-                ],
-            )?;
-            self.push(
-                &n("mlp.silu_quant"),
-                p,
-                DflashOp::SiluQuant,
-                DflashShape::new(m, inter, 2 * inter),
-                &[("gate_up", gate_up), ("q", dq), ("scales", ds)],
-            )?;
-            let w_dn = self.w(&n("mlp.down"), "w")?;
-            let ws_dn = self.w(&n("mlp.down"), "ws")?;
-            let op = self.blockscale(m);
-            self.push(
-                &n("mlp.down"),
-                p,
-                op,
-                DflashShape::new(m, h, inter),
-                &[
-                    ("a", dq),
-                    ("as", ds),
-                    ("w", w_dn),
-                    ("ws", ws_dn),
-                    ("c", down),
-                ],
-            )?;
+            if cfg.iu8 {
+                let t = self.w(&n("mlp.gate_up"), "t")?;
+                let d = Self::iu8_desc(
+                    &n("mlp_conv.prepare"),
+                    dflash_iu8::resolve_conv(m, h, groups, cfg.block_size, 0),
+                )?;
+                self.push_desc(
+                    &n("mlp_conv.prepare"),
+                    p,
+                    d,
+                    Shape::new(m, h, h),
+                    &[
+                        ("x", normed2),
+                        ("coeff", coeff_m),
+                        ("base", base_m),
+                        ("q", mq),
+                        ("scales", ms),
+                        ("had_t", t),
+                    ],
+                )?;
+                self.iu8_gemm(
+                    &n("mlp.gate_up"),
+                    p,
+                    &n("mlp.gate_up"),
+                    (m, 2 * inter, h),
+                    mq,
+                    ms,
+                    gate_up,
+                )?;
+                let t = self.w(&n("mlp.down"), "t")?;
+                let d = Self::iu8_desc(&n("mlp.silu_quant"), dflash_iu8::resolve_silu(m, inter))?;
+                self.push_desc(
+                    &n("mlp.silu_quant"),
+                    p,
+                    d,
+                    Shape::new(m, inter, 2 * inter),
+                    &[
+                        ("gate_up", gate_up),
+                        ("q", dq),
+                        ("scales", ds),
+                        ("had_t", t),
+                    ],
+                )?;
+                self.iu8_gemm(
+                    &n("mlp.down"),
+                    p,
+                    &n("mlp.down"),
+                    (m, h, inter),
+                    dq,
+                    ds,
+                    down,
+                )?;
+            } else {
+                self.push(
+                    &n("mlp_conv.prepare"),
+                    p,
+                    DflashOp::GroupedConvQuant,
+                    DflashShape::conv(m, h, groups, cfg.block_size, 0),
+                    &[
+                        ("x", normed2),
+                        ("coeff", coeff_m),
+                        ("base", base_m),
+                        ("q", mq),
+                        ("scales", ms),
+                    ],
+                )?;
+                let w_gu = self.w(&n("mlp.gate_up"), "w")?;
+                let ws_gu = self.w(&n("mlp.gate_up"), "ws")?;
+                // CMP27K: the rules' blockscale route, or (the `gateup_m64` knob, 33..64 rows) the
+                // one-weight-pass 64-row tile -- the same kernargs, 0 bytes differing.
+                let gu = dflash::resolve_blockscale_gateup(m, 2 * inter, h, self.rules)
+                    .map_err(|e| ForwardError::Device(format!("{}: {e}", n("mlp.gate_up"))))?;
+                self.push_desc(
+                    &n("mlp.gate_up"),
+                    p,
+                    gu,
+                    Shape::new(m, 2 * inter, h),
+                    &[
+                        ("a", mq),
+                        ("as", ms),
+                        ("w", w_gu),
+                        ("ws", ws_gu),
+                        ("c", gate_up),
+                    ],
+                )?;
+                self.push(
+                    &n("mlp.silu_quant"),
+                    p,
+                    DflashOp::SiluQuant,
+                    DflashShape::new(m, inter, 2 * inter),
+                    &[("gate_up", gate_up), ("q", dq), ("scales", ds)],
+                )?;
+                let w_dn = self.w(&n("mlp.down"), "w")?;
+                let ws_dn = self.w(&n("mlp.down"), "ws")?;
+                let op = self.blockscale(m);
+                self.push(
+                    &n("mlp.down"),
+                    p,
+                    op,
+                    DflashShape::new(m, h, inter),
+                    &[
+                        ("a", dq),
+                        ("as", ds),
+                        ("w", w_dn),
+                        ("ws", ws_dn),
+                        ("c", down),
+                    ],
+                )?;
+            }
             // The layer's second reduce, the same way, over `down`.
             self.all_reduce(&n("mlp.all_reduce"), p, down, u64::from(m), u64::from(h))?;
             let w_fin_m = self.w(&n("mlp_conv.finish+next_layernorm"), "weight")?;
@@ -2338,6 +2517,66 @@ mod tests {
             anchor_indices: fresh(),
             req_state: fresh(),
             weights,
+        }
+    }
+
+    /// An iu8 drafter plan makes the FP8 plan's launches ONE FOR ONE (every phase's count equal at every
+    /// batch and both TPs), its ten linear sites run the iu8 W4 GEMMs and their producers the int8 twins, and no
+    /// fp8 blockscale GEMM / e4m3 producer is left; the FP8 plan of the same config is unchanged by the flag's
+    /// existence (the control: a plan built without `iu8` names no iu8 symbol).
+    #[test]
+    fn the_iu8_drafter_plan_swaps_its_linears_one_for_one() {
+        let ar = SaberRules::prod_saber().expect("the committed saber rules");
+        for tp in [1u32, 2] {
+            for reqs in [1u32, 2, 4, 8] {
+                let base = DflashConfig::qwen38_dflash2(tp, 7);
+                let ar = (tp > 1).then_some(&ar);
+                let f = fake_plan_with(&base, reqs, ar);
+                let cfg = base.clone().with_iu8(true);
+                let q = fake_plan_with(&cfg, reqs, ar);
+                assert_eq!(
+                    (q.eager_launches(), q.captured_launches(), q.tail_launches()),
+                    (f.eager_launches(), f.captured_launches(), f.tail_launches()),
+                    "tp {tp} reqs {reqs}"
+                );
+                assert_eq!(q.steps.len(), f.steps.len());
+                let gemm = q
+                    .steps
+                    .iter()
+                    .filter(|s| s.desc.kernel.starts_with("macaq_iu8"))
+                    .count();
+                let prod = q
+                    .steps
+                    .iter()
+                    .filter(|s| s.desc.kernel.starts_with("dflash_hadi8_"))
+                    .count();
+                assert_eq!((gemm, prod), (1 + 4 * 5, 1 + 4 * 5), "tp {tp} reqs {reqs}");
+                for s in &q.steps {
+                    assert!(
+                        !s.desc.kernel.starts_with("dflash_gemm_a8w8")
+                            && !s.desc.kernel.contains("quant_g128")
+                            && !s.desc.kernel.starts_with("dflash_grouped_conv_quant"),
+                        "{}: {}",
+                        s.name,
+                        s.desc.kernel
+                    );
+                }
+                for (a, b) in q.steps.iter().zip(&f.steps) {
+                    assert_eq!(a.name, b.name);
+                    assert_eq!(a.phase, b.phase);
+                }
+                assert!(f
+                    .steps
+                    .iter()
+                    .all(|s| !s.desc.kernel.starts_with("macaq_iu8")
+                        && !s.desc.kernel.starts_with("dflash_hadi8")));
+                // the int8 edges are A-tiled: 16-row tiles at every M
+                let m = u64::from(reqs * cfg.block_size);
+                assert_eq!(
+                    q.arena.region("bb.l0.aq").unwrap().bytes,
+                    m.div_ceil(16) * 16 * u64::from(cfg.hidden)
+                );
+            }
         }
     }
 

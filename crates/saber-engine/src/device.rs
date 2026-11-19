@@ -1186,6 +1186,35 @@ fn engine_graph(cfg: &EngineConfig, width: u32) -> Result<Graph, saber_model::Mo
         });
     }
     let g = g.with_macaq_w8(&w8)?;
+    // the W4A8-iu8 pack (`<op>.wi4` / `.wi8` records + the manifest's format tag): every decoder
+    // linear an int8-WMMA GEMM, the W8 set the pack's; an ordinary pack has none (refusals by name).
+    let iu8 = crate::macaq::pack_iu8(&cfg.pack).map_err(saber_model::ModelError::Config)?;
+    let g = match iu8 {
+        None => g,
+        Some(w8i) => {
+            if !w8.is_empty() {
+                return Err(saber_model::ModelError::Config(format!(
+                    "pack `{}`: carries both e4m3 W8 promotion records and iu8 records",
+                    cfg.pack.display()
+                )));
+            }
+            let g = g.with_macaq_iu8(&w8i)?;
+            static SAID_IU8: std::sync::Once = std::sync::Once::new();
+            SAID_IU8.call_once(|| {
+                eprintln!(
+                    "macaqiu8 rank {}: {} ({} iu8 GEMMs: {} W4 per-row int4 + {} W8 per-row int8; per-token \
+                     int8 A-tiled activations; fused decode folds rows 2-3 on `macaq_iu8f`, the `_nq` \
+                     reduce on its int8 twin)",
+                    cfg.rank,
+                    saber_kernels::macaq_iu8::FORMAT,
+                    g.macaq_iu8().len(),
+                    g.macaq_iu8().len() - w8i.len(),
+                    w8i.len()
+                );
+            });
+            g
+        }
+    };
     // P27-W2-5: the replay arm runs the PAIR at every decode bucket (the fused update has no
     // replay form; the two are byte-identical, LEDGER 2026-09-19).
     let g = if cfg.gdn_replay {
@@ -4941,12 +4970,32 @@ fn run(
             ),
             None => cfg.head.rerank().unwrap_or_default(),
         };
-        let tier = crate::draft_tier::DraftTier::plan_with(
+        // an iu8 drafter is the drafter PACK's fact (records + its manifest tag), never a flag.
+        let draft_iu8 = match cfg.draft_pack.as_ref() {
+            Some(d) => {
+                let iu8 = crate::macaq::draft_iu8(&pack_file(d, cfg.rank))
+                    .map_err(ForwardError::Device)?;
+                if iu8 {
+                    println!(
+                        "macaqiu8d rank {}: the drafter pack `{}` is a W4A8-iu8 drafter (`{}`): aux projection + \
+                         5 x (qkv, o_proj, gate_up, down) on the iu8 W4 GEMMs, their producers on the int8 twins \
+                         (dflash_hadi8), one launch a site as the FP8 drafter",
+                        cfg.rank,
+                        d.display(),
+                        saber_kernels::dflash_iu8::FORMAT
+                    );
+                }
+                iu8
+            }
+            None => false,
+        };
+        let tier = crate::draft_tier::DraftTier::plan_with_iu8(
             cfg.world,
             cfg.draft_block,
             cfg.max_ctx,
             cfg.max_seqs,
             rerank,
+            draft_iu8,
         )?;
         tier.check_verify_width(max_width)?;
         tier.readiness()?;

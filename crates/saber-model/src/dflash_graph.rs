@@ -69,6 +69,10 @@ pub struct DflashConfig {
     pub head_block_n: u32,
     /// `ref_drafthead.KCAND`, 8: candidates emitted per block.
     pub head_kcand: u32,
+    /// The drafter PACK is a W4A8-iu8 drafter (`.wi4` / `.wi4s` / `.t` records, tag
+    /// `saber_kernels::dflash_iu8::FORMAT`): its five W8A8 linear sites run the iu8 W4 GEMMs and their producers
+    /// the int8 twins. A pack fact (`DraftGraph::records` follows it), never a flag; `false` = the FP8 drafter.
+    pub iu8: bool,
 }
 
 impl DflashConfig {
@@ -93,7 +97,15 @@ impl DflashConfig {
             rerank: 80,
             head_block_n: 64,
             head_kcand: 8,
+            iu8: false,
         }
+    }
+
+    /// The same drafter with its linears on the iu8 drafter pack's records ([`DflashConfig::iu8`]).
+    #[must_use]
+    pub fn with_iu8(mut self, iu8: bool) -> Self {
+        self.iu8 = iu8;
+        self
     }
 
     /// Query heads on one rank.
@@ -1647,7 +1659,76 @@ impl DraftGraph {
 
         // A preshuffled fp8 B and its block scales are ONE transform and TWO records, so they are
         // emitted together and can never be half-declared.
-        fn gemm(
+        let iu8 = c.iu8;
+        let gemm = |out: &mut Vec<DraftRecord>,
+                    op: &str,
+                    n: u64,
+                    k: u64,
+                    shard: ShardKind,
+                    sources: Vec<DraftSource>| {
+            if iu8 {
+                iu8_gemm(out, op, n, k, shard, sources);
+            } else {
+                fp8_gemm(out, op, n, k, shard, sources);
+            }
+        };
+        // the iu8 drafter's three records a linear -- per-row int4 codes in the iu8 W-fragment order
+        // (layout 17, `[N/16, K*8]`), one f32 scale a row (19), and the MACaQ `t` of the op's INPUT columns on this
+        // rank (f32 `[K]`; the producer twin reads it as `had_t`). Codes and scales shard as the fp8 weight does
+        // (a row-parallel op's rows are whole, so its row scales are replicated); `t` follows K.
+        fn iu8_gemm(
+            out: &mut Vec<DraftRecord>,
+            op: &str,
+            n: u64,
+            k: u64,
+            shard: ShardKind,
+            sources: Vec<DraftSource>,
+        ) {
+            let row_parallel = shard == ShardKind::Dim1;
+            out.push(DraftRecord {
+                name: format!("{op}.wi4"),
+                layout_id: crate::graph::LAYOUT_I4_ROW_FRAG,
+                role: DraftRole::Weight,
+                op: Some(op.to_owned()),
+                dtype: Dtype::U8,
+                shard,
+                shape: vec![n / 16, k * 8],
+                sources: sources.clone(),
+                params: vec![("bits", 4.0)],
+            });
+            out.push(DraftRecord {
+                name: format!("{op}.wi4s"),
+                layout_id: crate::graph::LAYOUT_IU8_ROW_SCALE,
+                role: DraftRole::Scale,
+                op: Some(op.to_owned()),
+                dtype: Dtype::F32,
+                shard: if row_parallel {
+                    ShardKind::Replicated
+                } else {
+                    shard
+                },
+                shape: vec![n],
+                sources: sources.clone(),
+                params: vec![],
+            });
+            out.push(DraftRecord {
+                name: format!("{op}.t"),
+                layout_id: LAYOUT_RAW,
+                role: DraftRole::Passthrough,
+                op: Some(op.to_owned()),
+                dtype: Dtype::F32,
+                shard: if row_parallel {
+                    ShardKind::Dim0
+                } else {
+                    ShardKind::Replicated
+                },
+                shape: vec![k],
+                sources,
+                params: vec![],
+            });
+        }
+
+        fn fp8_gemm(
             out: &mut Vec<DraftRecord>,
             op: &str,
             n: u64,
