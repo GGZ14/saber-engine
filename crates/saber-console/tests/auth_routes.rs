@@ -184,6 +184,7 @@ async fn console(limiter: Limiter) -> Fixture {
         auth: auth.clone(),
         // a non-loopback console (no Host rule; the token is the guard)
         loopback: false,
+        open_lan: false,
         proxy: Arc::new(Proxy::new(None)),
         usage: None,
     };
@@ -236,6 +237,10 @@ async fn every_route_refuses_without_the_token() {
     ))
     .await;
     for (m, p) in &routes {
+        // the sign-in routes take the token in their body (`sign_in_remembers_this_browser`)
+        if p == "/api/auth/login" || p == "/api/auth/logout" {
+            continue;
+        }
         let path = concrete(p);
         for tok in [None, Some("sa-admin-wrong-token-000000000")] {
             let r = call(f.port, m, &path, tok, true, "{}").await;
@@ -299,6 +304,88 @@ async fn every_route_refuses_without_the_token() {
     assert!(r.code != 401);
     let r = call(f.port, "GET", "/api/nope", None, false, "").await;
     assert_eq!(r.code, 401, "an unknown /api path is not a probe for free");
+}
+
+/// `call` with extra header lines (a `Cookie:`), no Authorization.
+async fn call_raw(port: u16, method: &str, path: &str, headers: &str, body: &str) -> Reply {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 192.168.7.7:{port}\r\n{headers}Content-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut b = Vec::new();
+    tokio::time::timeout(Duration::from_secs(20), s.read_to_end(&mut b))
+        .await
+        .unwrap()
+        .unwrap();
+    let text = String::from_utf8_lossy(&b).into_owned();
+    let code: u16 = text[9..12].parse().unwrap();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    Reply {
+        code,
+        body: body.to_string(),
+        head: head.to_string(),
+    }
+}
+
+fn set_cookie(r: &Reply) -> Option<String> {
+    r.head
+        .lines()
+        .find_map(|l| l.to_ascii_lowercase().starts_with("set-cookie:").then(|| l[11..].trim().to_string()))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sign_in_remembers_this_browser() {
+    let f = console(Limiter::new(
+        100_000,
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+    ))
+    .await;
+    let csrf = "X-Saber-Console: 1\r\n";
+    let good = format!("{{\"token\": \"{TOKEN}\"}}");
+    // a login needs the CSRF header; a wrong token is refused and sets no cookie
+    let r = call_raw(f.port, "POST", "/api/auth/login", "", &good).await;
+    assert_eq!(r.code, 403, "{}", r.body);
+    let r = call_raw(f.port, "POST", "/api/auth/login", csrf, "{\"token\": \"nope\"}").await;
+    assert_eq!(r.code, 401, "{}", r.body);
+    assert!(set_cookie(&r).is_none());
+    // the right token sets a signed, HttpOnly, SameSite=Strict, 30-day cookie
+    let r = call_raw(f.port, "POST", "/api/auth/login", csrf, &good).await;
+    assert_eq!(r.code, 200, "{}", r.body);
+    let c = set_cookie(&r).expect("a Set-Cookie");
+    for part in ["saber_session=", "HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/"] {
+        assert!(c.contains(part), "{part} in {c}");
+    }
+    assert!(!c.contains(TOKEN), "the cookie never holds the token");
+    let value = c.split(';').next().unwrap().to_string();
+    // the cookie alone is a credential (no Authorization header)
+    let r = call_raw(f.port, "GET", "/api/status", &format!("Cookie: {value}\r\n"), "").await;
+    assert_eq!(r.code, 200, "{}", r.body);
+    let r = call_raw(f.port, "GET", "/api/status", "Cookie: saber_session=1.00\r\n", "").await;
+    assert_eq!(r.code, 401);
+    let r = call_raw(f.port, "GET", "/api/status", "", "").await;
+    assert_eq!(r.code, 401);
+    // a mutating call still needs the CSRF header even with the cookie
+    let r = call_raw(
+        f.port,
+        "POST",
+        "/api/engine/stop",
+        &format!("Cookie: {value}\r\n"),
+        "{}",
+    )
+    .await;
+    assert_eq!(r.code, 403, "{}", r.body);
+    // logout clears it
+    let r = call_raw(f.port, "POST", "/api/auth/logout", csrf, "{}").await;
+    assert_eq!(r.code, 200);
+    assert!(set_cookie(&r).is_some_and(|c| c.contains("Max-Age=0")));
+    // rotating the token ends every remembered browser
+    f.auth.set_admin(saber_console::auth::Admin::Flag("a-brand-new-token-0000".into()));
+    let r = call_raw(f.port, "GET", "/api/status", &format!("Cookie: {value}\r\n"), "").await;
+    assert_eq!(r.code, 401, "{}", r.body);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -524,6 +611,7 @@ fn a_non_loopback_console_refuses_to_start_without_a_token() {
         home: dir.path().to_path_buf(),
         exe: dir.path().join("saber"),
         schema: json!({}),
+        no_auth: false,
     };
     let e = saber_console::run(args(None)).unwrap_err().to_string();
     assert!(e.contains("refusing to start"), "{e}");

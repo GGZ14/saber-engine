@@ -11,7 +11,7 @@
 #   tools/serve_27b.sh --no-build   # reuse the last container build
 #   tools/serve_27b.sh stop         # stop the Saber console if one runs (it stops its own engine), then the server container (whichever of TP=2 / TP=1 is running)
 #   tools/serve_27b.sh stop --keep-console   # stop the engine container only; the console stays up
-#   tools/serve_27b.sh --ui [--no-build]     # the browser console in front on :8090 (== SABER_CONSOLE=1; docs/CONSOLE.md)
+#   tools/serve_27b.sh --ui [--no-build]     # the browser console in front on :8090 (== SABER_CONSOLE=1; docs/CONSOLE.md; add --no-auth for an open console)
 #   tools/serve_27b.sh --tp 1 [--no-build]   # ONE card (TP=1; or TP=1 in the environment): the -tp1 packs of
 #     the chosen weights (`tools/fetch_packs.sh 27b-macaq-w4a8-tp1` for the default), on HIP device DEVICE (default 0), container
 #     saber-27b-tp1-serve; defaults MAX_CTX 131072, MAX_SEQS 1 (one conversation at a time, up to ~128k tokens;

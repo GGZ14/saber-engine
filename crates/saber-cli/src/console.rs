@@ -11,6 +11,7 @@ pub struct UiArgs {
     pub port: Option<u16>,
     pub admin_token: Option<String>,
     pub gen_admin_token: bool,
+    pub no_auth: bool,
     pub config: Option<PathBuf>,
     pub engine: Option<String>,
     pub mock_port: u16,
@@ -71,6 +72,7 @@ pub fn run(a: UiArgs) -> anyhow::Result<()> {
         home,
         exe,
         schema: serde_json::to_value(&schema)?,
+        no_auth: a.no_auth,
     })
 }
 

@@ -189,11 +189,25 @@ already totalled keep their cut.
 
 ## Security
 
-- **The bind follows the token.** With an admin token set (the stored hash, or `--admin-token`) and
-  no host chosen, `saber ui` listens on the LAN (`0.0.0.0:8090`). Without one it binds 127.0.0.1 and
-  then only answers a `Host` that names the loopback (a DNS-rebinding guard): an open console never
-  leaves the machine. Any other bind refuses to start without an admin token. `--host` /
-  `HOST=` / the config's `console.host` override the default either way.
+- **Guarded on the LAN by default.** The first `saber ui` start with no admin token and no host
+  chosen makes a token, stores only its hash in the config, keeps a copy for you in
+  `~/.config/saber/admin-token` (mode 0600), listens on the LAN (`0.0.0.0:8090`) and prints a
+  sign-in link: `http://<this-machine>:8090/#token=...`. Opening the link signs that browser in
+  and removes the token from the address bar (a fragment is never sent to any server). While the
+  token file still holds the console's token, the link is printed on every start.
+- **Remembered browsers.** Signing in (the link, or typing the token) sets a signed `HttpOnly`,
+  `SameSite=Strict` cookie that lasts 30 days, so a new tab or a restart stays signed in. The
+  cookie is a signature, never the token; it is checked against a per-install secret
+  (`<data dir>/session.key`) and the admin credential, so **rotating or removing the admin token
+  signs every browser out**. Sign out forgets this browser at once.
+- **`--no-auth`** runs an open console (no token, even if one is stored). Beyond the loopback it
+  serves only private-network clients (loopback, RFC 1918, link-local) on local hostnames (an IP
+  literal, `localhost`, a name without a dot, `.local`, `.lan`, `.home.arpa`, `.internal`), refuses
+  a cross-site `Origin`, and prints a warning at start. It is never the default and is not saved.
+- **Loopback.** `--host 127.0.0.1` (or `HOST=127.0.0.1`, or `console.host`) keeps the console on
+  this machine; there it answers only a `Host` that names the loopback (a DNS-rebinding guard)
+  and needs no token. A host you choose that is not a loopback address still refuses to start
+  without a token you made (`saber ui --gen-admin-token`).
 - **The admin token** guards every `/api/*` route and the console's `/metrics` (only the SPA's
   static files, which include the sign-in screen, are served without it). It is stored as a
   salted SHA-256 hash (`console.admin_token_hash`), never as text: make one with

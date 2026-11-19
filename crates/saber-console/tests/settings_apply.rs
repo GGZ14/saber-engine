@@ -192,6 +192,7 @@ async fn apply_restart_rollback_and_the_settings_api() {
         schema: Arc::new(schema),
         auth: Arc::new(saber_console::auth::Auth::open()),
         loopback: true,
+        open_lan: false,
         proxy: Arc::new(Proxy::new(None)),
         usage: None,
     };

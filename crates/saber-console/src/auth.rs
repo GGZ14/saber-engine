@@ -225,20 +225,83 @@ impl Limiter {
     }
 }
 
+/// The remember-me cookie: a signed session the browser keeps after one sign-in.
+pub const SESSION_COOKIE: &str = "saber_session";
+/// How long a session lasts.
+pub const SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
+
 /// The run-time auth state the HTTP plane shares: the admin credential (swapped in place when
-/// the token is rotated) and the limiter.
+/// the token is rotated), the limiter and the session secret.
+///
+/// A session is `<expiry ms>.<mac>`, the mac a SHA-256 over a per-install secret
+/// (`<data dir>/session.key`, 0600, never leaves the machine), the admin credential's
+/// fingerprint and the expiry. Rotating or removing the admin token changes the fingerprint, so
+/// every session ends at once; the secret keeps them valid across a console restart.
 pub struct Auth {
     admin: RwLock<Admin>,
     pub limiter: Limiter,
+    session_secret: [u8; 32],
 }
 
 impl Auth {
     #[must_use]
     pub fn new(admin: Admin) -> Auth {
+        // a per-process secret until `with_session_secret` hands over the persisted one
+        let mut secret = [0u8; 32];
+        if let Ok(b) = random_bytes(32) {
+            secret.copy_from_slice(&b);
+        }
         Auth {
             admin: RwLock::new(admin),
             limiter: Limiter::default(),
+            session_secret: secret,
         }
+    }
+
+    /// Use `secret` (the persisted per-install one) to sign sessions.
+    #[must_use]
+    pub fn with_session_secret(mut self, secret: [u8; 32]) -> Auth {
+        self.session_secret = secret;
+        self
+    }
+
+    fn session_mac(&self, exp_ms: u64) -> [u8; 32] {
+        let fp: Vec<u8> = match self.admin() {
+            Admin::None => Vec::new(),
+            Admin::Flag(t) => digest(b"fp", t.as_bytes()).to_vec(),
+            Admin::Hash(h) => digest(b"fp", h.as_bytes()).to_vec(),
+        };
+        let mut h = Sha256::new();
+        h.update(b"saber-session-v1\0");
+        h.update(self.session_secret);
+        h.update(&fp);
+        h.update(exp_ms.to_be_bytes());
+        h.finalize().into()
+    }
+
+    /// A signed session valid for [`SESSION_TTL`] from `now_ms`; `None` on an open console.
+    #[must_use]
+    pub fn session_mint(&self, now_ms: u64) -> Option<String> {
+        if !self.required() {
+            return None;
+        }
+        let exp = now_ms + SESSION_TTL.as_millis() as u64;
+        Some(format!("{exp}.{}", hex::encode(self.session_mac(exp))))
+    }
+
+    /// True when `value` is an unexpired session signed for the current admin credential.
+    #[must_use]
+    pub fn session_check(&self, value: &str, now_ms: u64) -> bool {
+        if !self.required() {
+            return false;
+        }
+        let Some((exp, mac)) = value.split_once('.') else {
+            return false;
+        };
+        let (Ok(exp), Ok(mac)) = (exp.parse::<u64>(), hex::decode(mac)) else {
+            return false;
+        };
+        exp > now_ms && eq_ct(&self.session_mac(exp), &mac)
     }
 
     /// No token (a loopback console).
@@ -250,8 +313,8 @@ impl Auth {
     #[must_use]
     pub fn with_limiter(admin: Admin, limiter: Limiter) -> Auth {
         Auth {
-            admin: RwLock::new(admin),
             limiter,
+            ..Auth::new(admin)
         }
     }
 
@@ -278,6 +341,27 @@ impl Auth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sessions_are_signed_expire_and_die_with_the_token() {
+        let a = Auth::new(Admin::Flag("tok-tok-tok-tok-tok".into())).with_session_secret([7; 32]);
+        let now = 1_000_000;
+        let v = a.session_mint(now).unwrap();
+        assert!(a.session_check(&v, now + 1));
+        assert!(!a.session_check(&v, now + SESSION_TTL.as_millis() as u64 + 1), "expired");
+        let (exp, mac) = v.split_once('.').unwrap();
+        let later = exp.parse::<u64>().unwrap() + 1;
+        assert!(!a.session_check(&format!("{later}.{mac}"), now), "expiry is signed");
+        assert!(!a.session_check("garbage", now));
+        // another install's secret, or a rotated token, does not honour it
+        let b = Auth::new(Admin::Flag("tok-tok-tok-tok-tok".into())).with_session_secret([8; 32]);
+        assert!(!b.session_check(&v, now + 1));
+        a.set_admin(Admin::Flag("a-different-token-0000".into()));
+        assert!(!a.session_check(&v, now + 1), "a new token ends every session");
+        // an open console has no sessions
+        assert!(Auth::open().session_mint(now).is_none());
+        assert!(!Auth::open().session_check(&v, now));
+    }
 
     #[test]
     fn hashes_verify_and_never_hold_the_secret() {

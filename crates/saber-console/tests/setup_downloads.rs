@@ -694,6 +694,7 @@ async fn the_wizard_from_an_empty_config_to_ready() {
         schema: Arc::new(schema),
         auth: Arc::new(saber_console::auth::Auth::open()),
         loopback: true,
+        open_lan: false,
         proxy: Arc::new(Proxy::new(None)),
         usage: None,
     };
@@ -1030,6 +1031,7 @@ async fn tp_console(dir: &Path, cards: u32) -> (u16, PathBuf) {
         schema: Arc::new(schema),
         auth: Arc::new(saber_console::auth::Auth::open()),
         loopback: true,
+        open_lan: false,
         proxy: Arc::new(Proxy::new(None)),
         usage: None,
     };

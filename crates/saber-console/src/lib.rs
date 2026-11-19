@@ -82,6 +82,9 @@ pub struct ConsoleArgs {
     pub exe: PathBuf,
     /// The flag schema (built by the CLI from its own clap structs).
     pub schema: serde_json::Value,
+    /// `--no-auth`: no admin token this run. Beyond the loopback only private-network clients on
+    /// local hostnames are served (see `http::lan_guard`).
+    pub no_auth: bool,
 }
 
 /// True when `host` binds the loopback only.
@@ -103,8 +106,8 @@ pub fn check_bind(host: &str, admin: &auth::Admin) -> anyhow::Result<()> {
 }
 
 /// The console's bind: the command line, else the config, else the LAN (0.0.0.0:8090) when an
-/// admin token guards it, else 127.0.0.1:8090 (the console controls the engine, so an open one
-/// never leaves the loopback). The wizard's Network step writes the config's. The admin
+/// admin token guards it (or `--no-auth` opted out of one), else 127.0.0.1:8090 (the console
+/// controls the engine, so an open one never leaves the loopback unasked). The wizard's Network step writes the config's. The admin
 /// credential: `--admin-token`, else the config's stored hash, else none.
 #[must_use]
 pub fn resolve_bind(
@@ -117,6 +120,7 @@ pub fn resolve_bind(
         .or_else(|| c.map(|c| c.port).filter(|&p| p != 0))
         .unwrap_or(8090);
     let admin = match args.admin_token.clone().filter(|t| !t.is_empty()) {
+        _ if args.no_auth => auth::Admin::None,
         Some(t) => auth::Admin::Flag(t),
         None => stored.map_or(auth::Admin::None, config::Config::admin),
     };
@@ -124,7 +128,14 @@ pub fn resolve_bind(
         .host
         .clone()
         .or_else(|| c.map(|c| c.host.clone()).filter(|h| !h.is_empty()))
-        .unwrap_or_else(|| if admin.is_set() { "0.0.0.0" } else { "127.0.0.1" }.into());
+        .unwrap_or_else(|| {
+            if admin.is_set() || args.no_auth {
+                "0.0.0.0"
+            } else {
+                "127.0.0.1"
+            }
+            .into()
+        });
     (host, port, admin)
 }
 
@@ -136,7 +147,57 @@ pub fn gen_admin_token(config_path: &std::path::Path) -> anyhow::Result<String> 
     cfg.console.admin_token = token.clone();
     cfg.console.admin_token_hash.clear();
     cfg.save(config_path)?;
+    // the config keeps only the hash; this 0600 file is how the owner (and the startup banner)
+    // gets the sign-in link again
+    if let Err(e) = write_private(&token_file(config_path), &format!("{token}\n")) {
+        eprintln!("saber ui: could not write {}: {e}", token_file(config_path).display());
+    }
     Ok(token)
+}
+
+/// Where the generated admin token is kept for its owner (next to the config; mode 0600).
+#[must_use]
+pub fn token_file(config_path: &std::path::Path) -> PathBuf {
+    config_path.with_file_name("admin-token")
+}
+
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(text.as_bytes())
+}
+
+/// The per-install secret that signs remember-me sessions (`<data dir>/session.key`, 0600),
+/// created on first use. A file that cannot be read or written falls back to a per-run secret
+/// (sessions then end with the console).
+fn session_secret(data_dir: &std::path::Path) -> Option<[u8; 32]> {
+    let path = data_dir.join("session.key");
+    if let Ok(t) = std::fs::read_to_string(&path) {
+        if let Ok(b) = hex::decode(t.trim()) {
+            if let Ok(a) = <[u8; 32]>::try_from(b.as_slice()) {
+                return Some(a);
+            }
+        }
+    }
+    let b = auth::random_bytes(32).ok()?;
+    write_private(&path, &format!("{}\n", hex::encode(&b))).ok()?;
+    <[u8; 32]>::try_from(b.as_slice()).ok()
+}
+
+/// This machine's LAN address (the source address of a route to a public one; no packet is sent).
+fn lan_ip() -> Option<IpAddr> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("192.0.2.1:9").ok()?;
+    sock.local_addr().ok().map(|a| a.ip()).filter(|ip| !ip.is_unspecified())
 }
 
 /// Run the console until Ctrl-C / SIGTERM; the engine it started is stopped on the way out.
@@ -151,9 +212,43 @@ pub fn run(mut args: ConsoleArgs) -> anyhow::Result<()> {
             args.config_path.display()
         );
     }
-    let stored = config::Config::load(&args.config_path).ok().flatten();
+    let mut stored = config::Config::load(&args.config_path).ok().flatten();
+    // A first start with no token and no host chosen: make one now, so the console is
+    // reachable from the LAN and guarded (`--no-auth` and `--engine mock` runs opt out).
+    let chosen_host = args
+        .host
+        .clone()
+        .or_else(|| stored.as_ref().map(|c| c.console.host.clone()).filter(|h| !h.is_empty()));
+    // a host the owner chose keeps its old rule (loopback is open; anything else needs a token they made)
+    let host_chosen = chosen_host.is_some();
+    let have_token = args.admin_token.as_deref().is_some_and(|t| !t.is_empty())
+        || stored.as_ref().is_some_and(|c| c.admin().is_set());
+    if !args.no_auth && !have_token && !host_chosen && args.override_config.is_none() {
+        gen_admin_token(&args.config_path)?;
+        println!(
+            "saber ui: no admin token yet: made one (kept hashed in the config; a copy for you in {})",
+            token_file(&args.config_path).display()
+        );
+        stored = config::Config::load(&args.config_path).ok().flatten();
+    }
     let (host, port, admin) = resolve_bind(&args, stored.as_ref());
-    check_bind(&host, &admin)?;
+    if !args.no_auth {
+        check_bind(&host, &admin)?;
+    }
+    // the sign-in link: only while the 0600 token file still holds THIS console's token
+    let tf = token_file(&args.config_path);
+    let signin = std::fs::read_to_string(&tf)
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    let signin = match signin {
+        Some(t) if admin.check(&t) => Some(t),
+        Some(_) => {
+            let _ = std::fs::remove_file(&tf); // a rotated token: the copy is stale
+            None
+        }
+        None => None,
+    };
     args.host = Some(host);
     args.port = Some(port);
     args.admin = Some(admin);
@@ -161,10 +256,10 @@ pub fn run(mut args: ConsoleArgs) -> anyhow::Result<()> {
         .worker_threads(2)
         .enable_all()
         .build()?;
-    rt.block_on(serve(args))
+    rt.block_on(serve(args, signin))
 }
 
-async fn serve(args: ConsoleArgs) -> anyhow::Result<()> {
+async fn serve(args: ConsoleArgs, signin: Option<String>) -> anyhow::Result<()> {
     let host = args.host.clone().unwrap_or_else(|| "127.0.0.1".into());
     let port = args.port.unwrap_or(8090);
     let stored = config::Config::load(&args.config_path)?;
@@ -230,6 +325,7 @@ async fn serve(args: ConsoleArgs) -> anyhow::Result<()> {
     ));
 
     let loopback = is_loopback(&host);
+    let open_lan = !loopback && args.no_auth;
     let console = Arc::new(apply::Console::new(
         sup.clone(),
         metrics.clone(),
@@ -242,12 +338,20 @@ async fn serve(args: ConsoleArgs) -> anyhow::Result<()> {
         "saber ui: config history and profiles in {}",
         console.data_dir.display()
     );
+    let session_key = session_secret(&console.data_dir);
     let state = http::AppState {
         sup: sup.clone(),
         metrics,
         console,
         schema: Arc::new(args.schema),
-        auth: Arc::new(auth::Auth::new(args.admin.unwrap_or(auth::Admin::None))),
+        open_lan,
+        auth: Arc::new({
+            let a = auth::Auth::new(args.admin.unwrap_or(auth::Admin::None));
+            match session_key {
+                Some(secret) => a.with_session_secret(secret),
+                None => a,
+            }
+        }),
         loopback,
         proxy: Arc::new(proxy::Proxy::new(usage.clone())),
         usage: usage.clone(),
@@ -272,6 +376,20 @@ async fn serve(args: ConsoleArgs) -> anyhow::Result<()> {
         }
     );
     logs.push("console", format!("saber ui: listening on {bound}"));
+    if open_lan {
+        println!(
+            "saber ui: WARNING --no-auth: no admin token. Anyone on your private network can \
+             control this console and the engine. (Only private-network clients on local \
+             hostnames are served.)"
+        );
+    } else if let Some(t) = &signin {
+        let shown = if bound.ip().is_unspecified() {
+            lan_ip().map_or_else(|| "<this-machine>".to_string(), |ip| ip.to_string())
+        } else {
+            bound.ip().to_string()
+        };
+        println!("saber ui: sign in (once per browser): http://{shown}:{}/#token={t}", bound.port());
+    }
 
     if autostart {
         let s = sup.clone();
@@ -350,6 +468,7 @@ mod tests {
             home: PathBuf::new(),
             exe: PathBuf::new(),
             schema: serde_json::Value::Null,
+            no_auth: false,
         };
         assert_eq!(
             resolve_bind(&args, None),
@@ -363,6 +482,11 @@ mod tests {
         args.admin_token = Some("from-the-flag".into());
         assert_eq!(resolve_bind(&args, None).0, "0.0.0.0");
         args.admin_token = None;
+        // --no-auth: no token even when one is stored, and the LAN bind
+        args.no_auth = true;
+        let (h, _, a) = resolve_bind(&args, Some(&guarded));
+        assert_eq!((h.as_str(), a.is_set()), ("0.0.0.0", false));
+        args.no_auth = false;
         let mut c = config::Config::default();
         c.console.host = "0.0.0.0".into();
         c.console.port = 9000;

@@ -1,7 +1,8 @@
 // The console's /api client. A token (needed when the console was started with an admin token)
-// is kept in this TAB's sessionStorage (gone when the tab closes; never in
-// localStorage) and sent as a Bearer header, or as ?token= for an EventSource, which cannot set
-// headers.
+// is kept in this TAB's sessionStorage (gone when the tab closes; never in localStorage) and
+// sent as a Bearer header, or as ?token= for an EventSource, which cannot set headers. Signing
+// in also makes the SERVER set a signed HttpOnly cookie, so a new tab or a restart of the
+// browser stays signed in for 30 days without the token in page storage.
 
 const KEY = 'saber-admin-token';
 
@@ -19,6 +20,35 @@ export function getToken() {
 }
 export function setToken(t) {
   try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch (e) {}
+}
+
+/** Sign in: the server checks the token and remembers this browser (a signed 30-day cookie). */
+export async function login(token) {
+  const r = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Saber-Console': '1' },
+    body: JSON.stringify({ token }),
+  });
+  const no = await refusal(r);
+  if (no) throw no;
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  setToken(token); // the tab's fallback when cookies are blocked
+}
+
+/** Sign out: the server clears the cookie; this tab forgets the token. */
+export async function logoutServer() {
+  setToken('');
+  try { await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Saber-Console': '1' } }); } catch (e) {}
+}
+
+/** A sign-in link (`/#token=...`, printed by the console at start): sign in with it, then
+ *  remove the token from the address bar. The fragment never leaves the browser. */
+export async function consumeSignInLink() {
+  const m = /^#token=([^&]+)/.exec(location.hash);
+  if (!m) return;
+  const token = decodeURIComponent(m[1]);
+  history.replaceState(null, '', location.pathname + location.search);
+  try { await login(token); } catch (e) {}
 }
 
 export class AuthError extends Error {}
