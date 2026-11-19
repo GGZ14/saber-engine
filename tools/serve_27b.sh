@@ -20,6 +20,14 @@
 #     (.cache/quark27b.tokenizer.json). nvfp4: the NVFP4->MXFP4 devfinal pack + fp8-head drafter (the previous
 #     default; `tools/fetch_packs.sh 27b[-tp1]`), model id Qwen3.8, widths 1,8.
 #     TIER / DRAFT / MODEL / TOKENIZER / CHAT_TEMPLATE override any of them (paths as the container sees them).
+#   tools/serve_27b.sh --weights macaq-w4a8 [--drafter w4a8|fp8] [--tp 1] ...   # the MACaQ W4A8-iu8 pack (an OPTION,
+#     not the default): every decoder linear an int8-WMMA GEMM (per-row int4 weights, 19 per-row int8 W8 ops,
+#     per-token int8 activations), model id Qwen3.8-27B-MACaQ-W4A8-SABER, widths 1,5,8; the boot log says
+#     `macaqiu8 rank R: macaq_iu8/1 ...`. Packs: qwen38-27b-macaq-w4a8/tp2 (or /tp1) + the drafter
+#     qwen38-dflash2-drafter-w4a8/tp2 (the W4A8-iu8 DFlash2 drafter, boot line `macaqiu8d`; the default for this
+#     weights choice) or, with `--drafter fp8` (DRAFTER=fp8), qwen38-dflash2-drafter-fp8/tp2 (the FP8 drafter);
+#     `tools/fetch_packs.sh 27b-macaq-w4a8[-tp1]` (DRAFTER=fp8 for the FP8 drafter). Needs an engine with the iu8
+#     arm (this tree); an engine without it refuses the pack at upload.
 #   SERVE_PREFIX="/opt/rocm/bin/rocprofv3 --kernel-trace -f csv -d DIR --" tools/serve_27b.sh ...   # CMP27D: a DIAGNOSTIC tool wrapped around `saber serve` (both ranks)
 #   PORT=8100 MAX_CTX=16384 WIDTHS=1,5,8 tools/serve_27b.sh ...   # port / per-sequence context (default 262144) / verify-width ladder (default 1,5,8; 1,8 for --weights nvfp4 / quark)
 #   DRAFT_BLOCK=4 WIDTHS=1,4 tools/serve_27b.sh ...   # P27-7: the drafter's block (default 8; 4 = the priced option, GDN slots 65 -> 33)
@@ -45,6 +53,7 @@ SHARED=${SABER_SHARED:-$HOME/saber-cache}
 TP_GIVEN=${TP:+env}
 TP=${TP:-2}
 WEIGHTS=${WEIGHTS:-macaq}
+DRAFTER=${DRAFTER:-}
 BUILD=1
 STOP=0
 while [ $# -gt 0 ]; do
@@ -54,6 +63,8 @@ while [ $# -gt 0 ]; do
     --no-build) BUILD=0; shift ;;
     --weights) WEIGHTS=${2:-}; shift; [ $# -gt 0 ] && shift ;;
     --weights=*) WEIGHTS=${1#*=}; shift ;;
+    --drafter) DRAFTER=${2:-}; shift; [ $# -gt 0 ] && shift ;;
+    --drafter=*) DRAFTER=${1#*=}; shift ;;
     stop) STOP=1; shift ;;
     *) break ;;
   esac
@@ -100,8 +111,14 @@ case "$WEIGHTS" in
   macaq) Q=macaq7-bc3; QD=-quarkhead; QF=-macaq; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-MXFP4}; WIDTHS=${WIDTHS:-1,5,8} ;;
   quark) Q=quark-awq-mxfp4; QD=-quarkhead; QF=-quark; MODEL=${MODEL:-Qwen3.8} ;;
   nvfp4) Q=nvfp4-devfinal; QD=; QF=; MODEL=${MODEL:-Qwen3.8} ;;
-  *) echo "--weights $WEIGHTS: macaq (the default), quark or nvfp4" >&2; exit 2 ;;
+  macaq-w4a8) QF=-macaq-w4a8; MODEL=${MODEL:-Qwen3.8-27B-MACaQ-W4A8-SABER}; WIDTHS=${WIDTHS:-1,5,8}
+    DRAFTER=${DRAFTER:-w4a8}
+    case "$DRAFTER" in w4a8 | fp8) ;; *) echo "--drafter $DRAFTER: w4a8 (the default) or fp8" >&2; exit 2 ;; esac
+    # the Hugging Face layout: one folder a model, the TP=2 pack in tp2/, the TP=1 pack in tp1/
+    TIER=${TIER:-qwen38-27b-macaq-w4a8/tp$TP}; DRAFT=${DRAFT:-qwen38-dflash2-drafter-$DRAFTER/tp$TP} ;;
+  *) echo "--weights $WEIGHTS: macaq (the default), quark, nvfp4 or macaq-w4a8" >&2; exit 2 ;;
 esac
+[ -z "$DRAFTER" ] || [ "$WEIGHTS" = macaq-w4a8 ] || { echo "--drafter: only --weights macaq-w4a8 has a drafter choice" >&2; exit 2; }
 CNAME=${CNAME:-$TP_DEF_CNAME}
 if [ "$TP" = 2 ]; then
   MAX_CTX=${MAX_CTX:-262144}

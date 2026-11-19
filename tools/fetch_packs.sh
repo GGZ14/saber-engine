@@ -5,6 +5,9 @@
 #   tools/fetch_packs.sh 27b-macaq    # ~29 GB: the DEFAULT 27B (MACaQ MXFP4) target + its paired drafter (TP=2),
 #                                     #   and the tokenizer / chat template into .cache/
 #   tools/fetch_packs.sh 27b-macaq-tp1  # ~28 GB: the same for ONE card (TP=1)
+#   tools/fetch_packs.sh 27b-macaq-w4a8      # ~28 GB: the MACaQ W4A8-iu8 target + the W4A8-iu8 drafter (TP=2; an
+#                                     #   option: tools/serve_27b.sh --weights macaq-w4a8); DRAFTER=fp8 = the FP8 drafter
+#   tools/fetch_packs.sh 27b-macaq-w4a8-tp1  # ~26 GB: the same for ONE card (TP=1)
 #   tools/fetch_packs.sh 27b          # ~26 GB: the NVFP4 27B target pack + the DFlash2 drafter pack,
 #                                     #   and the tokenizer / chat template into .cache/
 #   tools/fetch_packs.sh 27b-tp1      # ~25 GB: the SINGLE-CARD (TP=1) 27B target + drafter packs
@@ -18,6 +21,7 @@
 #   SABER_PACKS     destination directory
 #   SABER_HF_OWNER  Hugging Face account that hosts the packs (default Launch80)
 #   SABER_FN_CHECKPOINT_REPO  Flash-Next's original checkpoint (default amd/Qwen3.8-Flash-Next-Quark-MXFP4)
+#   DRAFTER         27b-macaq-w4a8[-tp1] only: w4a8 (default) or fp8
 #   HF_TOKEN        only needed while a repo is private
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -27,13 +31,16 @@ R27=$OWNER/Qwen3.8-27B-NVFP4-SABER
 RFN=$OWNER/Qwen3.8-Flash-Next-SABER
 RQK=$OWNER/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER
 RMQ=$OWNER/Qwen3.8-27B-MACaQ-MXFP4-SABER
+RW4=$OWNER/Qwen3.8-27B-MACaQ-W4A8-SABER
+RDW4=$OWNER/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER
+RDF8=$OWNER/Qwen3.8-27B-DFlash2-Drafter-FP8-SABER
 CKREPO=${SABER_FN_CHECKPOINT_REPO:-amd/Qwen3.8-Flash-Next-Quark-MXFP4}
 
 HF=$(command -v hf || command -v huggingface-cli || true)
 [ -n "$HF" ] || { echo "needs the Hugging Face CLI: pip install -U 'huggingface_hub[cli]'" >&2; exit 1; }
 
 want=${1:-}
-case "$want" in 27b-macaq | 27b-macaq-tp1 | 27b | 27b-tp1 | 27b-quark | 27b-quark-tp1 | flashnext | all) ;; *) echo "usage: $0 27b-macaq|27b-macaq-tp1|27b|27b-tp1|27b-quark|27b-quark-tp1|flashnext|all" >&2; exit 2 ;; esac
+case "$want" in 27b-macaq | 27b-macaq-tp1 | 27b-macaq-w4a8 | 27b-macaq-w4a8-tp1 | 27b | 27b-tp1 | 27b-quark | 27b-quark-tp1 | flashnext | all) ;; *) echo "usage: $0 27b-macaq|27b-macaq-tp1|27b-macaq-w4a8|27b-macaq-w4a8-tp1|27b|27b-tp1|27b-quark|27b-quark-tp1|flashnext|all" >&2; exit 2 ;; esac
 
 # A pack the engine would refuse fails here, by name, instead of mid-boot: every rank file
 # must start with the SBRPACK1 magic (docs/abi/PACK.md).
@@ -82,6 +89,31 @@ if [ "$want" = 27b-macaq ] || [ "$want" = 27b-macaq-tp1 ] || [ "$want" = all ]; 
   else
     check_packs "$PACKS"/qwen38-27b-macaq7-bc3/rank{0,1}.pack "$PACKS"/qwen38-dflash2-drafter-quarkhead/rank{0,1}.pack
     echo "27B MACaQ packs ready: tools/serve_27b.sh"
+  fi
+fi
+
+if [ "$want" = 27b-macaq-w4a8 ] || [ "$want" = 27b-macaq-w4a8-tp1 ]; then
+  # The MACaQ W4A8-iu8 target and its drafter. Each Hugging Face repo holds one model: the TP=2 pack in tp2/
+  # (rank0.pack + rank1.pack + manifest.json), the TP=1 pack in tp1/ (rank0.pack + manifest.json); only the
+  # folder for the chosen TP is downloaded. DRAFTER=w4a8 (default) = the W4A8-iu8 DFlash2 drafter, fp8 = the FP8
+  # one (the same packs as qwen38-dflash2-drafter-quarkhead[-tp1]). Both keep the Quark checkpoint's lm_head.
+  D=tp2; [ "$want" = 27b-macaq-w4a8-tp1 ] && D=tp1
+  DR=${DRAFTER:-w4a8}
+  case "$DR" in w4a8) RD=$RDW4 ;; fp8) RD=$RDF8 ;; *) echo "DRAFTER=$DR: w4a8 or fp8" >&2; exit 2 ;; esac
+  echo "== $RW4 ($D) -> $PACKS/qwen38-27b-macaq-w4a8/$D"
+  "$HF" download "$RW4" --local-dir "$PACKS/qwen38-27b-macaq-w4a8" --include "$D/*"
+  echo "== $RD ($D) -> $PACKS/qwen38-dflash2-drafter-$DR/$D"
+  "$HF" download "$RD" --local-dir "$PACKS/qwen38-dflash2-drafter-$DR" --include "$D/*"
+  mkdir -p "$REPO/.cache/macaq-w4a8-dl"
+  "$HF" download "$RW4" --local-dir "$REPO/.cache/macaq-w4a8-dl" --include 'tokenizer.json' --include 'qwen-fixed-v22.3.jinja'
+  cp -f "$REPO/.cache/macaq-w4a8-dl/tokenizer.json" "$REPO/.cache/quark27b.tokenizer.json"
+  [ -f "$REPO/.cache/template_corpus.jinja" ] || cp -f "$REPO/.cache/macaq-w4a8-dl/qwen-fixed-v22.3.jinja" "$REPO/.cache/template_corpus.jinja"
+  if [ "$D" = tp1 ]; then
+    check_packs "$PACKS"/qwen38-27b-macaq-w4a8/tp1/rank0.pack "$PACKS"/qwen38-dflash2-drafter-$DR/tp1/rank0.pack
+    echo "27B MACaQ W4A8 TP=1 packs ready: tools/serve_27b.sh --weights macaq-w4a8 --tp 1${DRAFTER:+ --drafter $DR}"
+  else
+    check_packs "$PACKS"/qwen38-27b-macaq-w4a8/tp2/rank{0,1}.pack "$PACKS"/qwen38-dflash2-drafter-$DR/tp2/rank{0,1}.pack
+    echo "27B MACaQ W4A8 packs ready: tools/serve_27b.sh --weights macaq-w4a8${DRAFTER:+ --drafter $DR}"
   fi
 fi
 
