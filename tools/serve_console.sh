@@ -7,9 +7,9 @@
 #   tools/serve_console.sh --mock                # GPU-free: the console over the mock engine (development, demos)
 #   tools/serve_console.sh --preset flashnext    # first run only: seed config.toml with this preset (autostart on,
 #                                                #   the wizard skipped); later runs use config.toml as the Settings page left it
-#   SABER_CONSOLE=1 tools/serve_flashnext.sh     # the same, from a launcher (`--preset flashnext` / `--preset qwen27b`)
+#   tools/serve_flashnext.sh --ui     # the same, from a launcher (`--preset flashnext` / `--preset qwen27b`)
 #   tools/serve_console.sh --preset qwen27b --tp 1   # first run only: the 27B on ONE card (engine.tp = 1; DEVICE=N picks
-#                                                #   the card, default 0); `SABER_CONSOLE=1 tools/serve_27b.sh --tp 1` does the same
+#                                                #   the card, default 0); `tools/serve_27b.sh --ui --tp 1` does the same
 #   HOST=0.0.0.0 tools/serve_console.sh          # reachable from other machines: needs an admin token, made once with
 #                                                #   `.cache/target-container/release/saber ui --gen-admin-token`
 #   tools/serve_console.sh -- --admin-token X    # anything after `--` goes to `saber ui`

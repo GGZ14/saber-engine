@@ -26,8 +26,8 @@ working one automatically.
 ```bash
 tools/serve_console.sh                  # build the release binary, then the console on http://127.0.0.1:8090/
 tools/serve_console.sh --no-build       # reuse the last build
-SABER_CONSOLE=1 tools/serve_flashnext.sh --no-build   # the same from a launcher: first run seeds config.toml
-SABER_CONSOLE=1 tools/serve_27b.sh --no-build         #   with that launcher's preset, autostart on
+tools/serve_flashnext.sh --ui --no-build   # the same from a launcher: first run seeds config.toml
+tools/serve_27b.sh --ui --no-build         #   with that launcher's preset, autostart on
 tools/serve_console.sh --mock           # GPU-free: the console over the mock engine (development, demos)
 ```
 
@@ -61,7 +61,7 @@ finds it from the binary's location (`<repo>/.cache/target-container/release/sab
 `[engine.paths] repo` in `config.toml`.
 
 ```bash
-SABER_CONSOLE=1 tools/serve_27b.sh --tp 1 --no-build    # first run: seed config.toml with the 27B on one card
+tools/serve_27b.sh --ui --tp 1 --no-build    # first run: seed config.toml with the 27B on one card
 DEVICE=1 tools/serve_console.sh --preset qwen27b --tp 1  # the same on card 1
 ```
 
