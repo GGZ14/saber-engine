@@ -820,6 +820,151 @@ pub const SEPARATELY_PLANNED: &[(&str, &str)] = &[
          by the Flash-Next emitter, never a 27B registry row",
     ),
     (
+        "moe_macfn3",
+        "MACaQ Flash-Next experts: the int4 routed / shared expert bodies of a MACaQ pack \
+         (`--fn-experts-fmt auto|macaq`) -- named by the Flash-Next emitter, never a 27B registry row",
+    ),
+    (
+        "moe_macfn7",
+        "MACaQ Flash-Next experts: the int4 routed / shared expert bodies of a MACaQ pack \
+         (`--fn-experts-fmt auto|macaq`) -- named by the Flash-Next emitter, never a 27B registry row",
+    ),
+    (
+        "moe_macfn9",
+        "MACaQ Flash-Next experts: the int4 routed / shared expert bodies of a MACaQ pack \
+         (`--fn-experts-fmt auto|macaq`) -- named by the Flash-Next emitter, never a 27B registry row",
+    ),
+    (
+        "ink_dr6",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_fa",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_p29",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_fa35",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_p37",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_r28",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_attn",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_dr2",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_dr3",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_dr4",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_dr5",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_draft",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_fast",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_fuse",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_fuse11",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_glue",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_i8",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_loop",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_moe",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_mv",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_p2p",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_pf",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_pf2",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_vt",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_w8",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_xl",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
         "moe_grouped_far",
         "FN137: FN80b-1's half-width fused back half with the MoE-out all-reduce fused into its \
          combine slices (`--fn-moe-ar-push on`; the shipped body + the exact one-shot's vadd, \

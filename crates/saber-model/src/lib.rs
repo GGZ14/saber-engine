@@ -23,6 +23,7 @@ pub mod checkpoint_head;
 pub mod dflash_graph;
 pub mod draft;
 pub mod graph;
+pub mod inkling2;
 pub mod qwen4_exp;
 pub mod template;
 pub mod tokenizer;

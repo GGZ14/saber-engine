@@ -304,7 +304,10 @@ async fn auth_login(State(st): State<AppState>, req: Request) -> Response {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let Ok(body) = serde_json::from_slice::<LoginBody>(&bytes) else {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "expected {\"token\": ...}"})))
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "expected {\"token\": ...}"})),
+        )
             .into_response();
     };
     if !st.auth.required() {
@@ -350,7 +353,9 @@ pub fn is_private_ip(ip: std::net::IpAddr) -> bool {
             if let Some(v4) = v.to_ipv4_mapped() {
                 return is_private_ip(IpAddr::V4(v4));
             }
-            v.is_loopback() || (v.segments()[0] & 0xfe00) == 0xfc00 || (v.segments()[0] & 0xffc0) == 0xfe80
+            v.is_loopback()
+                || (v.segments()[0] & 0xfe00) == 0xfc00
+                || (v.segments()[0] & 0xffc0) == 0xfe80
         }
     }
 }
@@ -377,7 +382,10 @@ pub fn host_is_lan(h: &str) -> bool {
 async fn lan_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
     if st.open_lan {
         let peer_ok = is_private_ip(client_ip(&req));
-        let host = req.headers().get(header::HOST).and_then(|v| v.to_str().ok());
+        let host = req
+            .headers()
+            .get(header::HOST)
+            .and_then(|v| v.to_str().ok());
         let host_ok = host.is_some_and(host_is_lan);
         let origin_ok = req
             .headers()
@@ -1509,16 +1517,38 @@ mod tests {
     #[test]
     fn an_open_console_serves_private_peers_and_local_names_only() {
         use std::net::IpAddr;
-        for ip in ["127.0.0.1", "10.1.2.3", "172.16.0.9", "192.168.12.36", "169.254.1.1", "::1", "fd00::5", "fe80::1", "::ffff:192.168.1.5"] {
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.9",
+            "192.168.12.36",
+            "169.254.1.1",
+            "::1",
+            "fd00::5",
+            "fe80::1",
+            "::ffff:192.168.1.5",
+        ] {
             assert!(is_private_ip(ip.parse::<IpAddr>().unwrap()), "{ip}");
         }
         for ip in ["8.8.8.8", "93.184.216.34", "172.32.0.1", "2606:4700::1111"] {
             assert!(!is_private_ip(ip.parse::<IpAddr>().unwrap()), "{ip}");
         }
-        for h in ["192.168.12.47:8090", "localhost:8090", "[::1]:8090", "myserver:8090", "box.local", "nas.lan:8090", "x.home.arpa"] {
+        for h in [
+            "192.168.12.47:8090",
+            "localhost:8090",
+            "[::1]:8090",
+            "myserver:8090",
+            "box.local",
+            "nas.lan:8090",
+            "x.home.arpa",
+        ] {
             assert!(host_is_lan(h), "{h}");
         }
-        for h in ["evil.example.com", "evil.example.com:8090", "rebind.attacker.net"] {
+        for h in [
+            "evil.example.com",
+            "evil.example.com:8090",
+            "rebind.attacker.net",
+        ] {
             assert!(!host_is_lan(h), "{h}");
         }
     }

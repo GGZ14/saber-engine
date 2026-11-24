@@ -348,16 +348,25 @@ mod tests {
         let now = 1_000_000;
         let v = a.session_mint(now).unwrap();
         assert!(a.session_check(&v, now + 1));
-        assert!(!a.session_check(&v, now + SESSION_TTL.as_millis() as u64 + 1), "expired");
+        assert!(
+            !a.session_check(&v, now + SESSION_TTL.as_millis() as u64 + 1),
+            "expired"
+        );
         let (exp, mac) = v.split_once('.').unwrap();
         let later = exp.parse::<u64>().unwrap() + 1;
-        assert!(!a.session_check(&format!("{later}.{mac}"), now), "expiry is signed");
+        assert!(
+            !a.session_check(&format!("{later}.{mac}"), now),
+            "expiry is signed"
+        );
         assert!(!a.session_check("garbage", now));
         // another install's secret, or a rotated token, does not honour it
         let b = Auth::new(Admin::Flag("tok-tok-tok-tok-tok".into())).with_session_secret([8; 32]);
         assert!(!b.session_check(&v, now + 1));
         a.set_admin(Admin::Flag("a-different-token-0000".into()));
-        assert!(!a.session_check(&v, now + 1), "a new token ends every session");
+        assert!(
+            !a.session_check(&v, now + 1),
+            "a new token ends every session"
+        );
         // an open console has no sessions
         assert!(Auth::open().session_mint(now).is_none());
         assert!(!Auth::open().session_check(&v, now));

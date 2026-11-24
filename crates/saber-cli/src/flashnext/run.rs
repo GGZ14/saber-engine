@@ -44,6 +44,16 @@ use crate::xtier_flags::XtierFlags;
 pub const MAX_ROWS: u32 = 2048;
 /// FN38: the widest chunk `--fn-max-chunk` may name.
 pub const WIDE_ROWS_MAX: u32 = 8192;
+/// MACFN6 (2026-11-22, LEDGER MACFN6): `--fn-macaq-shared auto` = the MACaQ int4 shared expert
+/// whenever `--fn-experts-fmt macaq` is selected (`mxfp4` = MACFN3b's route, the control).
+pub const DEFAULT_FN_MACAQ_SHARED: &str = "auto";
+/// MACFN7 (2026-11-22, LEDGER MACFN7): `--fn-macaq-back auto` = the MACaQ fused back half with the
+/// token rows inside (`fused-tk`) under the fused train (the binary's default), MACFN5's seven-launch
+/// MACaQ train under `--fn-moe-train legacy` (the rollback); the default EXPERT FORMAT is unchanged.
+pub const DEFAULT_FN_MACAQ_BACK: &str = "auto";
+/// MACFN9 (2026-11-22, LEDGER MACFN9): `--fn-macaq-prefill legacy` = MACFN3b's / MACFN5's tm 4 MACaQ
+/// prefill cells (the default and the control); `wc` = their cached-W twins (`moe_macfn9`, byte-equal).
+pub const DEFAULT_FN_MACAQ_PREFILL: &str = "legacy";
 /// FN38: `--fn-max-chunk`'s default. FN44 (the user's word, 2026-09-30 ~20:30 CDT, on FN43b's
 /// numbers): 8,192 rows -- with the arena borrow, `always` and the 128-slot ring above 2,048 rows
 /// (8k prompt 2,429 -> 1,169 ms; served 8k load +40 %, ITL p50 +5 %). The control arm is the old
@@ -660,6 +670,11 @@ pub struct FnFlags {
     /// until FN14, which gave the word to the decode graphs.)
     #[arg(long)]
     pub fn_dump: bool,
+    /// Flash-Next (MACFN3b): with `--fn-dump`, write every prompt's capture (the worker form
+    /// writes at most 4 prompts' otherwise) -- the whole-model KL of a numerics arm against an
+    /// offline reference at every prompt position (`tools/capture/macfn3/m3kl.py`). OFF by default.
+    #[arg(long, hide = true)]
+    pub fn_dump_all: bool,
     /// Flash-Next (FN14): the pairing CONTROL -- run every decode step EAGERLY (FN13's form). The
     /// default replays one hipGraph per (decode bucket 1/2/4/8, PLE parity), captured on first use.
     #[arg(long)]
@@ -797,6 +812,12 @@ pub struct FnFlags {
     /// Flash-Next serve: the chat template (default: the checkpoint's own `chat_template.jinja`).
     #[arg(long)]
     pub fn_chat_template: Option<PathBuf>,
+    /// Flash-Next (HF2): the checkpoint directory the pack's identity records and PLE rows are
+    /// read from, overriding the manifest's recorded `checkpoint.dir` (default: that path when it
+    /// exists, else the same path rebased under `$SABER_NVME` / the pack's storage root;
+    /// `flashnext::paths`).
+    #[arg(long)]
+    pub fn_ckpt_dir: Option<PathBuf>,
     /// Flash-Next serve (FN66): WARM PROMPTS -- after the server listens, every conversation head
     /// in FILE (`saber_serve::warm`: a JSON array / JSON lines / plain text = one system prompt)
     /// is rendered through the chat path and prefilled once into the PROMPT CACHE, so a session's
@@ -1482,8 +1503,42 @@ pub struct FnFlags {
     /// `_p1` / fused back half (the default `--fn-moe-train fused`: `legacy` only), MTP experts
     /// (`--fn-mtp 0` only), the TP
     /// split (`--fn-experts tp2`), the one-process form, and the shared expert's W8 lane.
-    #[arg(long, default_value = super::xtp2::DEFAULT_FN_EXPERTS_FMT, value_parser = ["mxfp4", "nvfp4"])]
+    /// MACFN3b: `macaq` = the MACaQ int4 tp2 tier (`rank<r>/experts.macaq.xtier` + `experts.tsh`,
+    /// xtier v2 tag 3) on `moe_macfn3`'s cells (MACFN5-7: + the int4 shared expert
+    /// `experts.shq.xtier` + the fused back half). MACFN8 (the user's decision 2026-11-22): `auto`
+    /// IS THE DEFAULT = `macaq` whenever the boot is `--fn-experts tp2` on a pack carrying the MACaQ
+    /// tier (the launcher's served pack `qwen38-flashnext-macaq-tp2-trunk8`), `mxfp4` on any other
+    /// pack / form; `mxfp4` = the rollback (`FN_EXPERTS_FMT=mxfp4 tools/serve_flashnext.sh`).
+    #[arg(long, default_value = super::xtp2::DEFAULT_FN_EXPERTS_FMT, value_parser = ["auto", "mxfp4", "nvfp4", "macaq"])]
     pub fn_experts_fmt: String,
+    /// Flash-Next (MACFN5 / MACFN6): the TARGET's shared expert under `--fn-experts-fmt macaq` --
+    /// `auto` (THE DEFAULT since MACFN6: `int4` when the MACaQ expert path is selected, `mxfp4`
+    /// otherwise; it never changes which expert format is the default), `int4` (the shared expert's
+    /// MACaQ int4 half records from the pack's `rank<r>/experts.shq.xtier`
+    /// (`tools/capture/macfn5/m5shq.py`, MACFN4's SHQ), gate_up on the layer's shared t = the token
+    /// row the route already makes, every tile on `moe_macfn3`'s stage-2 cells: one launch over the
+    /// seven-launch train; a MACaQ pack without the shq file is REFUSED by name) or `mxfp4` (MACFN3b's
+    /// route, the shared expert on its served MXFP4 record + the shipped cells = the control and the
+    /// rollback). An explicit `int4` is refused without `macaq`.
+    #[arg(long, default_value = DEFAULT_FN_MACAQ_SHARED, value_parser = ["auto", "mxfp4", "int4"])]
+    pub fn_macaq_shared: String,
+    /// Flash-Next (MACFN7): the MACaQ path's decode / verify back half under `--fn-experts-fmt
+    /// macaq` + the MACaQ shared expert -- `auto` (THE DEFAULT since MACFN7: `fused-tk` under the
+    /// fused train, the seven-launch train under `--fn-moe-train legacy` = the rollback), `legacy`
+    /// (MACFN5's seven-launch train; the boot then needs `--fn-moe-train legacy`), `fused` (`moe_macfn7`'s one-launch
+    /// ticket-ordered back half: gate GEMV + gate_up + silu-had32-int8 + down + combine (+ FN137's
+    /// fused reduce), the token row its own launch first; byte-equal to the seven-launch train by
+    /// construction) or `fused-tk` (the token rows ride the back half too). The fused forms run
+    /// under `--fn-moe-train fused`; `auto` = `fused-tk` there and the legacy train under
+    /// `--fn-moe-train legacy`.
+    #[arg(long, default_value = DEFAULT_FN_MACAQ_BACK, value_parser = ["auto", "legacy", "fused", "fused-tk"])]
+    pub fn_macaq_back: String,
+    /// Flash-Next (MACFN9): the MACaQ path's PREFILL expert cells (the > 512-row band, tm 4) --
+    /// `legacy` (THE DEFAULT: `moe_macfn3`'s tm 4 cells, W loads nontemporal) or `wc` (`moe_macfn9`'s
+    /// cached-W twins: the same int32 sums and epilogue = the same bytes; a route tile re-reads its
+    /// expert's W, so the cached loads hit L2). Inert off the MACaQ shared-expert route.
+    #[arg(long, default_value = DEFAULT_FN_MACAQ_PREFILL, value_parser = ["legacy", "wc"])]
+    pub fn_macaq_prefill: String,
     /// Flash-Next (FN114c): where the TARGET's shared expert runs on the fused decode / verify
     /// train -- `rank0` (THE DEFAULT, today: the whole shared expert on rank 0 only) or `split`
     /// (the NUMERICS arm: each EP rank computes ITS half of the shared expert's intermediate
@@ -3129,6 +3184,30 @@ impl FnFlags {
         f
     }
 
+    /// MACFN8: `--fn-experts-fmt auto` (THE DEFAULT) resolved by the PACK: `macaq` when the boot is
+    /// the tp2 expert form and the pack carries the MACaQ tier on both ranks
+    /// (`rank<r>/experts.macaq.xtier`; the served MACaQ pack `qwen38-flashnext-macaq-tp2-trunk8`),
+    /// `mxfp4` otherwise (an MXFP4 pack, `--fn-experts ep`); an explicit format is taken as given.
+    /// `run::main` resolves it once, before anything reads the format (rank 1 resolves the same argv
+    /// on the same pack); an unresolved `auto` reads as MXFP4 ([`FnFlags::experts_fmt`]).
+    #[must_use]
+    pub fn with_experts_fmt_of(&self, pack: &Path) -> FnFlags {
+        let mut f = self.clone();
+        if f.fn_experts_fmt == "auto" {
+            let has = (0..2u32).all(|r| {
+                pack.join(format!("rank{r}/{}", super::xtp2::XGeom::MACAQ_FILE))
+                    .exists()
+            });
+            f.fn_experts_fmt = if f.experts_tp2() && has {
+                "macaq"
+            } else {
+                "mxfp4"
+            }
+            .to_string();
+        }
+        f
+    }
+
     /// FN68: the main K/V pages' dtype (`--fn-kv-dtype`).
     #[must_use]
     pub fn kv_dtype(&self) -> saber_mem::kv_tier::KvDtype {
@@ -3241,12 +3320,44 @@ impl FnFlags {
 
     /// FN150: the expert tier's record format (`--fn-experts-fmt`).
     #[must_use]
+    /// `auto` before [`FnFlags::with_experts_fmt_of`] reads as MXFP4 (host tests, benches).
     pub fn experts_fmt(&self) -> saber_mem::xtier::XtierFormat {
         if self.fn_experts_fmt == "nvfp4" {
             saber_mem::xtier::XtierFormat::Nvfp4E4m3G16
+        } else if self.fn_experts_fmt == "macaq" {
+            saber_mem::xtier::XtierFormat::MacaqI4RowTsh
         } else {
             saber_mem::xtier::XtierFormat::Mxfp4E8m0
         }
+    }
+
+    /// MACFN5: the shared expert on its MACaQ int4 records (`--fn-macaq-shared int4`, or `auto` --
+    /// the default since MACFN6 -- under `--fn-experts-fmt macaq`).
+    #[must_use]
+    pub fn macaq_shared(&self) -> bool {
+        match self.fn_macaq_shared.as_str() {
+            "int4" => true,
+            "auto" => self.fn_experts_fmt == "macaq",
+            _ => false,
+        }
+    }
+
+    /// MACFN7: the MACaQ fused back half's form, `None` = the seven-launch MACaQ train (`Some(tk)`:
+    /// `tk` = the token rows ride the back half). `auto` follows `--fn-moe-train`.
+    #[must_use]
+    pub fn macaq_back(&self) -> Option<bool> {
+        match self.fn_macaq_back.as_str() {
+            "fused" => Some(false),
+            "fused-tk" => Some(true),
+            "auto" if self.fn_moe_train == super::exec::MoeTrain::Fused => Some(true),
+            _ => None,
+        }
+    }
+
+    /// MACFN9: the MACaQ prefill cells' cached-W twins (`--fn-macaq-prefill wc`).
+    #[must_use]
+    pub fn macaq_prefill_wc(&self) -> bool {
+        self.fn_macaq_prefill == "wc"
     }
 
     /// FN114c: the shared expert split across the EP ranks (`--fn-shared-expert split`).
@@ -3284,6 +3395,9 @@ impl FnFlags {
         let d = self.fn_out.is_none()
             && self.fn_experts == super::xtp2::DEFAULT_FN_EXPERTS
             && self.fn_experts_fmt == super::xtp2::DEFAULT_FN_EXPERTS_FMT
+            && !self.macaq_shared()
+            && self.fn_macaq_back == DEFAULT_FN_MACAQ_BACK
+            && self.fn_macaq_prefill == DEFAULT_FN_MACAQ_PREFILL
             && self.fn_mtp_split == "ep"
             && self.fn_shared_expert == super::shx114::DEFAULT_FN_SHARED_EXPERT
             && self.fn_prompts.is_empty()
@@ -3605,15 +3719,6 @@ pub fn rope_table(max_pos: u32) -> Vec<u8> {
     out
 }
 
-pub(super) fn manifest_ckpt(pack: &Path) -> anyhow::Result<PathBuf> {
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(pack.join("manifest.json"))?)?;
-    Ok(PathBuf::from(
-        v.pointer("/checkpoint/dir")
-            .and_then(Value::as_str)
-            .context("manifest checkpoint.dir")?,
-    ))
-}
-
 /// The entry from `saber engine` on a Flash-Next pack.
 pub fn main(
     pack: &Path,
@@ -3624,10 +3729,23 @@ pub fn main(
     f: &FnFlags,
 ) -> anyhow::Result<()> {
     // FN16f: `--fn-mtp` absent -> auto under `--fn-serve`, SPEC 0 in the harness
-    let f = &f.resolved();
-    let ckpt = manifest_ckpt(pack)?;
-    let cfg = Qwen4ExpConfig::from_config_json(&std::fs::read_to_string(ckpt.join("config.json"))?)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    // MACFN8: `--fn-experts-fmt auto` (the default) -> the pack's format (macaq | mxfp4)
+    let given = f.fn_experts_fmt.clone();
+    let f = &f.resolved().with_experts_fmt_of(pack);
+    println!(
+        "fnxfmt rank{}: --fn-experts-fmt {given} -> {} (--fn-experts {}, {})",
+        f.fn_rank,
+        f.fn_experts_fmt,
+        f.fn_experts,
+        pack.display()
+    );
+    // HF2: the checkpoint where it is on this machine (`flashnext::paths`)
+    let (ckpt, ckpt_from) = super::paths::ckpt_of(pack, f.fn_ckpt_dir.as_deref())?;
+    println!("{}", super::paths::boot_line(pack, &ckpt, ckpt_from));
+    let cfg = Qwen4ExpConfig::from_config_json(&std::fs::read_to_string(
+        super::paths::model_file(pack, &ckpt, "config.json"),
+    )?)
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     ensure!(
         cfg.num_layers() == LAYERS,
         "config: {} layers",
@@ -3686,7 +3804,7 @@ pub fn main(
                 &std::fs::read_to_string(pack.join("ple/ple_index.json"))?,
                 PleSourceKind::CkptBf16,
                 PleGate::Default,
-                None,
+                super::paths::ple_root(pack, &ckpt).as_deref(),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             let p = idx.files.first().context("the PLE index names no file")?;
@@ -4315,6 +4433,8 @@ fn gate_a(
     em.vclass = f.fn_verify_class;
     // FN30: layer-major prefill only (the seven-launch train); no sync region at TP=1
     em.moe_train = f.fn_moe_train;
+    em.macaq_back = f.macaq_back();
+    em.macaq_prefill_wc = f.macaq_prefill_wc();
     em.route_form = route_form(f);
     em.glue_v1 = f.fn_glue_control;
     em.kv8 = f.kv_dtype() == saber_mem::kv_tier::KvDtype::Fp8;
@@ -4341,8 +4461,10 @@ fn gate_a(
     );
     // per prompt: embed, PLE rows, consts, sequence state, carry
     let eos = 248_044u32;
-    let cfg = Qwen4ExpConfig::from_config_json(&std::fs::read_to_string(ckpt.join("config.json"))?)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let cfg = Qwen4ExpConfig::from_config_json(&std::fs::read_to_string(
+        super::paths::model_file(pack, ckpt, "config.json"),
+    )?)
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     let pre = format!("{P}layers.1.ple.ple_embedding.");
     let ph = PleHash::from_buffers(
         &cfg.ple,
@@ -4357,7 +4479,7 @@ fn gate_a(
         &std::fs::read_to_string(pack.join("ple/ple_index.json"))?,
         PleSourceKind::CkptBf16,
         PleGate::Default,
-        None,
+        super::paths::ple_root(pack, ckpt).as_deref(),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut ple =
@@ -5645,6 +5767,21 @@ pub fn pool_exclusive_slots(f: &FnFlags, pool_mib: u64, stride: u64) -> anyhow::
     Ok(n)
 }
 
+/// MACFN3b: the widest MoE block the MACaQ route's region holds (the widest prefill chunk; every
+/// decode / verify form is narrower).
+#[must_use]
+pub fn mq3_rows(f: &FnFlags) -> u64 {
+    u64::from(f.max_chunk()).max(64)
+}
+
+/// MACFN3b: the MACaQ route's boot region (`exec::Mq3Region`): the tsh side record + the scratch.
+#[must_use]
+pub fn mq3_region_bytes(f: &FnFlags) -> u64 {
+    let rows = mq3_rows(f);
+    super::exec::Mq3Region::TSH_BYTES
+        + super::exec::Mq3Region::scratch_bytes(rows, super::exec::Mq3Region::tiles_for(rows))
+}
+
 pub fn plan_boot(
     pack: &Path,
     prebuilt: &Path,
@@ -5660,6 +5797,19 @@ pub fn plan_boot(
         "--fn-experts-fmt nvfp4: the expert cells are wired (FN150) but this boot needs pieces \
          with no NVFP4 body yet: {}",
         no.join("; ")
+    );
+    // MACFN3b: the MACaQ route runs only where its cells exist
+    let no = super::xtp2::macaq_refusals(f, 2);
+    ensure!(
+        no.is_empty(),
+        "--fn-experts-fmt macaq: this boot needs pieces with no MACaQ body: {}",
+        no.join("; ")
+    );
+    // MACFN5: the MACaQ shared expert rides the MACaQ route only
+    ensure!(
+        !f.macaq_shared() || f.experts_fmt() == saber_mem::xtier::XtierFormat::MacaqI4RowTsh,
+        "--fn-macaq-shared int4 needs --fn-experts-fmt macaq (the token int8 row and the MACaQ \
+         cells are that route's)"
     );
     Ok(b)
 }
@@ -6099,6 +6249,20 @@ pub fn plan_boot_at(
             classes.push(saber_mem::flashnext_budget::Class {
                 name: crate::ledger_law::P2PMEM_CLASS.to_string(),
                 bytes: pool_mib << 20,
+            });
+        }
+        // MACFN3b: the MACaQ route's boot region (the tsh side record + the token producer's rows)
+        if xg.fmt == saber_mem::xtier::XtierFormat::MacaqI4RowTsh {
+            let b = mq3_region_bytes(f);
+            println!(
+                "fnbudget rank{r}: fn.macaq.mq3 {:.3} MiB billed (MACFN3b: the layer-shared t of 48 \
+                 layers + the int8 token rows of {} rows + the shared-only tables)",
+                b as f64 / (1u64 << 20) as f64,
+                mq3_rows(f)
+            );
+            classes.push(saber_mem::flashnext_budget::Class {
+                name: "fn.macaq.mq3".to_string(),
+                bytes: b,
             });
         }
         // FN80b-2: the TP-split form's xptr tables (513 entries a GEMM) and the shared expert's
@@ -6678,7 +6842,7 @@ fn engine_tp2(
         &std::fs::read_to_string(pack.join("ple/ple_index.json"))?,
         PleSourceKind::CkptBf16,
         PleGate::Default,
-        None,
+        super::paths::ple_root(pack, ckpt).as_deref(),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut ple = PleTier::new(
@@ -8621,6 +8785,117 @@ mod tests {
         assert!(d.site(vec![3; DF120_SITE_BYTES as usize]).is_err());
     }
 
+    #[test]
+    fn macfn9_the_macaq_prefill_flag_defaults_to_the_legacy_cells() {
+        assert_eq!(DEFAULT_FN_MACAQ_PREFILL, "legacy");
+        assert!(!fnx(&[]).macaq_prefill_wc());
+        assert!(!fnx(&["--fn-macaq-prefill", "legacy"]).macaq_prefill_wc());
+        assert!(fnx(&["--fn-macaq-prefill", "wc"]).macaq_prefill_wc());
+    }
+
+    #[test]
+    fn macfn7_the_macaq_back_flag_and_its_refusals() {
+        use super::super::xtp2::macaq_refusals;
+        let d = fnx(&[]);
+        assert_eq!(DEFAULT_FN_MACAQ_BACK, "auto");
+        // the default MXFP4 boot never reaches the MACaQ route (its back half is the shipped one)
+        assert!(macaq_refusals(&d, 2).is_empty());
+        assert_eq!(fnx(&["--fn-macaq-back", "legacy"]).macaq_back(), None);
+        let q = |extra: &[&str]| {
+            let mut v = vec!["--fn-experts", "tp2", "--fn-experts-fmt", "macaq"];
+            v.extend_from_slice(extra);
+            fnx(&v)
+        };
+        // the legacy train: the MACaQ path as MACFN6 left it
+        assert!(macaq_refusals(&q(&["--fn-moe-train", "legacy"]), 2).is_empty());
+        // MACFN7's flip: a plain MACaQ boot runs the fused back half with the token rows inside
+        assert_eq!(q(&[]).macaq_back(), Some(true));
+        assert!(macaq_refusals(&q(&[]), 2).is_empty());
+        // the fused train without the fused back half refuses by name
+        let no = macaq_refusals(&q(&["--fn-macaq-back", "legacy"]), 2);
+        assert!(no.iter().any(|s| s.contains("--fn-macaq-back")), "{no:?}");
+        for (v, tk) in [("fused", false), ("fused-tk", true), ("auto", true)] {
+            let f = q(&["--fn-macaq-back", v]);
+            assert_eq!(f.macaq_back(), Some(tk), "{v}");
+            assert!(macaq_refusals(&f, 2).is_empty(), "{v}");
+            // MACFN3b's route (shared expert MXFP4) has no fused form
+            let f = q(&["--fn-macaq-back", v, "--fn-macaq-shared", "mxfp4"]);
+            assert!(!macaq_refusals(&f, 2).is_empty(), "{v}");
+        }
+        // auto under the legacy train is the legacy train; an explicit fused form there refuses
+        let f = q(&["--fn-macaq-back", "auto", "--fn-moe-train", "legacy"]);
+        assert_eq!(f.macaq_back(), None);
+        assert!(macaq_refusals(&f, 2).is_empty());
+        let f = q(&["--fn-macaq-back", "fused", "--fn-moe-train", "legacy"]);
+        assert!(!macaq_refusals(&f, 2).is_empty());
+    }
+
+    #[test]
+    fn macfn6_the_macaq_shared_expert_follows_the_macaq_path_only() {
+        // the default never selects a MACaQ piece on its own
+        assert_eq!(DEFAULT_FN_MACAQ_SHARED, "auto");
+        let d = fnx(&[]);
+        assert!(!d.macaq_shared());
+        assert!(d.refuse_on_27b().is_ok());
+        // the MACaQ expert path takes the int4 shared expert by default; `mxfp4` is the control
+        assert!(fnx(&["--fn-experts-fmt", "macaq"]).macaq_shared());
+        assert!(!fnx(&["--fn-experts-fmt", "macaq", "--fn-macaq-shared", "mxfp4"]).macaq_shared());
+        assert!(fnx(&["--fn-experts-fmt", "macaq", "--fn-macaq-shared", "int4"]).macaq_shared());
+        // other expert formats keep their shared expert
+        assert!(!fnx(&["--fn-experts-fmt", "nvfp4"]).macaq_shared());
+        assert!(!fnx(&["--fn-experts-fmt", "mxfp4"]).macaq_shared());
+        // an explicit int4 is not a default on a 27B pack
+        assert!(fnx(&["--fn-macaq-shared", "int4"]).refuse_on_27b().is_err());
+    }
+
+    /// MACFN8: `--fn-experts-fmt auto` is the default and resolves BY THE PACK -- `macaq` (with the
+    /// int4 shared expert and the fused back half by their own defaults) on a tp2 boot of a pack that
+    /// carries the MACaQ tier on both ranks, `mxfp4` on an MXFP4 pack or under `--fn-experts ep`; an
+    /// explicit format is never re-read; the 27B default is unchanged.
+    #[test]
+    fn macfn8_the_experts_format_default_follows_the_pack() {
+        use saber_mem::xtier::XtierFormat;
+        assert_eq!(super::super::xtp2::DEFAULT_FN_EXPERTS_FMT, "auto");
+        let d = fnx(&[]);
+        assert_eq!(d.experts_fmt(), XtierFormat::Mxfp4E8m0);
+        assert!(d.refuse_on_27b().is_ok());
+        let mq = saber_test_scratch::ScratchDir::new("macfn8-mq");
+        let mx = saber_test_scratch::ScratchDir::new("macfn8-mx");
+        let half = saber_test_scratch::ScratchDir::new("macfn8-half");
+        for r in 0..2 {
+            std::fs::create_dir_all(mq.path().join(format!("rank{r}"))).unwrap();
+            std::fs::write(mq.path().join(format!("rank{r}/experts.macaq.xtier")), b"").unwrap();
+            std::fs::create_dir_all(mx.path().join(format!("rank{r}"))).unwrap();
+        }
+        std::fs::create_dir_all(half.path().join("rank0")).unwrap();
+        std::fs::write(half.path().join("rank0/experts.macaq.xtier"), b"").unwrap();
+        let tp2 = fnx(&["--fn-experts", "tp2"]);
+        let a = tp2.with_experts_fmt_of(mq.path());
+        assert_eq!(a.fn_experts_fmt, "macaq");
+        assert_eq!(a.experts_fmt(), XtierFormat::MacaqI4RowTsh);
+        assert!(a.macaq_shared());
+        assert_eq!(a.macaq_back(), Some(true));
+        assert!(super::super::xtp2::macaq_refusals(&a, 2).is_empty());
+        assert_eq!(tp2.with_experts_fmt_of(mx.path()).fn_experts_fmt, "mxfp4");
+        assert_eq!(tp2.with_experts_fmt_of(half.path()).fn_experts_fmt, "mxfp4");
+        assert!(!tp2.with_experts_fmt_of(mx.path()).macaq_shared());
+        // EP never resolves to MACaQ (the tier is tp2 half records)
+        assert_eq!(
+            fnx(&[]).with_experts_fmt_of(mq.path()).fn_experts_fmt,
+            "mxfp4"
+        );
+        // the explicit rollback on the MACaQ pack, and an explicit macaq, are taken as given
+        let e = fnx(&["--fn-experts", "tp2", "--fn-experts-fmt", "mxfp4"])
+            .with_experts_fmt_of(mq.path());
+        assert_eq!(e.experts_fmt(), XtierFormat::Mxfp4E8m0);
+        assert!(!e.macaq_shared());
+        let m = fnx(&["--fn-experts", "tp2", "--fn-experts-fmt", "macaq"])
+            .with_experts_fmt_of(mx.path());
+        assert_eq!(m.fn_experts_fmt, "macaq");
+        // the explicit formats still count against a 27B pack
+        assert!(fnx(&["--fn-experts-fmt", "mxfp4"]).refuse_on_27b().is_err());
+    }
+
     fn fnx(args: &[&str]) -> FnFlags {
         #[derive(clap::Parser)]
         struct C {
@@ -9326,6 +9601,58 @@ mod tests {
             e.contains("MXFP4_E8M0") && e.contains("--fn-experts-fmt"),
             "{e}"
         );
+    }
+
+    /// MACFN3: the VRAM expert slots of the MACaQ int4 tp2 tier (tag 3, 304-page half records) against
+    /// the served Quark tp2 tier (320 pages) on the SAME boot ledger (host plan only: no MACaQ engine
+    /// route exists yet, so this is the ledger's count, not a booted one).
+    #[test]
+    fn macfn3_the_macaq_tp2_ledger_slots() {
+        let pack = Path::new("/mnt/nvme/saber-packs/qwen38-flashnext-quark-ep2-trunk8-tp2");
+        if !pack.join("plan.json").exists() {
+            return;
+        }
+        let prebuilt = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../prebuilt/gfx1201");
+        let mx = super::super::xtp2::XGeom {
+            tp2: true,
+            stride: 1_310_720,
+            records: 24_576,
+            entries: 513,
+            fmt: saber_mem::xtier::XtierFormat::Mxfp4E8m0,
+        };
+        let (_, _, ms) = saber_mem::xtier::record_layout_macaq(2560, 320);
+        let mq = super::super::xtp2::XGeom {
+            stride: ms,
+            fmt: saber_mem::xtier::XtierFormat::MacaqI4RowTsh,
+            ..mx
+        };
+        for args in [
+            &["--fn-serve", "8099", "--fn-experts", "tp2"][..],
+            &[
+                "--fn-serve",
+                "8099",
+                "--fn-experts",
+                "tp2",
+                "--fn-max-ctx",
+                "10240",
+            ][..],
+        ] {
+            let f = fnx(args).resolved();
+            let a = plan_boot_at(pack, &prebuilt, &[], &f, Some(mx)).unwrap();
+            let b = plan_boot_at(pack, &prebuilt, &[], &f, Some(mq)).unwrap();
+            for r in 0..2 {
+                let (x, y) = (a.budgets[r].slots, b.budgets[r].slots);
+                println!(
+                    "macfn3 {args:?} rank{r}: VRAM expert slots (halves) Quark {x} -> MACaQ {y} ({:+.2} %), \
+                     RAM L2 {} -> {}",
+                    (y as f64 / x as f64 - 1.0) * 100.0,
+                    a.laws[r].tier.ram_slots,
+                    b.laws[r].tier.ram_slots
+                );
+                assert!(y > x, "{args:?} rank {r}: {x} -> {y}");
+                assert_eq!(b.budgets[r].stride, ms);
+            }
+        }
     }
 
     /// FN45b4: the DEFAULT served boot (tiered KV at the ceiling) pins its KV slab within the host's

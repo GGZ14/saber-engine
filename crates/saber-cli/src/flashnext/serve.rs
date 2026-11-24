@@ -568,6 +568,7 @@ pub const MIXED_PACK_RUNG: u32 = 1024;
 pub fn start(
     port: u16,
     ckpt: &Path,
+    files: &Path,
     template: Option<&PathBuf>,
     served: &str,
     max_ctx: u32,
@@ -588,18 +589,18 @@ pub fn start(
     step_trace: Option<&Path>,
 ) -> anyhow::Result<Started> {
     let tokenizer = Arc::new(
-        saber_model::Tokenizer::from_file(ckpt.join("tokenizer.json"))
+        saber_model::Tokenizer::from_file(files.join("tokenizer.json"))
             .context("the checkpoint's tokenizer.json")?,
     );
     let tpath = template
         .cloned()
-        .unwrap_or_else(|| ckpt.join("chat_template.jinja"));
+        .unwrap_or_else(|| files.join("chat_template.jinja"));
     let renderer = Arc::new(
         saber_serve::state::TemplateRenderer::from_file(&tpath)
             .with_context(|| format!("loading {}", tpath.display()))?,
     );
-    let eos = crate::serve::eos_ids(&tokenizer, ckpt)?;
-    let sampling = default_sampling(ckpt)?;
+    let eos = crate::serve::eos_ids(&tokenizer, files)?;
+    let sampling = default_sampling(files)?;
     let mut config = scheduler_config(max_ctx, width, mixed, wide, busy, kv_tokens)?;
     // LR-B (`--fn-prefill-yield`, an arm): decode steps between two prefill chunks
     config.prefill = config.prefill.clone().with_yield_steps(yield_steps);
@@ -648,7 +649,7 @@ pub fn start(
          prefill rungs {:?} (beside decode: {}), max ctx {max_ctx}, {MAX_SEQS} sequences, thinking by default {thinking}, \
          mixed step {}, decode steps between chunks {yield_steps}",
         tpath.display(),
-        ckpt.join("tokenizer.json").display(),
+        files.join("tokenizer.json").display(),
         parsers.tool_call_parser_name,
         parsers.reasoning_parser_name,
         rungs,

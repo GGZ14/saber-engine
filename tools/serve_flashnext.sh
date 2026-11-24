@@ -59,11 +59,21 @@ PORT=${PORT:-8080}                       # the port the clients and BetterBench 
 # (FN61g): BetterBench --quick 4 + 4 single 140.0 vs 134.7, conc-8 347.3 vs 323.5, update p99 22.9 vs 24.3,
 # TTFT p50 73 vs 80 ms; +355 expert slots a rank; KL 23/25 (p04 = FN80c's EP-draw near-tie), GSM8K 97.80.
 # Controls: FN_TRUNK=w8 (the pre-FN108 default), w8-hc8 (mixers only), w8-head (head only), bf16.
-# `tools/fetch_packs.sh flashnext` installs the hosted pack as qwen38-flashnext-quark-trunk8 (the same
-# files as the maintainers' qwen38-flashnext-quark-ep2-trunk8, which is used when present).
-if [ -d "$NVME/saber-packs/qwen38-flashnext-quark-ep2-trunk8" ]; then PACK_DEFAULT=$NVME/saber-packs/qwen38-flashnext-quark-ep2-trunk8
-else PACK_DEFAULT=$NVME/saber-packs/qwen38-flashnext-quark-trunk8; fi
-PACK=${PACK:-$PACK_DEFAULT}
+# MACFN8 (2026-11-22): the served EXPERT FORMAT is MACaQ -- int4 routed experts + the int4 shared expert + the
+# fused back half, from ONE pack (`qwen38-flashnext-macaq-tp2-trunk8`, what `tools/fetch_packs.sh flashnext`
+# installs; `--fn-experts-fmt auto`, the binary's default, reads it as macaq). KL vs bf16 -49 % vs MXFP4 experts.
+# ROLLBACK (one line): FN_EXPERTS_FMT=mxfp4 tools/serve_flashnext.sh --no-build   (the MXFP4 -trunk8 pack, explicit
+# mxfp4): `tools/fetch_packs.sh flashnext-mxfp4` installs it as qwen38-flashnext-quark-trunk8 (the same files as the
+# maintainers' qwen38-flashnext-quark-ep2-trunk8, which is used when present).
+FN_EXPERTS_FMT=${FN_EXPERTS_FMT:-auto}
+if [ "$FN_EXPERTS_FMT" = mxfp4 ]; then
+  if [ -d "$NVME/saber-packs/qwen38-flashnext-quark-ep2-trunk8" ]; then PACK_DEFAULT=$NVME/saber-packs/qwen38-flashnext-quark-ep2-trunk8
+  else PACK_DEFAULT=$NVME/saber-packs/qwen38-flashnext-quark-trunk8; fi
+  PACK=${PACK:-$PACK_DEFAULT}
+else
+  PACK=${PACK:-$NVME/saber-packs/qwen38-flashnext-macaq-tp2-trunk8}
+fi
+FMT_ARG=; [ "$FN_EXPERTS_FMT" != auto ] && FMT_ARG="--fn-experts-fmt $FN_EXPERTS_FMT"
 FN_TRUNK=${FN_TRUNK:-w8-hc8-head}
 # FN68b: the QSA K/V page dtype (`--fn-kv-dtype`; fp8 reads the pack's calibrated kv_scales.json).
 # fp8 = THE DEFAULT since 2026-10-08 (the user's word; KL 25/25 vs bf16's 23, conc-8 +3.5 %, single -3.8 %, 4.3 GiB pinned RAM back, vision at 262k); FN_KV=bf16 = the control.
@@ -162,7 +172,10 @@ if [ -n "$WARM" ]; then
   ARGS+=(--warm-prompts "$OUT/warm-prompts.txt")
 fi
 
-ENGINE_CMD="$SABER engine --pack $PACK --fn-trunk $FN_TRUNK --fn-kv-dtype $FN_KV --fn-vram-elastic-kv-max-gib $FN_ELASTIC_KV_MAX --fn-experts $FN_EXPERTS ${PROMPT_IDS_ARG} --tp 2 \
+# the engine's --fn-kv-dir default is /mnt/nvme/saber-kv; under another storage root that path is NOT mounted
+# (the KV / prompt-cache files would land in the container's own layer and vanish), so name the mounted one
+case " ${ARGS[*]:-} " in *" --fn-kv-dir "*) ;; *) [ "$NVME" != /mnt/nvme ] && ARGS+=(--fn-kv-dir "$NVME/saber-kv") ;; esac
+ENGINE_CMD="$SABER engine --pack $PACK --fn-trunk $FN_TRUNK --fn-kv-dtype $FN_KV --fn-vram-elastic-kv-max-gib $FN_ELASTIC_KV_MAX --fn-experts $FN_EXPERTS $FMT_ARG ${PROMPT_IDS_ARG} --tp 2 \
   --hip-lib /opt/rocm/lib/libamdhip64.so.7 --prebuilt /work/prebuilt/gfx1201 --fn-out $OUT/run \
   --fn-serve $PORT --fn-thinking on $REC_ARGS ${ARGS[*]}"
 # SABER_PRINT_CMD=1: print the engine's argv (one word a line) and exit before any guard, build or
@@ -206,11 +219,15 @@ if [ -r "$REPO/tools/capture/p2p_mounts.sh" ]; then
   . "$REPO/tools/capture/p2p_mounts.sh"
   p2p_mounts P2P
 fi
+# a downloaded pack's manifest records the maintainers' /mnt/nvme/models/... checkpoint path; the engine
+# rebases it under $SABER_NVME (passed in) when that path is absent (`fnpaths:` boot line; flashnext::paths)
+mkdir -p "$NVME/saber-kv" || { echo "cannot create $NVME/saber-kv" >&2; exit 1; }
+[ -f "$PACK/manifest.json" ] || { echo "no pack at $PACK (tools/fetch_packs.sh flashnext; SABER_NVME=$NVME)" >&2; exit 1; }
 # GPU_MAX_HW_QUEUES=3: the user's rule 10-26 (other devs report a slowdown at 4 or more); the env var overrides for a probe
 $CTR rm -f "$CNAME" >/dev/null 2>&1 || true
 $CTR run -d --name "$CNAME" --security-opt label=disable --security-opt seccomp=unconfined \
   "${CTR_GPU[@]}" "${CTR_USER[@]}" --ipc=host --network=host \
-  -e HIP_VISIBLE_DEVICES="${HIP_DEVICES:-0,1}" -e GPU_MAX_HW_QUEUES="${GPU_MAX_HW_QUEUES:-3}" -e LD_LIBRARY_PATH=/opt/rocm/lib -e PYTHONDONTWRITEBYTECODE=1 "${P2P[@]}" \
+  -e HIP_VISIBLE_DEVICES="${HIP_DEVICES:-0,1}" -e GPU_MAX_HW_QUEUES="${GPU_MAX_HW_QUEUES:-3}" -e LD_LIBRARY_PATH=/opt/rocm/lib -e PYTHONDONTWRITEBYTECODE=1 -e SABER_NVME="$NVME" "${P2P[@]}" \
   -v "$SHARED":"$SHARED" -v "$NVME"/models:"$NVME"/models:ro -v "$NVME"/saber-packs:"$NVME"/saber-packs:ro \
   -v "$NVME"/saber-kv:"$NVME"/saber-kv -v "$REPO":/work:ro -w /work --entrypoint /bin/bash "$IMG" \
   -c "ulimit -c 0; exec ${SERVE_PREFIX:-} $ENGINE_CMD" >/dev/null || { echo "$CTR run failed" >&2; exit 1; }

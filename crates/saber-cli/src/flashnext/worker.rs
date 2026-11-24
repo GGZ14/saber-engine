@@ -721,6 +721,8 @@ pub(super) struct Rank<'h, 'x> {
     /// FN30: the fused MoE train's `sync` region (zeroed once at boot; read back at the end of a
     /// run: every word must be zero again).
     moe_sync: DevicePtr,
+    /// MACFN3b (`--fn-experts-fmt macaq`): the MACaQ route's region (`exec::Mq3Region`), kept alive.
+    _mq3: Option<DevicePtr>,
     /// FN120b (`--fn-glue seeds|fold`): the run-wide seed region (`exec::GlueSeeds`; None = `off`).
     glue: Option<DevicePtr>,
     /// FN120c (`--fn-dataflow gdn`): the persistent GDN-tail tables' region (`exec::DfTables`;
@@ -1831,7 +1833,20 @@ fn run_rank(
         None
     };
     let mut shared = Vec::new();
-    if xg.tp2 {
+    if xg.tp2 && f.macaq_shared() {
+        // MACFN5: the shared expert's MACaQ int4 half records (its xptr entry; the MXFP4 halves
+        // are not uploaded: the ledger's shared-expert class bills the larger MXFP4 half)
+        let t = Instant::now();
+        let (v, sha) =
+            super::xtp2::shared_macaq_halves(&recs.dir, &mut owned, hip, &dev.stream, rank)?;
+        shared = v;
+        println!(
+            "fnshq rank{rank}: MACFN5 -- the shared expert's MACaQ int4 half {rank} of {LAYERS} \
+             layers ({} B a layer, every record == its sha256, table {sha}) in {:.2} s",
+            saber_mem::xtier::record_layout_macaq(super::xsplit::HIDDEN, super::xsplit::INTER_H).2,
+            t.elapsed().as_secs_f64()
+        );
+    } else if xg.tp2 {
         // FN80b-2: the shared expert's HALF on both ranks (sliced from the pack's whole records
         // by FN80a's law at boot; the halves join back to the whole, checked)
         let t = Instant::now();
@@ -2453,7 +2468,7 @@ fn run_rank(
         &std::fs::read_to_string(pack.join("ple/ple_index.json"))?,
         PleSourceKind::CkptBf16,
         PleGate::Default,
-        None,
+        super::paths::ple_root(pack, ckpt).as_deref(),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut ple = PleTier::new(
@@ -2486,6 +2501,13 @@ fn run_rank(
     // FN150: the NVFP4 records' cells (the boot refuses every piece without an NVFP4 body)
     let dm = if xg.fmt == saber_mem::xtier::XtierFormat::Nvfp4E4m3G16 {
         dm.experts_nvfp4()
+    } else if xg.fmt == saber_mem::xtier::XtierFormat::MacaqI4RowTsh {
+        // MACFN3b: the MACaQ int4 tp2 records' route (MACFN5: + the MACaQ shared expert)
+        if f.macaq_shared() {
+            dm.experts_macaq().experts_macaq_shared()
+        } else {
+            dm.experts_macaq()
+        }
     } else {
         dm
     };
@@ -2837,6 +2859,50 @@ fn run_rank(
     // ledger class `fn.moe.sync`)
     let moe_sync = hip.malloc(super::run::moe_sync_class(f, rank))?;
     hip.memset(&moe_sync, 0, &dev.stream)?;
+    // MACFN3b: the MACaQ route's region (the ledger class `fn.macaq.mq3`): the layer-shared t of
+    // every layer from the pack's `rank<r>/experts.tsh` + the token producer's scratch
+    let mq3 = if dm.xmq {
+        use sha2::Digest;
+        let p = pack.join(format!("rank{rank}/{}", super::xtp2::XGeom::MACAQ_TSH_FILE));
+        let tsh = std::fs::read(&p).with_context(|| format!("{}", p.display()))?;
+        ensure!(
+            tsh.len() as u64 == super::exec::Mq3Region::TSH_BYTES,
+            "{}: {} B, not f32 [48, 2560]",
+            p.display(),
+            tsh.len()
+        );
+        ensure!(
+            tsh.chunks_exact(4)
+                .all(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]).is_finite()),
+            "{}: a non-finite t",
+            p.display()
+        );
+        let rows = super::run::mq3_rows(f);
+        let tiles = super::exec::Mq3Region::tiles_for(rows);
+        let bytes = super::run::mq3_region_bytes(f);
+        let d = hip.malloc(bytes)?;
+        hip.memset(&d, 0, &dev.stream)?;
+        hip.memcpy_h2d_blocking(&d, &tsh, &dev.stream)?;
+        hip.sync_stream(&dev.stream)?;
+        let base = d.addr().as_u64();
+        println!(
+            "fnmacaq rank{rank}: MACFN3b -- MACaQ int4 tp2 experts on moe_macfn3; tsh {} sha256 {:x} \
+             resident, token rows {rows} / shared tiles {tiles}, region {bytes} B",
+            p.display(),
+            sha2::Sha256::digest(&tsh)
+        );
+        Some((
+            d,
+            super::exec::Mq3Region {
+                tsh: base,
+                base: base + super::exec::Mq3Region::TSH_BYTES.div_ceil(256) * 256,
+                rows,
+                tiles,
+            },
+        ))
+    } else {
+        None
+    };
     // FN120b (`--fn-glue seeds|fold`): the run-wide seed region, seeded ONCE here (zero part 0,
     // ones part 0xff; the ledger class `fn.glue120`); every captured run restores what it used
     // FN120e: the region the boot's census sized (`run::glue_census`), not a constant
@@ -2892,6 +2958,8 @@ fn run_rank(
         em.arena.scratch.cap = t.cap;
     }
     em.moe_train = f.fn_moe_train;
+    em.macaq_back = f.macaq_back();
+    em.macaq_prefill_wc = f.macaq_prefill_wc();
     em.shared_split = shx114;
     em.t8_head = head8;
     em.t8_prefill = f.trunk8_prefill();
@@ -2905,6 +2973,7 @@ fn run_rank(
     em.ar_prologue = super::run::ar_prologue(f);
     em.miss_ram = miss_ram;
     em.moe_sync = moe_sync.addr().as_u64();
+    em.mq3 = mq3.as_ref().map(|(_, r)| *r);
     em.glue = glue.as_ref().map(|g| {
         super::exec::GlueSeeds::sized(
             g.addr().as_u64(),
@@ -3075,6 +3144,7 @@ fn run_rank(
         pg,
         bar,
         moe_sync,
+        _mq3: mq3.map(|(d, _)| d),
         glue,
         df,
         qsa124,
@@ -3371,7 +3441,7 @@ fn run_rank(
                     if let Some(mut c) = cap {
                         c.logits = pick.2.clone();
                         hashes.insert(p.id.clone(), c.hashes());
-                        if rank == 0 && f.fn_prompts.len() <= 4 {
+                        if rank == 0 && (f.fn_prompts.len() <= 4 || f.fn_dump_all) {
                             c.write(
                                 &out.join("capture").join(&cap_key).join(&p.id),
                                 p,
@@ -6466,7 +6536,9 @@ fn layer(
         // FN120c: the launches the dataflow form folded into one persistent launch
         - em.df_saved
         // FN122c: the dequant launches the dq family added
-        + em.pf122_added;
+        + em.pf122_added
+        // MACFN3b: the MACaQ route's token producer + the shared expert's two MXFP4 cells
+        + em.mq3_added;
     ensure!(
         outs[0].launches == want,
         "L{l}: launches {} vs declared {want} ({form:?})",
@@ -18861,6 +18933,8 @@ fn serve_rank(
         law.is_none() || rk.mtp.is_some(),
         "--fn-mtp in the serve plane needs the drafter"
     );
+    // HF2: the tokenizer / template / generation config from the pack's `base/` when it ships them
+    let files = super::paths::model_files_dir(&recs.dir, ckpt);
     let mut st = SrvState {
         couple_seeds: BTreeMap::new(),
         slots: vec![None; MAX_SEQS as usize + 1],
@@ -19005,14 +19079,14 @@ fn serve_rank(
                 turn_tok: if tree.is_some() {
                     None
                 } else {
-                    pcache::im_start_id(ckpt)
+                    pcache::im_start_id(&files)
                 },
                 min_tokens: f.pcache_min_tokens(),
                 align: f.fn_kv_pcache_align,
                 no_demote: f.fn_prefix_tree_demote == "off",
                 warm_end: if f.warm_prompts.is_some() {
                     Some(
-                        pcache::special_id(ckpt, "<|im_end|>")
+                        pcache::special_id(&files, "<|im_end|>")
                             .context("--warm-prompts: the tokenizer's <|im_end|>")?,
                     )
                 } else {
@@ -19156,6 +19230,7 @@ fn serve_rank(
     let started = serve::start(
         port,
         ckpt,
+        &files,
         f.fn_chat_template.as_ref(),
         &f.fn_served_name,
         rk.max_ctx,

@@ -57,7 +57,7 @@ class Paths:
 
 class Catalog(unittest.TestCase):
     def test_models_come_from_the_shared_catalog(self):
-        self.assertEqual(sorted(S.MODELS), ["27b", "flashnext"])  # the mock has no launcher
+        self.assertEqual(sorted(S.MODELS), ["27b", "flashnext", "flashnext-mxfp4"])  # the mock has no launcher
         with open(S.CATALOG) as f:
             cat = json.load(f)
         self.assertEqual(cat["version"], 1)
@@ -65,7 +65,37 @@ class Catalog(unittest.TestCase):
         for k in ("title", "launcher", "container", "packs", "extra_files", "download_gb", "note"):
             self.assertIn(k, m)
         self.assertEqual(m["launcher"], "tools/serve_27b.sh")
-        self.assertEqual(S.MODELS["flashnext"]["packs"], ["qwen38-flashnext-quark-trunk8"])
+        self.assertEqual(S.MODELS["flashnext"]["packs"], ["qwen38-flashnext-macaq-tp2-trunk8"])
+        self.assertEqual(S.FN_MODELS, ("flashnext", "flashnext-mxfp4"))
+
+    def test_the_mxfp4_rollback_is_a_wizard_entry(self):
+        """CAT2: the rollback boots the launcher's FN_EXPERTS_FMT=mxfp4, downloads with fetch_packs.sh
+        flashnext-mxfp4, and writes the console's --fn-experts-fmt mxfp4 + its pack; back to the
+        default entry drops both."""
+        cfg = S.default_cfg("flashnext-mxfp4")
+        env, argv = S.build_launch(cfg)
+        self.assertEqual(env, {"FN_EXPERTS_FMT": "mxfp4"})
+        self.assertEqual(argv, ["tools/serve_flashnext.sh"])
+        self.assertEqual(S.build_launch(S.default_cfg("flashnext")), ({}, ["tools/serve_flashnext.sh"]))
+        steps, _ = S.install_steps(cfg, {"image": True})
+        self.assertEqual(steps[1][1], ["tools/fetch_packs.sh", "flashnext-mxfp4"])
+        self.assertIn("213.7 GB", S.model_info(cfg)["note"])
+        self.assertIn("210.6 GB", S.model_info(S.default_cfg("flashnext"))["note"])
+        doc, _ = S.console_from_cfg(cfg)
+        fl = doc["engine"]["flags"]
+        self.assertEqual(fl["--fn-experts-fmt"], "mxfp4")
+        self.assertTrue(fl["--pack"].endswith("/saber-packs/qwen38-flashnext-quark-trunk8")
+                        or fl["--pack"].endswith("/saber-packs/qwen38-flashnext-quark-ep2-trunk8"), fl)
+        self.assertEqual(doc["setup"]["model"], "flashnext-mxfp4")
+        self.assertEqual(S.cfg_from_console(doc)["model"], "flashnext-mxfp4")
+        # a rollback config with no setup.model is still read as the rollback
+        bare = json.loads(json.dumps(doc))
+        del bare["setup"]
+        self.assertEqual(S.cfg_from_console(bare)["model"], "flashnext-mxfp4")
+        back, _ = S.console_from_cfg(S.default_cfg("flashnext"), doc)
+        self.assertNotIn("--fn-experts-fmt", back["engine"].get("flags", {}))
+        self.assertNotIn("--pack", back["engine"].get("flags", {}))
+        self.assertEqual(back["setup"]["model"], "flashnext")
 
 
 class SharedConfig(unittest.TestCase):

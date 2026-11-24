@@ -1,0 +1,231 @@
+schema_version = 1
+plugin = "ink_dr4"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/ink_dr4.hip"
+source_sha256 = "ef63550f87dd9ee86f032ba2257b03a5a654998d6043e5898289a1a537481dca"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "c391b1ecf33a7cb4f740b71e828280c7689a8175400211d9cf30af094153769d"
+hsaco = "ink_dr4.hsaco"
+hsaco_sha256 = "0235eb5f8ac69cf5a15fb8384bcbc4bc75f906d0bc591893ca4e033bd8b3246f"
+
+[[kernel]]
+name = "ink_dr4_ksum"
+symbol = "ink_dr4_ksum.kd"
+kernarg_segment_size = 40
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 13
+sgpr_count = 26
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ks"
+
+[[kernel.arg]]
+offset = 12
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "acc"
+
+[[kernel]]
+name = "ink_dr4_mm_bf16"
+symbol = "ink_dr4_mm_bf16.kd"
+kernarg_segment_size = 72
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 95
+sgpr_count = 38
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "lda"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "acc"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "ks"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel]]
+name = "ink_dr4_mm_w8"
+symbol = "ink_dr4_mm_w8.kd"
+kernarg_segment_size = 72
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 97
+sgpr_count = 30
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "lda"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "ws"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "acc"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "ks"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "part"

@@ -65,6 +65,17 @@ pub const SUB_NAMES_NVFP4: [&str; 6] = [
     "down.gs",
 ];
 
+/// MACFN3: the six sub-records of a v2 MACaQ int4 record (tag 3), in record order. `meta` = 16 B
+/// (layer, expert, split index, bits) at a 256-byte sub-record: the checker's identity handle.
+pub const SUB_NAMES_MACAQ: [&str; 6] = [
+    "gate_up.wi4",
+    "gate_up.wi4s",
+    "meta",
+    "down.wi4",
+    "down.wi4s",
+    "down.t",
+];
+
 /// FN144: a tier file's record format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XtierFormat {
@@ -72,6 +83,11 @@ pub enum XtierFormat {
     Mxfp4E8m0,
     /// e2m1 + E4M3 per 16 + f32 globals (ModelOpt NVFP4, the scales CSF-decoded). v2 tag 2.
     Nvfp4E4m3G16,
+    /// MACFN3: MACaQ per-row int4 codes in pack layout 17 (`i4_row_frag`) + one f32 scale a row
+    /// (layout 19) for gate_up and down, the down input's own f32 t (`[I]`), in the LAYER-SHARED
+    /// gate_up t form (the layer's t is a resident side record, not in the expert record);
+    /// activations per-token int8 after `x * t` + the block-32 Hadamard. v2 tag 3.
+    MacaqI4RowTsh,
 }
 
 impl XtierFormat {
@@ -81,6 +97,7 @@ impl XtierFormat {
         match self {
             XtierFormat::Mxfp4E8m0 => 1,
             XtierFormat::Nvfp4E4m3G16 => 2,
+            XtierFormat::MacaqI4RowTsh => 3,
         }
     }
     /// The manifest / log spelling.
@@ -89,6 +106,7 @@ impl XtierFormat {
         match self {
             XtierFormat::Mxfp4E8m0 => "MXFP4_E8M0",
             XtierFormat::Nvfp4E4m3G16 => "NVFP4_E4M3G16",
+            XtierFormat::MacaqI4RowTsh => "MACAQ_I4ROW_TSH",
         }
     }
     /// The format of a v2 tag.
@@ -97,6 +115,7 @@ impl XtierFormat {
         match t {
             1 => Some(XtierFormat::Mxfp4E8m0),
             2 => Some(XtierFormat::Nvfp4E4m3G16),
+            3 => Some(XtierFormat::MacaqI4RowTsh),
             _ => None,
         }
     }
@@ -106,6 +125,7 @@ impl XtierFormat {
         match self {
             XtierFormat::Mxfp4E8m0 => SUB_NAMES,
             XtierFormat::Nvfp4E4m3G16 => SUB_NAMES_NVFP4,
+            XtierFormat::MacaqI4RowTsh => SUB_NAMES_MACAQ,
         }
     }
     /// `(sub, payload, stride)` of a record of this format.
@@ -114,6 +134,7 @@ impl XtierFormat {
         match self {
             XtierFormat::Mxfp4E8m0 => record_layout(hidden, inter),
             XtierFormat::Nvfp4E4m3G16 => record_layout_nvfp4(hidden, inter),
+            XtierFormat::MacaqI4RowTsh => record_layout_macaq(hidden, inter),
         }
     }
 }
@@ -295,10 +316,10 @@ impl XtierHeader {
                 self.rank,
                 self.format.key(),
                 want.key(),
-                if want == XtierFormat::Mxfp4E8m0 {
-                    "mxfp4"
-                } else {
-                    "nvfp4"
+                match want {
+                    XtierFormat::Mxfp4E8m0 => "mxfp4",
+                    XtierFormat::Nvfp4E4m3G16 => "nvfp4",
+                    XtierFormat::MacaqI4RowTsh => "macaq (no engine route yet: MACFN3)",
                 }
             ))
         }
@@ -328,7 +349,7 @@ impl XtierHeader {
             XTIER_VERSION_V2 => {
                 let t = u32_at(b, XTIER_FORMAT_OFF);
                 XtierFormat::from_tag(t)
-                    .ok_or_else(|| bad(format!("v2 format tag {t}, this reader knows 1, 2")))?
+                    .ok_or_else(|| bad(format!("v2 format tag {t}, this reader knows 1, 2, 3")))?
             }
             _ => return Err(bad(format!("version {version}, this reader knows 1, 2"))),
         };
@@ -628,6 +649,33 @@ pub fn record_layout_nvfp4(hidden: u64, inter: u64) -> ([(u64, u64); 6], u64, u6
     (sub, payload, stride)
 }
 
+/// MACFN3: the v2 MACaQ int4 record layout (tag 3, layer-shared gate_up t) for experts of
+/// `hidden` x `inter` (`inter` = the record's own part: 320 at `--fn-experts tp2`): gate_up `wi4`
+/// `[2I/16, H*8]` (int4, layout 17), `wi4s` f32 `[2I]`, `meta` 16 B; down `wi4` `[H/16, I*8]`,
+/// `wi4s` f32 `[H]`, `t` f32 `[I]`; each 256-aligned; stride 4 KiB-rounded. 2560 x 640 (whole):
+/// 2,475,776 payload = 605 pages (MXFP4 639); 2560 x 320 (the tp2 half): 1,243,136 = 304 pages
+/// (MXFP4 320).
+#[must_use]
+pub fn record_layout_macaq(hidden: u64, inter: u64) -> ([(u64, u64); 6], u64, u64) {
+    let lens = [
+        2 * inter * hidden / 2,
+        2 * inter * 4,
+        16,
+        hidden * inter / 2,
+        hidden * 4,
+        inter * 4,
+    ];
+    let mut sub = [(0u64, 0u64); 6];
+    let mut off = 0u64;
+    for (i, &len) in lens.iter().enumerate() {
+        sub[i] = (off, len);
+        off = (off + len).div_ceil(SUB_ALIGN) * SUB_ALIGN;
+    }
+    let payload = sub[5].0 + sub[5].1;
+    let stride = payload.div_ceil(DIO_ALIGN as u64) * DIO_ALIGN as u64;
+    (sub, payload, stride)
+}
+
 /// The deterministic payload byte of record `i` at payload offset `o` of a synthetic tier: a
 /// mix of (rank, record, offset) so that two records never agree and a wrong-record read is
 /// caught by content as well as by the table.
@@ -694,6 +742,66 @@ pub fn write_synthetic(path: &Path, t: SyntheticTier) -> io::Result<XtierHeader>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MACFN3: the tag-3 MACaQ record at the tp2 half and the whole shape (design note §2.2), its
+    /// header round trip, and the refusals by name either way.
+    #[test]
+    fn macfn3_the_macaq_record_is_304_pages_at_the_tp2_half_and_605_whole() {
+        let (sub, payload, stride) = record_layout_macaq(2560, 320);
+        assert_eq!(
+            sub,
+            [
+                (0, 819_200),
+                (819_200, 2_560),
+                (821_760, 16),
+                (822_016, 409_600),
+                (1_231_616, 10_240),
+                (1_241_856, 1_280)
+            ]
+        );
+        assert_eq!((payload, stride), (1_243_136, 304 * 4096));
+        let (_, p_mx, s_mx) = record_layout(2560, 320);
+        assert_eq!((p_mx, s_mx), (1_308_928, 320 * 4096));
+        let (_, pw, sw) = record_layout_macaq(2560, 640);
+        assert_eq!((pw, sw), (2_475_776, 605 * 4096));
+        let records = 48u64 * 512;
+        let data_off = (XTIER_HEADER + records * 32).div_ceil(4096) * 4096;
+        let h = XtierHeader {
+            rank: 0,
+            layers: 48,
+            first_expert: 0,
+            experts: 512,
+            stride,
+            payload,
+            sub,
+            hidden: 2560,
+            inter: 320,
+            table_off: XTIER_HEADER,
+            table_bytes: records * 32,
+            data_off,
+            file_bytes: data_off + records * stride,
+            table_sha256: [1; 32],
+            plan_sha256: [2; 32],
+            split_parts: 2,
+            split_index: 0,
+            format: XtierFormat::MacaqI4RowTsh,
+        };
+        let b = header_block(&h);
+        assert_eq!(u32_at(&b, 8), 2);
+        assert_eq!(u32_at(&b, XTIER_FORMAT_OFF), 3);
+        let back = XtierHeader::parse("m3", &b).unwrap();
+        assert_eq!(back, h);
+        assert_eq!(back.format.sub_names()[2], "meta");
+        assert!(back
+            .require_mxfp4()
+            .unwrap_err()
+            .contains("MACAQ_I4ROW_TSH"));
+        assert!(back.require_format(XtierFormat::MacaqI4RowTsh).is_ok());
+        assert!(back
+            .require_format(XtierFormat::Nvfp4E4m3G16)
+            .unwrap_err()
+            .contains("MACAQ_I4ROW_TSH"));
+    }
 
     #[test]
     fn fn144_v2_nvfp4_header_round_trips_and_v1_stays_v1() {

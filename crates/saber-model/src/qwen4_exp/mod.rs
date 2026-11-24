@@ -15,7 +15,7 @@
 //!   E4M3 g16 scales); [`st`] — a minimal safetensors shard-set reader.
 
 pub mod config;
-mod fields;
+pub(crate) mod fields;
 pub mod layer_graph;
 pub mod nvfp4_csf;
 pub mod pack_plan;

@@ -523,12 +523,9 @@ fn build_with(
     Ok(tot)
 }
 
+/// HF2: the pack's checkpoint where it is on this machine (`flashnext::paths`).
 pub(super) fn ckpt_dir(pack: &Path) -> anyhow::Result<std::path::PathBuf> {
-    let m: Value = serde_json::from_str(&std::fs::read_to_string(pack.join("manifest.json"))?)?;
-    Ok(m["checkpoint"]["dir"]
-        .as_str()
-        .context("checkpoint.dir")?
-        .into())
+    Ok(super::paths::ckpt_of(pack, None)?.0)
 }
 
 #[cfg(test)]

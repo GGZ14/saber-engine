@@ -236,6 +236,65 @@ pub fn rule_table_for_plugin(plugin: &str) -> Option<&'static str> {
         "moe_fn152" => "noop_gfx1201.toml",
         // FN153: form (b) in the grouped prefill tile (tools/gen_fn153_nvfp4pf.py); no engine route yet.
         "moe_fn153" => "noop_gfx1201.toml",
+        // MACFN3: the MACaQ int4 routed-expert bodies (shared-t form: the token int8 producer, the silu
+        // int8 producer, the iu8 grouped GEMMs); no engine route yet.
+        "moe_macfn3" => "noop_gfx1201.toml",
+        // MACFN7: the MACaQ fused back halves (tools/gen_macfn7_back.py); the executor names them
+        // under `--fn-macaq-back fused|fused-tk`.
+        "moe_macfn7" => "noop_gfx1201.toml",
+        // INK3 / INK3b: the Inkling 2 (`inkling2_loop`) bodies -- the attention glue + band-bias /
+        // sink attention, the loop / residual / MoE-plumbing bodies (docs/INKLING2.md section 9);
+        // no plan binds them yet (INK4's eager prefill names them).
+        "ink_glue" | "ink_attn" | "ink_loop" => "noop_gfx1201.toml",
+        // INK6: the native MXFP8 e8m0-g32 expert cell + its bf16-A oracle (layers 20..23).
+        "ink_moe" => "noop_gfx1201.toml",
+        // INK8: the two-card exchange (P2P reduce + head gather, on-card handshake).
+        "ink_p2p" => "noop_gfx1201.toml",
+        // INK9: the fast decode bodies (byte-equal re-tiles of the INK3b parents).
+        "ink_fast" => "noop_gfx1201.toml",
+        // INK10: the fused decode bodies (push reduce + sconv + depth, route logits + tail).
+        "ink_fuse" => "noop_gfx1201.toml",
+        // INK11: more launch folds (pass messages, the three-row GEMV, kv conv in the attention).
+        "ink_fuse11" => "noop_gfx1201.toml",
+        // INK14: the 8-bit dense trunk GEMV / GEMM bodies (int8 codes + bf16 scales a 32-k block).
+        "ink_w8" => "noop_gfx1201.toml",
+        // INK15: the prefill GEMM re-tiles (the parents' order, the tile sized to the shape).
+        "ink_pf" => "noop_gfx1201.toml",
+        // INK16: the column-lane prefill GEMM (the parents' order; a lane = one column, RM rows).
+        "ink_pf2" => "noop_gfx1201.toml",
+        // INK25: the matrix-core W8A8 prefill trunk (int8 activations a 32-k block; an arm).
+        "ink_i8" => "noop_gfx1201.toml",
+        // INK27: the row-tiled prefill attention (v1's order, R rows a workgroup).
+        "ink_fa" => "noop_gfx1201.toml",
+        // INK29: the prefill levers (byte-equal K slices / route sort / fused quant + numerics arms).
+        "ink_p29" => "noop_gfx1201.toml",
+        // INK35: the matrix-core prefill flash attention (a numerics arm).
+        "ink_fa35" => "noop_gfx1201.toml",
+        // INK37: the prefill levers (128-row route sort for moe_fn153's pf tiles, the R-row router).
+        "ink_p37" => "noop_gfx1201.toml",
+        // INK17: the fused T-row verify consumer (ink_xsd for chained rows of one sequence).
+        "ink_vt" => "noop_gfx1201.toml",
+        // INK28: the decode route on one workgroup a row (byte-equal to ink_route_fused / _rt).
+        "ink_r28" => "noop_gfx1201.toml",
+        // INK18: the drafter's own bodies (split-K GEMV, the pruned vocabulary's argmax).
+        "ink_dr2" => "noop_gfx1201.toml",
+        // INK20: the multi-sequence verify glue (segmented sconv, history, per-sequence commit).
+        "ink_mv" => "noop_gfx1201.toml",
+        // INK20: the batched drafter pass (the drafter bodies with a sequence index).
+        "ink_dr3" => "noop_gfx1201.toml",
+        // INK21: the batched drafter's GEMMs on the matrix cores.
+        "ink_dr4" => "noop_gfx1201.toml",
+        // INK22: the batched drafter append's row scatter.
+        "ink_dr5" => "noop_gfx1201.toml",
+        // INK33: the drafter's fold + argmax with the draft's top-1 probability (the gated depth).
+        "ink_dr6" => "noop_gfx1201.toml",
+        // INK18: ink_xsd / ink_xsdc with the pushed-window loads after one acquire.
+        "ink_xl" => "noop_gfx1201.toml",
+        // INK12: the block drafter's bodies + the verify's conv-state rollback (hist / commit).
+        "ink_draft" => "noop_gfx1201.toml",
+        // MACFN9: the MACaQ prefill tiles (tools/gen_macfn9_pf.py); the executor names the cached-W
+        // tm4 pair under `--fn-macaq-prefill wc`.
+        "moe_macfn9" => "noop_gfx1201.toml",
         // FN124: the fp8-KV QSA gather prefill with the wave-uniform masked sub-tile skip (+ the
         // twin's control and comparator); the executor names it under `--fn-prefill-tiles qsa`.
         "flashnext_qsa124" => "noop_gfx1201.toml",
@@ -745,6 +804,40 @@ pub mod prebuilt {
         ("moe_fn152.hsaco", "fn152_moe_back_h2_far_gu4_dn2"),
         // FN153: FN148 form (b) in the grouped prefill tile `pf_tm*` (tools/gen_fn153_nvfp4pf.py).
         ("moe_fn153.hsaco", "fn153_w4a8b_pf_tm4_g1"),
+        // MACFN3: the MACaQ int4 expert bodies (Saber's own; tools/capture/macfn3/m3probe.py is the oracle).
+        ("moe_macfn3.hsaco", "macfn3_i4_bk128_ks1_tm1_g1"),
+        // MACFN7: the MACaQ fused back halves (tools/gen_macfn7_back.py; tools/capture/macfn7/m7probe.py).
+        ("moe_macfn7.hsaco", "macfn7_back_h2_far_gu4_dn2_tk"),
+        // INK3 / INK3b: the Inkling 2 bodies (docs/INKLING2.md section 9); gated on card 1 against
+        // the numpy twins of the host oracle (tools/capture/ink3/ink3_probe.py, ink3b_probe.py).
+        ("ink_glue.hsaco", "ink_kv_conv_post_append"),
+        ("ink_attn.hsaco", "ink_attn_bias_sink_v0"),
+        ("ink_loop.hsaco", "ink_depth_attend"),
+        ("ink_moe.hsaco", "ink_mx8_w8a8_g1"),
+        ("ink_p2p.hsaco", "ink_p2p_xchg"),
+        ("ink_fast.hsaco", "ink_gemv_f32_bf16"),
+        ("ink_fuse.hsaco", "ink_xsd"),
+        ("ink_fuse11.hsaco", "ink_attn_kvc"),
+        ("ink_w8.hsaco", "ink_gemv_f32_w8"),
+        ("ink_pf.hsaco", "ink_gemm_pf_f32_w8_t32x64"),
+        ("ink_pf2.hsaco", "ink_gemm_cl_f32_w8_r4n1"),
+        ("ink_i8.hsaco", "ink_gemm_i8_w8"),
+        ("ink_fa.hsaco", "ink_fa_rt8"),
+        ("ink_r28.hsaco", "ink_route_r1"),
+        ("ink_p29.hsaco", "ink29_gemm_i8_kx3"),
+        ("ink_fa35.hsaco", "ink_fa35_wm"),
+        ("ink_p37.hsaco", "ink37_post_norm_route_e128_r4"),
+        ("ink_vt.hsaco", "ink_xsdc"),
+        ("ink_dr2.hsaco", "ink_dr_gemv_sk_bf16"),
+        ("ink_mv.hsaco", "ink_mv_sconv"),
+        ("ink_dr3.hsaco", "ink_dr3_attn"),
+        ("ink_dr4.hsaco", "ink_dr4_mm_w8"),
+        ("ink_dr5.hsaco", "ink_dr5_scatter"),
+        ("ink_dr6.hsaco", "ink_dr6_fold_p"),
+        ("ink_xl.hsaco", "ink_xsd_l"),
+        ("ink_draft.hsaco", "ink_dr_attn"),
+        // MACFN9: the MACaQ prefill tiles (tools/gen_macfn9_pf.py; tools/capture/macfn9/m9probe.py).
+        ("moe_macfn9.hsaco", "macfn9_i4_bk128_ks1_tm4_g1_wc"),
         // P27-15: the 27B's ancestor-mask tree verify -- the WY-form GDN tree update over a
         // 10-row tile + the accepted-path advance (Saber's own arithmetic), and the ragged decode
         // attention with a per-row ancestor word on the q_len tail (generated by

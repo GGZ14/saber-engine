@@ -48,6 +48,15 @@ def load_models(path=CATALOG):
 
 MODELS = load_models()
 
+# The Flash-Next entries: the MACaQ default (`flashnext`) and its MXFP4 rollback (`flashnext-mxfp4`, the
+# launcher's FN_EXPERTS_FMT=mxfp4), the same options; the entry's `launcher_env` / `flags` say how they differ.
+FN_MODELS = tuple(k for k, m in MODELS.items() if m.get("preset") == "flashnext")
+
+
+def is_fn(model):
+    return model in FN_MODELS
+
+
 # --------------------------------------------------------------------------------------------
 # Options. kind: choice | toggle | text.  `default` is Saber's recommended setting; the UI starts
 # there and `d` puts every row back.  `emit(value, cfg)` returns (env dict, flag list).
@@ -58,7 +67,7 @@ def _none(_v, _c):
     return {}, []
 
 
-def opt(key, label, kind, default, help, emit=_none, choices=None, models=("27b", "flashnext"), tps=("1", "2")):
+def opt(key, label, kind, default, help, emit=_none, choices=None, models=("27b",) + FN_MODELS, tps=("1", "2")):
     return dict(key=key, label=label, kind=kind, default=default, help=help, emit=emit,
                 choices=choices or [], models=models, tps=tps)
 
@@ -109,19 +118,19 @@ OPTIONS = [
         "lazy = load the tower on the first image request, unload after 300 s idle. on = keep it "
         "resident. off = text only.",
         emit=lambda v, c: ({}, [] if v == "lazy" else ["--fn-vision", v]),
-        choices=["lazy", "on", "off"], models=("flashnext",)),
+        choices=["lazy", "on", "off"], models=FN_MODELS),
     opt("thinking", "Thinking by default", "toggle", True,
         "Models reason before answering unless a request turns it off.",
-        emit=lambda v, c: ({}, [] if v else ["--fn-thinking", "off"]), models=("flashnext",)),
+        emit=lambda v, c: ({}, [] if v else ["--fn-thinking", "off"]), models=FN_MODELS),
     opt("ptree", "Prefix tree cache", "toggle", True,
         "Tiered prefix cache: faster time-to-first-token on repeated prompts.",
-        emit=lambda v, c: ({}, [] if v else ["--fn-prefix-tree", "off"]), models=("flashnext",)),
+        emit=lambda v, c: ({}, [] if v else ["--fn-prefix-tree", "off"]), models=FN_MODELS),
     opt("routes", "Record expert routes", "toggle", False,
         "Log which experts your traffic uses, to rebuild expert placement later (writes to saber-kv/).",
-        emit=lambda v, c: ({}, ["--record-routes"] if v else []), models=("flashnext",)),
+        emit=lambda v, c: ({}, ["--record-routes"] if v else []), models=FN_MODELS),
     opt("ctxfn", "Max context (tokens)", "choice", "262144",
         "Longest conversation a sequence may hold.", emit=_ctx_flag_fn,
-        choices=["262144", "131072", "65536", "32768", "10240"], models=("flashnext",)),
+        choices=["262144", "131072", "65536", "32768", "10240"], models=FN_MODELS),
     # shared
     opt("port", "Server port", "text", "8080", "The OpenAI-compatible API listens here.",
         emit=lambda v, c: ({"PORT": str(v)}, [])),
@@ -131,6 +140,15 @@ OPTIONS = [
 ]
 
 FN_NVME = "/mnt/nvme"  # Flash-Next: the pack's manifest names the checkpoint under /mnt/nvme/models
+FN_LOCAL = {"qwen38-flashnext-quark-trunk8": "qwen38-flashnext-quark-ep2-trunk8"}  # the maintainers' local name
+
+
+def fn_pack_path(nvme, name):
+    """<nvme>/saber-packs/<name>, or the maintainers' local name of it when only that is there
+    (the launcher's FN_EXPERTS_FMT=mxfp4 default does the same)."""
+    d = nvme.rstrip("/") + "/saber-packs/"
+    loc = FN_LOCAL.get(name)
+    return d + loc if loc and not os.path.isdir(d + name) and os.path.isdir(d + loc) else d + name
 
 
 def packs_dir(cfg):
@@ -202,8 +220,8 @@ def default_cfg(model="27b"):
 # The shared config (~/.config/saber/config.toml, the console's store)
 # --------------------------------------------------------------------------------------------
 
-PRESET_OF = {"27b": "qwen27b", "flashnext": "flashnext"}
-MODEL_OF = {v: k for k, v in PRESET_OF.items()}
+PRESET_OF = {k: m["preset"] for k, m in MODELS.items()}
+MODEL_OF = {"qwen27b": "27b", "flashnext": "flashnext"}  # a preset's default entry
 DEFAULT_NVME = "/mnt/nvme"
 
 
@@ -266,6 +284,8 @@ def cfg_from_console(doc, base=None):
     eng = doc.get("engine", {})
     setup = doc.get("setup", {})
     model = setup.get("model") if setup.get("model") in MODELS else MODEL_OF.get(eng.get("preset", "flashnext"))
+    if model == "flashnext" and str(eng.get("flags", {}).get("--fn-experts-fmt", "")) == "mxfp4" and "flashnext-mxfp4" in MODELS:
+        model = "flashnext-mxfp4"  # a console config of the rollback written before it had a setup.model
     if model:
         cfg["model"] = model
     flags = eng.get("flags", {})
@@ -340,7 +360,22 @@ def console_from_cfg(cfg, doc=None):
             notes.append(f"the console reads packs from <nvme>/saber-packs; {packs} is not named saber-packs, "
                          "so the console keeps its NVMe path (the launcher still uses SABER_PACKS)")
     nvme = paths.get("nvme", DEFAULT_NVME)
-    if cfg["model"] == "flashnext" and cfg.get("routes"):
+    if is_fn(cfg["model"]):
+        # the entry's format flag (`null` = the preset's own `auto`) and its pack when it is not the
+        # preset's default pack (the MXFP4 rollback; the maintainers' local name counts)
+        m = MODELS[cfg["model"]]
+        for k, v in m.get("flags", {}).items():
+            if v is None:
+                flags.pop(k, None)
+            else:
+                flags[k] = v
+        fn_packs = {n for e in FN_MODELS for n in MODELS[e]["packs"] + [FN_LOCAL.get(n, n) for n in MODELS[e]["packs"]]}
+        if m.get("default_variant"):
+            if os.path.basename(str(flags.get("--pack", ""))) in fn_packs:
+                flags.pop("--pack")
+        else:
+            flags["--pack"] = fn_pack_path(nvme, m["packs"][0])
+    if is_fn(cfg["model"]) and cfg.get("routes"):
         flags["--fn-route-record"] = nvme.rstrip("/") + "/saber-kv/routes"
     else:
         flags.pop("--fn-route-record", None)
@@ -534,15 +569,15 @@ def detect_system(cfg):
 def pack_status(cfg):
     m = model_info(cfg)
     have = []
-    legacy = {"qwen38-flashnext-quark-trunk8": "qwen38-flashnext-quark-ep2-trunk8"}  # the maintainers' local name
     for p in m["packs"]:
         d = packs_dir(cfg)
-        have.append((p, os.path.isdir(os.path.join(d, p)) or os.path.isdir(os.path.join(d, legacy.get(p, p)))))
+        have.append((p, os.path.isdir(os.path.join(d, p)) or os.path.isdir(os.path.join(d, FN_LOCAL.get(p, p)))))
     for f in m["extra_files"]:
         have.append((f, os.path.isfile(os.path.join(REPO, f))))
-    if cfg["model"] == "flashnext":
-        ck = "/mnt/nvme/models/Qwen3.8-Flash-Next-Quark-MXFP4"
-        have.append((ck, os.path.isfile(os.path.join(ck, "model-00131-of-00131.safetensors"))))
+    if is_fn(cfg["model"]):
+        # the checkpoint subset the packs read (tools/fetch_packs.sh fetches 83 of its 131 shards + the index)
+        ck = FN_NVME + "/models/Qwen3.8-Flash-Next-Quark-MXFP4"
+        have.append((ck, os.path.isfile(os.path.join(ck, "model.safetensors.index.json"))))
     return have
 
 
@@ -583,6 +618,7 @@ def build_launch(cfg):
                 "SABER_PACKS": "/mnt/nvme/saber-packs"}
     if tp == "1":
         defaults.update({"MAX_SEQS": TP1_SEQS_DEFAULT, "MAX_CTX": TP1_CTX_DEFAULT, "DEVICE": "0"})
+    env.update(MODELS[c["model"]].get("launcher_env", {}))
     env = {k: v for k, v in env.items() if defaults.get(k) != v}
     return env, [MODELS[c["model"]]["launcher"]] + (["--tp", "1"] if tp == "1" else []) + flags
 
@@ -633,7 +669,7 @@ def plan_text(cfg, sysinfo=None):
         v = (c if c.get("tp") == "1" else cfg)[o["key"]]
         v = ("on" if v else "off") if o["kind"] == "toggle" else v
         lines.append(f"{o['label']:<22}{v}")
-    if cfg["model"] == "flashnext":
+    if is_fn(cfg["model"]):
         lines.append("Locations    packs in /mnt/nvme/saber-packs, checkpoint in /mnt/nvme/models (fixed)")
     lines += [""] + [f"note: {n}" for n in notes]
     lines += ["", "Launch command:", "  " + shell_line(cfg)]

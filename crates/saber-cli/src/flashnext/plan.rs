@@ -4243,6 +4243,231 @@ mod tests {
         assert!(emit(2048, false).is_ok());
     }
 
+    /// MACFN3b: at `Dims::experts_macaq` (tp2) the seven-launch train becomes the MACaQ route --
+    /// the token producer after the route, each grouped GEMM as the shipped MXFP4 cell (the shared
+    /// expert, the route's class split) + the MACaQ `_sx` cell (ks 1, `_pf` at tm 1), the silu twin
+    /// in place of the silu-quant -- 3 launches more (`mq3_added`), everything else unchanged; the
+    /// prefill tile (> 512 rows, tm 4) runs the `_sx` tm4 cells beside `pf_tm4`; without the boot
+    /// region the route refuses by name.
+    #[test]
+    fn macfn3_the_macaq_dims_emit_the_macaq_route() {
+        use super::super::exec::{HcW, LayerW, MixOutBufs, MixerW, Mq3Region};
+        use saber_kernels::moe;
+        let d = decls();
+        let r = FlashNextRules::prod().unwrap();
+        let lw = LayerW {
+            l: 3,
+            ahc: HcW::default(),
+            mhc: HcW::default(),
+            mixer: MixerW::Gdn {
+                win: 0,
+                conv: 0,
+                alog: 0,
+                dtb: 0,
+                nw: 0,
+                wout: 0,
+            },
+            router: 1 << 30,
+            sg: 1 << 30,
+            ple: None,
+            xgu: 0,
+            xdn: 0,
+            mtp: false,
+            mtp_fp8: false,
+            mtp_x4: false,
+            mtp_xtp2: false,
+            t8: None,
+        };
+        let mx = MixOutBufs {
+            hid: 1 << 31,
+            injo: 1 << 31,
+            bi: 1 << 31,
+            q8: 1 << 31,
+            scale: 1 << 31,
+        };
+        let region = Mq3Region {
+            tsh: 1 << 34,
+            base: 1 << 35,
+            rows: 8192,
+            tiles: Mq3Region::tiles_for(8192),
+        };
+        let emit = |m: u64, mq: bool, reg: bool| -> anyhow::Result<(Vec<String>, u32)> {
+            let dm = Dims::new(2, 0).experts_tp2();
+            let dm = if mq { dm.experts_macaq() } else { dm };
+            let mut e = Emitter::new(&d, &r, dm, unbounded());
+            e.layer = 3;
+            if reg {
+                e.mq3 = Some(region);
+            }
+            let rt = e.moe_route(&lw, &mx, m, false)?;
+            e.moe_experts(&rt, &mx, m, 1 << 32, 1 << 33, false)?;
+            Ok((e.recs.iter().map(|x| x.sym.clone()).collect(), e.mq3_added))
+        };
+        for (m, tm) in [
+            (1u64, 1u32),
+            (4, 1),
+            (40, 1),
+            (512, 1),
+            (2048, 4),
+            (8192, 4),
+        ] {
+            let (mq, added) = emit(m, true, true).unwrap();
+            let (base, a0) = emit(m, false, false).unwrap();
+            assert_eq!((added, a0), (3, 0), "m {m}");
+            assert_eq!(mq.len(), base.len() + 3, "m {m}: the launch law {mq:?}");
+            let pf = if tm == 1 { "_pf" } else { "" };
+            for want in [
+                moe::MACFN3_TOK_SH_SYMBOL.to_string(),
+                moe::MACFN3_SILU_MX_SYMBOL.to_string(),
+                format!("macfn3_i4_bk128_ks1_tm{tm}_g1{pf}_sx"),
+                format!("macfn3_i4_bk64_ks1_tm{tm}_g0{pf}_sx"),
+            ] {
+                assert!(mq.contains(&want), "m {m}: {want} not in {mq:?}");
+            }
+            // the shipped MXFP4 cells are the control's, in the control's order (the shared expert)
+            let shipped: Vec<_> = base
+                .iter()
+                .filter(|s| s.starts_with("moe_grouped_w4a8_"))
+                .collect();
+            let kept: Vec<_> = mq
+                .iter()
+                .filter(|s| s.starts_with("moe_grouped_w4a8_"))
+                .collect();
+            assert_eq!(shipped, kept, "m {m}");
+            assert!(!mq.iter().any(|s| s == moe::SILU_SYMBOL), "m {m}");
+        }
+        let e = emit(4, true, false).unwrap_err().to_string();
+        assert!(e.contains("boot region"), "{e}");
+        // the MTP layer's form undoes the MACaQ route (its experts stay the slab's MXFP4 records)
+        assert!(!Dims::new(2, 0).experts_tp2().experts_macaq().mtp_form().xmq);
+        // MACFN5: with the MACaQ shared expert every tile runs on the stage-2 cells: the plain token
+        // producer, no `_sx` twin, no MXFP4 cell, the plain MACaQ silu -- ONE launch over the train
+        let emit_sh = |m: u64| -> anyhow::Result<(Vec<String>, u32)> {
+            let dm = Dims::new(2, 0)
+                .experts_tp2()
+                .experts_macaq()
+                .experts_macaq_shared();
+            let mut e = Emitter::new(&d, &r, dm, unbounded());
+            e.layer = 3;
+            e.mq3 = Some(region);
+            let rt = e.moe_route(&lw, &mx, m, false)?;
+            e.moe_experts(&rt, &mx, m, 1 << 32, 1 << 33, false)?;
+            Ok((e.recs.iter().map(|x| x.sym.clone()).collect(), e.mq3_added))
+        };
+        for (m, tm) in [
+            (1u64, 1u32),
+            (4, 1),
+            (40, 1),
+            (512, 1),
+            (2048, 4),
+            (8192, 4),
+        ] {
+            let (sh, added) = emit_sh(m).unwrap();
+            let (base, _) = emit(m, false, false).unwrap();
+            assert_eq!(added, 1, "m {m}");
+            assert_eq!(sh.len(), base.len() + 1, "m {m}: the launch law {sh:?}");
+            let pf = if tm == 1 { "_pf" } else { "" };
+            for want in [
+                moe::MACFN3_TOK_SYMBOL.to_string(),
+                moe::MACFN3_SILU_SYMBOL.to_string(),
+                format!("macfn3_i4_bk128_ks1_tm{tm}_g1{pf}"),
+                format!("macfn3_i4_bk64_ks1_tm{tm}_g0{pf}"),
+            ] {
+                assert!(sh.contains(&want), "m {m}: {want} not in {sh:?}");
+            }
+            assert!(
+                !sh.iter().any(|s| s.starts_with("moe_grouped_w4a8_")
+                    || s.ends_with("_sx")
+                    || s == moe::SILU_SYMBOL
+                    || s == moe::MACFN3_TOK_SH_SYMBOL
+                    || s == moe::MACFN3_SILU_MX_SYMBOL),
+                "m {m}: {sh:?}"
+            );
+        }
+        // MACFN9: `--fn-macaq-prefill wc` swaps ONLY the tm 4 (prefill) GEMM pair for the cached-W
+        // twins -- the same launch count, decode rows untouched
+        let emit_wc = |m: u64, wc: bool| -> Vec<String> {
+            let dm = Dims::new(2, 0)
+                .experts_tp2()
+                .experts_macaq()
+                .experts_macaq_shared();
+            let mut e = Emitter::new(&d, &r, dm, unbounded());
+            e.layer = 3;
+            e.mq3 = Some(region);
+            e.macaq_prefill_wc = wc;
+            let rt = e.moe_route(&lw, &mx, m, false).unwrap();
+            e.moe_experts(&rt, &mx, m, 1 << 32, 1 << 33, false).unwrap();
+            e.recs.iter().map(|x| x.sym.clone()).collect()
+        };
+        for m in [1u64, 40, 512, 513, 2048, 8192] {
+            let (base, wc) = (emit_wc(m, false), emit_wc(m, true));
+            assert_eq!(base.len(), wc.len(), "m {m}: the launch law");
+            let pf = m > 512;
+            for (g, want) in [
+                (moe::MoeGemm::GateUp, "macfn9_i4_bk128_ks1_tm4_g1_wc"),
+                (moe::MoeGemm::Down, "macfn9_i4_bk64_ks1_tm4_g0_wc"),
+            ] {
+                assert_eq!(wc.iter().any(|s| s == want), pf, "m {m}: {want} in {wc:?}");
+                let legacy = moe::macfn5_symbol(moe::ExpertShape::TpHalf, g, 4).unwrap();
+                assert_eq!(base.contains(&legacy), pf, "m {m}: {legacy}");
+                assert!(!wc.contains(&legacy), "m {m}: {legacy} left under wc");
+            }
+            if !pf {
+                assert_eq!(base, wc, "m {m}: a decode-band block moved");
+            }
+        }
+        let dsh = Dims::new(2, 0)
+            .experts_tp2()
+            .experts_macaq()
+            .experts_macaq_shared();
+        assert!(!dsh.mtp_form().xmq_sh && !dsh.mtp_form().xmq);
+        // MACFN7: the fused train over the MACaQ shared-expert dims -- the fused route (FN31's
+        // front at T <= 8) + (`fused`) the token producer + ONE `moe_macfn7` back half, or
+        // (`fused-tk`) the back half alone: the shipped MXFP4 fused block's launches (+1 without tk)
+        let emit_f = |m: u64, mq: Option<bool>, base: bool| -> anyhow::Result<(Vec<String>, u32)> {
+            let dm = Dims::new(2, 0).experts_tp2();
+            let dm = if base {
+                dm
+            } else {
+                dm.experts_macaq().experts_macaq_shared()
+            };
+            let mut e = Emitter::new(&d, &r, dm, unbounded());
+            e.layer = 3;
+            e.mq3 = Some(region);
+            e.moe_train = super::super::exec::MoeTrain::Fused;
+            e.macaq_back = mq;
+            e.moe_sync = 1 << 36;
+            let rt = e.moe_route(&lw, &mx, m, true)?;
+            e.moe_back(&rt, &lw, &mx, m, 1 << 32, 1 << 33, false)?;
+            Ok((e.recs.iter().map(|x| x.sym.clone()).collect(), e.mq3_added))
+        };
+        for m in [1u64, 2, 8, 9, 33, 64] {
+            let (base, _) = emit_f(m, None, true).unwrap();
+            let (ks_g, ks_d) = moe::MACFN7_KS;
+            for tk in [false, true] {
+                let (f, added) = emit_f(m, Some(tk), false).unwrap();
+                let want = moe::macfn7_back_symbol(moe::ExpertShape::TpHalf, ks_g, ks_d, false, tk)
+                    .unwrap();
+                assert_eq!(f.last(), Some(&want), "m {m} tk {tk}: {f:?}");
+                assert_eq!(added, u32::from(!tk), "m {m}");
+                assert_eq!(
+                    f.len(),
+                    base.len() + usize::from(!tk),
+                    "m {m}: {f:?} vs {base:?}"
+                );
+                assert_eq!(
+                    f.iter().any(|s| s == moe::MACFN3_TOK_SYMBOL),
+                    !tk,
+                    "m {m}: {f:?}"
+                );
+                // the route half is the shipped fused block's
+                assert_eq!(f[..base.len() - 1], base[..base.len() - 1], "m {m}");
+            }
+            let e = emit_f(m, None, false).unwrap_err().to_string();
+            assert!(e.contains("--fn-macaq-back legacy"), "{e}");
+        }
+    }
+
     #[test]
     fn fn78_decode_forms_reduce_exactly_and_band_is_the_control() {
         const WHT6: &str = "saber_ar_oneshot_2rank_wht6_bf16";

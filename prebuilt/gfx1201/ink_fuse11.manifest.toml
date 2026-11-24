@@ -1,0 +1,435 @@
+schema_version = 1
+plugin = "ink_fuse11"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/ink_fuse11.hip"
+source_sha256 = "404f30880dba5224913b1d0fa20aabc3785bc02bde1fe49e9ca99680b237f94d"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "812aa7010580333460bab168860c5e52120d9520e119bc6909e5d476c1cc6a1e"
+hsaco = "ink_fuse11.hsaco"
+hsaco_sha256 = "51aa1a6877591b5dc09e2b179e4b95adfbde489791834383dccc381a8966c7ee"
+
+[[kernel]]
+name = "ink_attn_kvc"
+symbol = "ink_attn_kvc.kd"
+kernarg_segment_size = 280
+kernarg_segment_align = 8
+group_segment_fixed_size = 3472
+private_segment_fixed_size = 0
+vgpr_count = 95
+sgpr_count = 66
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "kraw"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "vraw"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "ld_kv"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "qraw"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "ld_q"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "rraw"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "ld_r"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "dyn_k"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "dyn_v"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "ld_dyn"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "global_buffer"
+name = "wk"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "wv"
+
+[[kernel.arg]]
+offset = 96
+size = 4
+value_kind = "by_value"
+name = "c_stride"
+
+[[kernel.arg]]
+offset = 100
+size = 4
+value_kind = "by_value"
+name = "lag0"
+
+[[kernel.arg]]
+offset = 104
+size = 4
+value_kind = "by_value"
+name = "lag_stride"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "global_buffer"
+name = "q_scale"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "rel_scale"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "st_k0"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "st_k1"
+
+[[kernel.arg]]
+offset = 144
+size = 8
+value_kind = "global_buffer"
+name = "st_v0"
+
+[[kernel.arg]]
+offset = 152
+size = 8
+value_kind = "global_buffer"
+name = "st_v1"
+
+[[kernel.arg]]
+offset = 160
+size = 8
+value_kind = "global_buffer"
+name = "k_pool"
+
+[[kernel.arg]]
+offset = 168
+size = 8
+value_kind = "global_buffer"
+name = "v_pool"
+
+[[kernel.arg]]
+offset = 176
+size = 8
+value_kind = "global_buffer"
+name = "table"
+
+[[kernel.arg]]
+offset = 184
+size = 4
+value_kind = "by_value"
+name = "table_ld"
+
+[[kernel.arg]]
+offset = 192
+size = 8
+value_kind = "global_buffer"
+name = "row_seq"
+
+[[kernel.arg]]
+offset = 200
+size = 8
+value_kind = "global_buffer"
+name = "row_pos"
+
+[[kernel.arg]]
+offset = 208
+size = 8
+value_kind = "global_buffer"
+name = "p"
+
+[[kernel.arg]]
+offset = 216
+size = 8
+value_kind = "global_buffer"
+name = "sink"
+
+[[kernel.arg]]
+offset = 224
+size = 4
+value_kind = "by_value"
+name = "ld_sink"
+
+[[kernel.arg]]
+offset = 232
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 240
+size = 4
+value_kind = "by_value"
+name = "ld_o"
+
+[[kernel.arg]]
+offset = 244
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 248
+size = 4
+value_kind = "by_value"
+name = "kv"
+
+[[kernel.arg]]
+offset = 252
+size = 4
+value_kind = "by_value"
+name = "extent"
+
+[[kernel.arg]]
+offset = 256
+size = 4
+value_kind = "by_value"
+name = "window"
+
+[[kernel.arg]]
+offset = 260
+size = 4
+value_kind = "by_value"
+name = "global_layer"
+
+[[kernel.arg]]
+offset = 264
+size = 4
+value_kind = "by_value"
+name = "qk_clip"
+
+[[kernel.arg]]
+offset = 268
+size = 4
+value_kind = "by_value"
+name = "rel_clip"
+
+[[kernel.arg]]
+offset = 272
+size = 4
+value_kind = "by_value"
+name = "n_floor"
+
+[[kernel.arg]]
+offset = 276
+size = 4
+value_kind = "by_value"
+name = "alpha"
+
+[[kernel]]
+name = "ink_depth_mq"
+symbol = "ink_depth_mq.kd"
+kernarg_segment_size = 116
+kernarg_segment_align = 8
+group_segment_fixed_size = 32
+private_segment_fixed_size = 0
+vgpr_count = 140
+sgpr_count = 44
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 64
+value_kind = "by_value"
+name = "states"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "s"
+
+[[kernel.arg]]
+offset = 72
+size = 8
+value_kind = "global_buffer"
+name = "q0"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "ldq"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "o0"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "by_value"
+name = "o_stride"
+
+[[kernel.arg]]
+offset = 104
+size = 4
+value_kind = "by_value"
+name = "ld_s"
+
+[[kernel.arg]]
+offset = 108
+size = 4
+value_kind = "by_value"
+name = "ld_o"
+
+[[kernel.arg]]
+offset = 112
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "ink_gemv3_f32_bf16"
+symbol = "ink_gemv3_f32_bf16.kd"
+kernarg_segment_size = 108
+kernarg_segment_align = 8
+group_segment_fixed_size = 41216
+private_segment_fixed_size = 0
+vgpr_count = 236
+sgpr_count = 38
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 96
+value_kind = "by_value"
+name = "segs"
+
+[[kernel.arg]]
+offset = 96
+size = 4
+value_kind = "by_value"
+name = "lda"
+
+[[kernel.arg]]
+offset = 100
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 104
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel]]
+name = "ink_seam_p1"
+symbol = "ink_seam_p1.kd"
+kernarg_segment_size = 40
+kernarg_segment_align = 8
+group_segment_fixed_size = 32896
+private_segment_fixed_size = 0
+vgpr_count = 27
+sgpr_count = 18
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "lg"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "by_value"
+name = "ld"
+
+[[kernel.arg]]
+offset = 16
+size = 4
+value_kind = "by_value"
+name = "ncols"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "temp"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel]]
+name = "ink_seam_p2"
+symbol = "ink_seam_p2.kd"
+kernarg_segment_size = 16
+kernarg_segment_align = 8
+group_segment_fixed_size = 32768
+private_segment_fixed_size = 0
+vgpr_count = 10
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 1024
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "out"

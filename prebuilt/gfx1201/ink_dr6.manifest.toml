@@ -1,0 +1,123 @@
+schema_version = 1
+plugin = "ink_dr6"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/ink_dr6.hip"
+source_sha256 = "181b22767e540fe6011335ea13e64637975f915b04fed49160011188271a1f82"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "ef2af17685d3f5d9ba36eb29c116524c753ab6936f5a5193c0f8db70c2c9eab0"
+hsaco = "ink_dr6.hsaco"
+hsaco_sha256 = "03f00892d01a558c9ae20b923dc437d5acc9822a77b4c56033bb46711cef3c71"
+
+[[kernel]]
+name = "ink_dr6_argmax_map_p"
+symbol = "ink_dr6_argmax_map_p.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 3072
+private_segment_fixed_size = 0
+vgpr_count = 13
+sgpr_count = 14
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "map"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "tok"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "psum"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "cap"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "p1"
+
+[[kernel]]
+name = "ink_dr6_fold_p"
+symbol = "ink_dr6_fold_p.kd"
+kernarg_segment_size = 56
+kernarg_segment_align = 8
+group_segment_fixed_size = 1120
+private_segment_fixed_size = 0
+vgpr_count = 28
+sgpr_count = 17
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "fw"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "fb"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "base"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "lat"
+
+[[kernel.arg]]
+offset = 32
+size = 4
+value_kind = "by_value"
+name = "v"
+
+[[kernel.arg]]
+offset = 36
+size = 4
+value_kind = "by_value"
+name = "cap"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "psum"

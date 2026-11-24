@@ -1,0 +1,723 @@
+schema_version = 1
+plugin = "ink_fast"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/ink_fast.hip"
+source_sha256 = "5b344a73f974b8f4e1093a8009f13da4b475509a0c2ba8d0fc02bf82c90e39d4"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "53e96198e4f8c815fa95479ce9832abe6517cc8e86f56b10669a31206ef8c338"
+hsaco = "ink_fast.hsaco"
+hsaco_sha256 = "258a4aa34852d807fabb3ef63af4dc509a71422a116936ce17e2702f9e1da3fc"
+
+[[kernel]]
+name = "ink_attn_bias_sink_v1"
+symbol = "ink_attn_bias_sink_v1.kd"
+kernarg_segment_size = 132
+kernarg_segment_align = 8
+group_segment_fixed_size = 2656
+private_segment_fixed_size = 0
+vgpr_count = 68
+sgpr_count = 32
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ld_q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "k_pool"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "v_pool"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "table"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "table_ld"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "row_seq"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "row_pos"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "rp"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "ld_rp"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "global_buffer"
+name = "p"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "sink"
+
+[[kernel.arg]]
+offset = 96
+size = 4
+value_kind = "by_value"
+name = "ld_sink"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 112
+size = 4
+value_kind = "by_value"
+name = "ld_o"
+
+[[kernel.arg]]
+offset = 116
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 120
+size = 4
+value_kind = "by_value"
+name = "kv"
+
+[[kernel.arg]]
+offset = 124
+size = 4
+value_kind = "by_value"
+name = "extent"
+
+[[kernel.arg]]
+offset = 128
+size = 4
+value_kind = "by_value"
+name = "window"
+
+[[kernel]]
+name = "ink_gemv_f32_bf16"
+symbol = "ink_gemv_f32_bf16.kd"
+kernarg_segment_size = 60
+kernarg_segment_align = 8
+group_segment_fixed_size = 41216
+private_segment_fixed_size = 0
+vgpr_count = 236
+sgpr_count = 39
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "lda"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "ldw"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 52
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "acc"
+
+[[kernel]]
+name = "ink_gemv_gate_f32_bf16"
+symbol = "ink_gemv_gate_f32_bf16.kd"
+kernarg_segment_size = 76
+kernarg_segment_align = 8
+group_segment_fixed_size = 41216
+private_segment_fixed_size = 0
+vgpr_count = 238
+sgpr_count = 51
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "a"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "lda"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "g"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "ldg"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "ldw"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "c"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "ldc"
+
+[[kernel.arg]]
+offset = 60
+size = 4
+value_kind = "by_value"
+name = "m"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "n"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "acc"
+
+[[kernel]]
+name = "ink_msg_out"
+symbol = "ink_msg_out.kd"
+kernarg_segment_size = 68
+kernarg_segment_align = 8
+group_segment_fixed_size = 256
+private_segment_fixed_size = 0
+vgpr_count = 113
+sgpr_count = 18
+wavefront_size = 32
+max_flat_workgroup_size = 64
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "h"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ld_h"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "m"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "ld_m"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "z"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "wf"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "wg"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "ld_o"
+
+[[kernel]]
+name = "ink_msg_z"
+symbol = "ink_msg_z.kd"
+kernarg_segment_size = 52
+kernarg_segment_align = 8
+group_segment_fixed_size = 26656
+private_segment_fixed_size = 0
+vgpr_count = 39
+sgpr_count = 18
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "h"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ld_h"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "m"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "ld_m"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "wd"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "z"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "eps"
+
+[[kernel]]
+name = "ink_route_logits"
+symbol = "ink_route_logits.kd"
+kernarg_segment_size = 68
+kernarg_segment_align = 8
+group_segment_fixed_size = 46096
+private_segment_fixed_size = 0
+vgpr_count = 22
+sgpr_count = 22
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "h"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ld_h"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "gain"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "wr"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "bias"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "u"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "ld_u"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "sk"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "d"
+
+[[kernel]]
+name = "ink_route_tail"
+symbol = "ink_route_tail.kd"
+kernarg_segment_size = 144
+kernarg_segment_align = 8
+group_segment_fixed_size = 4704
+private_segment_fixed_size = 0
+vgpr_count = 22
+sgpr_count = 45
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "sk"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "ids"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "wts"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "route_scale"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "ld_x"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 56
+size = 4
+value_kind = "by_value"
+name = "ld_q"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "scale"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "k"
+
+[[kernel.arg]]
+offset = 76
+size = 4
+value_kind = "by_value"
+name = "t"
+
+[[kernel.arg]]
+offset = 80
+size = 4
+value_kind = "by_value"
+name = "lo"
+
+[[kernel.arg]]
+offset = 84
+size = 4
+value_kind = "by_value"
+name = "nloc"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "row_tok"
+
+[[kernel.arg]]
+offset = 96
+size = 8
+value_kind = "global_buffer"
+name = "row_slot"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "tile_e"
+
+[[kernel.arg]]
+offset = 112
+size = 8
+value_kind = "global_buffer"
+name = "tile_r0"
+
+[[kernel.arg]]
+offset = 120
+size = 8
+value_kind = "global_buffer"
+name = "tile_n"
+
+[[kernel.arg]]
+offset = 128
+size = 8
+value_kind = "global_buffer"
+name = "meta"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "pos"
+
+[[kernel]]
+name = "ink_route_top8"
+symbol = "ink_route_top8.kd"
+kernarg_segment_size = 28
+kernarg_segment_align = 8
+group_segment_fixed_size = 576
+private_segment_fixed_size = 0
+vgpr_count = 13
+sgpr_count = 33
+wavefront_size = 32
+max_flat_workgroup_size = 128
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "sk"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "ids"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "wts"
+
+[[kernel.arg]]
+offset = 24
+size = 4
+value_kind = "by_value"
+name = "route_scale"
+
+[[kernel]]
+name = "ink_sconv_rows"
+symbol = "ink_sconv_rows.kd"
+kernarg_segment_size = 76
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 17
+sgpr_count = 24
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "x"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ld_x"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "w"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "st"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "rseq"
+
+[[kernel.arg]]
+offset = 40
+size = 8
+value_kind = "global_buffer"
+name = "resid"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "ld_r"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 64
+size = 4
+value_kind = "by_value"
+name = "ld_o"
+
+[[kernel.arg]]
+offset = 68
+size = 4
+value_kind = "by_value"
+name = "t"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "c"

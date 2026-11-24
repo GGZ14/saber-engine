@@ -140,6 +140,8 @@ pub const GROUP_RULES: &[(&str, &str, &str)] = &[
     ("engine", "--stop-after-accept", "Harness and gates"),
     ("engine", "--solo-", "Harness and gates"),
     ("engine", "--first-block-ids", "Harness and gates"),
+    // INK2: the Inkling 2 path's boot flags (`saber_cli::inkling2`; today the host dry run)
+    ("engine", "--ink-", "Harness and gates"),
     // the mock executor
     ("serve", "--mock", "Mock engine"),
     ("serve", "--step-delay-ms", "Mock engine"),

@@ -17,7 +17,13 @@ It also runs on **one card** (TP=1, `tools/serve_27b.sh --tp 1`) with smaller co
 defaults; see "One card (TP=1)" below. The previous default, the MACaQ MXFP4 pack
 ([`Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER)), is
 one flag away: `tools/fetch_packs.sh 27b-macaq` and `tools/serve_27b.sh --weights macaq`.
-**Qwen3.8 Flash-Next** (MoE) is served by the same binary.
+**Qwen3.8 Flash-Next** (MoE) is served by the same binary, by default with its routed and shared experts in
+Saber's MACaQ int4 format ([`Launch80/Qwen3.8-Flash-Next-MACaQ-SABER`](https://huggingface.co/Launch80/Qwen3.8-Flash-Next-MACaQ-SABER));
+the MXFP4-expert pack is the one-variable rollback (`FN_EXPERTS_FMT=mxfp4`).
+**Inkling 2 Mini** (MoE, 128 experts top-8, a looped middle) is served by the same binary at TP=2 from a
+self-contained 20.73 GB pack ([`Launch80/Inkling-2-Mini-NVFP4-SABER`](https://huggingface.co/Launch80/Inkling-2-Mini-NVFP4-SABER)):
+the model's own NVFP4 / MXFP8 experts, an 8-bit attention trunk and its bundled block drafter; see "Inkling 2 Mini"
+below.
 
 ## What you need
 
@@ -25,8 +31,8 @@ one flag away: `tools/fetch_packs.sh 27b-macaq` and `tools/serve_27b.sh --weight
 |---|---|
 | GPUs | 2x Radeon AI PRO R9700 (gfx1201), PCIe; one card works for TP=1 |
 | OS / runtime | Linux with the ROCm kernel driver (`/dev/kfd`, `/dev/dri`) and **podman or docker** |
-| Host | a fast NVMe for the weight packs (`/mnt/nvme/saber-packs`; 27B about 28 GB; Flash-Next about 70 GB, with its 170 GB checkpoint under `models/`) |
-| Weights | the prebuilt packs from `tools/fetch_packs.sh`: 27B ~28 GB (`27b-macaq-w4a8`, TP=2) or ~26 GB (`27b-macaq-w4a8-tp1`, one card); Flash-Next ~70 GB of packs plus the original 170 GB checkpoint |
+| Host | a fast NVMe for the weight packs (`/mnt/nvme/saber-packs`, or any storage root with `SABER_NVME`; 27B about 28 GB; Flash-Next 210.6 GB: the 71.1 GB MACaQ pack plus the 139.5 GB of its original checkpoint it reads, under `models/`; Inkling 2 Mini 20.73 GB, the pack only) |
+| Weights | the prebuilt packs from `tools/fetch_packs.sh`: 27B ~28 GB (`27b-macaq-w4a8`, TP=2) or ~26 GB (`27b-macaq-w4a8-tp1`, one card); Flash-Next `flashnext` = the 71.1 GB MACaQ pack + 83 of the checkpoint's 131 shards (139.5 GB) = 210.6 GB (the MXFP4 rollback, `flashnext-mxfp4`: 74.2 GB + the same 83-shard subset = 213.7 GB); Inkling 2 Mini `inkling` = the 20.73 GB pack, no checkpoint download |
 
 All builds and GPU runs happen inside the dev container, so the host needs no ROCm toolchain.
 
@@ -131,13 +137,13 @@ runs at a time, they share the cards). You can also build the NVFP4 and Quark 27
 pack, yourself from the original checkpoint: see "Build packs yourself" (the MACaQ packs are published
 ready-made only).
 
-| | Qwen3.8-27B (MACaQ W4A8-iu8, the default) | Qwen3.8-27B (MACaQ MXFP4) | Qwen3.8-27B (NVFP4) | Qwen3.8-27B (Quark AWQ MXFP4) | Qwen3.8 Flash-Next (MoE) |
+| | Qwen3.8-27B (MACaQ W4A8-iu8, the default) | Qwen3.8-27B (MACaQ MXFP4) | Qwen3.8-27B (NVFP4) | Qwen3.8-27B (Quark AWQ MXFP4) | Qwen3.8 Flash-Next (MoE, MACaQ experts, the default) |
 |---|---|---|---|---|---|
 | Source checkpoint | [`Qwen/Qwen3.8-27B`](https://huggingface.co/Qwen/Qwen3.8-27B) (BF16), quantized with a MACaQ recipe ([arXiv:2611.10649](https://arxiv.org/abs/2611.10649)) | the same | [`unsloth/Qwen3.8-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4) | [`amd/Qwen3.8-27B-Quark-AWQ-MXFP4`](https://huggingface.co/amd/Qwen3.8-27B-Quark-AWQ-MXFP4) | [`amd/Qwen3.8-Flash-Next-Quark-MXFP4`](https://huggingface.co/amd/Qwen3.8-Flash-Next-Quark-MXFP4) |
 | Download | about 28 GB (TP=2) / 26 GB (TP=1), drafter included | about 29 GB (TP=2) / 28 GB (TP=1), drafter included | about 26 GB | about 29 GB (TP=2) / 28 GB (TP=1) | about 70 GB of packs **plus the original 170 GB checkpoint** (see below) |
-| Hugging Face | [`Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER) + [`Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER) | [`Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER) (+ the drafter from the Quark repo) | [`Launch80/Qwen3.8-27B-NVFP4-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-NVFP4-SABER) | [`Launch80/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER) | [`Launch80/Qwen3.8-Flash-Next-SABER`](https://huggingface.co/Launch80/Qwen3.8-Flash-Next-SABER) + the checkpoint |
-| Fetch | `tools/fetch_packs.sh 27b-macaq-w4a8` (TP=2); `tools/fetch_packs.sh 27b-macaq-w4a8-tp1` (TP=1) | `tools/fetch_packs.sh 27b-macaq` (TP=2); `tools/fetch_packs.sh 27b-macaq-tp1` (TP=1) | `tools/fetch_packs.sh 27b` (two cards, TP=2); `tools/fetch_packs.sh 27b-tp1` (one card, TP=1, about 25 GB) | `tools/fetch_packs.sh 27b-quark` (TP=2); `tools/fetch_packs.sh 27b-quark-tp1` (TP=1) | `tools/fetch_packs.sh flashnext` |
-| Serve | `tools/serve_27b.sh` (two cards); `tools/serve_27b.sh --tp 1` (one card) | `tools/serve_27b.sh --weights macaq` (two cards); `--weights macaq --tp 1` (one card, speed **not measured**) | `tools/serve_27b.sh --weights nvfp4` (two cards); `--weights nvfp4 --tp 1` (one card) | `tools/serve_27b.sh --weights quark` (two cards); `--weights quark --tp 1` (one card, **not yet booted**, see below) | `tools/serve_flashnext.sh` |
+| Hugging Face | [`Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER) + [`Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER) | [`Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-MACaQ-MXFP4-SABER) (+ the drafter from the Quark repo) | [`Launch80/Qwen3.8-27B-NVFP4-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-NVFP4-SABER) | [`Launch80/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER`](https://huggingface.co/Launch80/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER) | [`Launch80/Qwen3.8-Flash-Next-MACaQ-SABER`](https://huggingface.co/Launch80/Qwen3.8-Flash-Next-MACaQ-SABER) + 83 shards of the checkpoint (the MXFP4 rollback: [`Launch80/Qwen3.8-Flash-Next-SABER`](https://huggingface.co/Launch80/Qwen3.8-Flash-Next-SABER) + the whole checkpoint) |
+| Fetch | `tools/fetch_packs.sh 27b-macaq-w4a8` (TP=2); `tools/fetch_packs.sh 27b-macaq-w4a8-tp1` (TP=1) | `tools/fetch_packs.sh 27b-macaq` (TP=2); `tools/fetch_packs.sh 27b-macaq-tp1` (TP=1) | `tools/fetch_packs.sh 27b` (two cards, TP=2); `tools/fetch_packs.sh 27b-tp1` (one card, TP=1, about 25 GB) | `tools/fetch_packs.sh 27b-quark` (TP=2); `tools/fetch_packs.sh 27b-quark-tp1` (TP=1) | `tools/fetch_packs.sh flashnext` (rollback: `tools/fetch_packs.sh flashnext-mxfp4`) |
+| Serve | `tools/serve_27b.sh` (two cards); `tools/serve_27b.sh --tp 1` (one card) | `tools/serve_27b.sh --weights macaq` (two cards); `--weights macaq --tp 1` (one card, speed **not measured**) | `tools/serve_27b.sh --weights nvfp4` (two cards); `--weights nvfp4 --tp 1` (one card) | `tools/serve_27b.sh --weights quark` (two cards); `--weights quark --tp 1` (one card, **not yet booted**, see below) | `tools/serve_flashnext.sh` (rollback: `FN_EXPERTS_FMT=mxfp4 tools/serve_flashnext.sh`) |
 | Numerics | W4A8 on int8 matrix cores: per-row int4 weights in the MACaQ Hadamard basis, 19 linears per-row int8, per-token int8 activations, the BF16 head (see below) | W4A8: MXFP4 weights behind a block-32 Hadamard + per-channel scale, 19 linears W8A8, fp8 activations, the BF16 head (see below) | W4A8: MXFP4 weights requantized from NVFP4, fp8 activations, fp8 head | W4A8: AMD's MXFP4 weights **as stored** (no requantization), fp8 activations, the checkpoint's bf16 head (see below) | MXFP4 experts as stored, fp8 trunk |
 
 ```bash
@@ -345,12 +351,34 @@ the tokenizer and chat template, which `fetch_packs.sh` puts in `.cache/`. Nothi
 
 **What Flash-Next needs, and why it is bigger.** The Flash-Next pack is not self-contained: for the
 embeddings, norms and router, and for the 102 GB per-layer-embedding (PLE) table, it points into the
-original checkpoint's safetensors files and reads them in place. `fetch_packs.sh flashnext` therefore
-downloads both the pack (`qwen38-flashnext-quark-trunk8`) and the checkpoint. The pack's manifest names
-the checkpoint by absolute path, so it goes in `/mnt/nvme/models/Qwen3.8-Flash-Next-Quark-MXFP4`; the
-script reads the path from the manifest and downloads there. The launcher mounts
-`$SABER_NVME/models` into the container, so keep `SABER_NVME` at its default (`/mnt/nvme`) unless you
-also change that path. The checkpoint is AMD's, under its own license.
+original checkpoint's safetensors files and reads them in place.
+**The default pack is MACaQ** (`qwen38-flashnext-macaq-tp2-trunk8`, 71.1 GB): the routed experts and the shared
+expert in Saber's MACaQ int4 format (KL against bf16 about half of the MXFP4 experts'), served with the fused int4
+back half (`--fn-experts-fmt auto`, the binary's default, reads the pack's expert tier as MACaQ; `--fn-macaq-prefill`
+picks the prefill body). Its experts are in the pack, so `fetch_packs.sh flashnext` downloads only the 83 of the
+checkpoint's 131 shards the pack reads (139.5 GB, at the checkpoint revision the pack was verified against; the
+other 48 hold the MXFP4 experts): 210.6 GB in all. It checks the free space first, and any storage root works:
+`SABER_NVME=/data/saber tools/fetch_packs.sh flashnext`, then `SABER_NVME=/data/saber tools/serve_flashnext.sh`.
+The manifest's recorded checkpoint path (`/mnt/nvme/models/...`) is used as-is when it exists; otherwise the
+engine rebases it under `$SABER_NVME` (or the directory above `saber-packs/`; `--fn-ckpt-dir DIR` overrides) and
+reads `config.json`, `generation_config.json`, the chat template and the tokenizer from the pack's `base/` (boot
+line `fnpaths:`). **The rollback** is the MXFP4-expert pack: `tools/fetch_packs.sh flashnext-mxfp4` downloads
+`qwen38-flashnext-quark-trunk8` and the whole checkpoint (at the absolute path its manifest names,
+`/mnt/nvme/models/Qwen3.8-Flash-Next-Quark-MXFP4`), and `FN_EXPERTS_FMT=mxfp4 tools/serve_flashnext.sh` serves
+it. The checkpoint is AMD's, under its own license.
+
+**Inkling 2 Mini.** `tools/fetch_packs.sh inkling` downloads [`Launch80/Inkling-2-Mini-NVFP4-SABER`](https://huggingface.co/Launch80/Inkling-2-Mini-NVFP4-SABER)
+(20.73 GB) into `$SABER_NVME/saber-packs/inkling-2-mini-nvfp4`, and `tools/serve_inkling.sh` builds the binary and
+serves it on both cards (`SABER_NVME=/data/saber` for another storage root; model id `Inkling-2-Mini`;
+`tools/serve_inkling.sh stop` stops it). The pack is self-contained: the routed experts keep the source's native
+NVFP4 (layers 0-19) and MXFP8 (layers 20-23) codes and scales, the attention projections and the LM head are int8
+(`trunk8/`), the model's bundled block drafter is in `draft/`, and every non-expert tensor plus the config, tokenizer
+and chat template are in `base/` (boot line `inkpaths: ... (the pack's own base/)`), so no checkpoint is downloaded.
+Text only, TP=2 only, 4,096 tokens a sequence by default (`--ink-serve-ctx` raises it), up to 8 sequences.
+The pack is a derivative of [thinkingmachines/Inkling-2-Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini)
+(Thinking Machines Lab), Apache-2.0 like the base model (its NOTICE lists the changes); use is also subject to the
+base model's acceptable use policy. *While the Hugging Face repository is private, the download needs a token with
+access (`HF_TOKEN`); once it is public, `tools/fetch_packs.sh inkling` needs no login.*
 
 **The n-gram (PLE) table.** Flash-Next's per-layer-embedding table is the n-gram lookup behind every
 token: 320,001,536 rows of 160 bf16 values (95.4 GiB, 128 shards, tensors named
@@ -547,7 +575,8 @@ Environment variables (put them before the command):
 |---|---|---|
 | `PORT` | `8080` | Listen port |
 | `SABER_NVME` | `/mnt/nvme` | Parent of `models/`, `saber-packs/`, `saber-kv/` |
-| `PACK` | `$SABER_NVME/saber-packs/qwen38-flashnext-quark-trunk8` | Weight pack |
+| `PACK` | `$SABER_NVME/saber-packs/qwen38-flashnext-macaq-tp2-trunk8` | Weight pack (with `FN_EXPERTS_FMT=mxfp4`: `qwen38-flashnext-quark-ep2-trunk8` if present, else `qwen38-flashnext-quark-trunk8`) |
+| `FN_EXPERTS_FMT` | `auto` | the expert format: `auto` reads the pack's tier (MACaQ for the default pack); `mxfp4` = the rollback (the MXFP4 pack, `--fn-experts-fmt mxfp4`) |
 | `FN_TRUNK` | `w8-hc8-head` | `w8`, `w8-hc8` or `bf16` select slower, higher-precision trunks |
 | `FN_KV` | `fp8` | `bf16` for a bf16 KV cache |
 | `FN_EXPERTS` | `tp2` | `ep` for expert parallelism |
@@ -639,7 +668,7 @@ pinned, checksummed Node inside the dev image, no GPU) and the result is committ
 
 ## Reproducing the code objects
 
-`prebuilt/gfx1201/` holds 127 compiled GPU code objects. Each has a manifest next to it recording the
+`prebuilt/gfx1201/` holds 150 compiled GPU code objects. Each has a manifest next to it recording the
 source file, its sha256, the compiler flags, a build hash (sha256 of the preprocessed source plus
 flags) and the object's own sha256. The sources are in `crates/saber-kernels/hip`.
 
@@ -648,7 +677,7 @@ the file; `tools/verify_prebuilt.py --table` lists it per object.
 
 | Objects | ROCm | TheRock commit | LLVM (`ROCm/llvm-project`) | Patches on LLVM |
 |---|---|---|---|---|
-| 75 | 10.1.0rc3 (HIP 7.16.26385) | `b324869fb311` | `d6f6cb69` (clang 24.0.0git) | none |
+| 98 | 10.1.0rc3 (HIP 7.16.26385) | `b324869fb311` | `d6f6cb69` (clang 24.0.0git) | none |
 | 52 | 7.14.0rc3 (HIP 7.14.60850) | `418cd5f63abb` | `46fcb339` (clang 23.0.0git) | 2 TheRock patches, both `hipcc` driver path handling (Windows include path, `HIP_PATH` precedence); the clang string carries `+PATCHED:` for them |
 
 Saber applies no patches to LLVM. The container image from `tools/build-image.sh` uses the public
@@ -666,7 +695,9 @@ the dynamic symbol-table sections, so file hashes never match. `verify_prebuilt.
 `.rodata` and the register limits, and only against a rebuild by the same compiler. When we ran it,
 every shipped object matched: 64 of 64 on ROCm 10.1 and 52 of 52 on ROCm 7.14, none different (the five
 MACaQ objects added since, all ROCm 10.1, were checked the same way: 5 of 5; so were the six W4A8-iu8 objects
-`macaq_iu8`, `macaq_iu8f`, `mxfp4_hadi8`, `attn_glue_hadi8`, `saber_ar_hadi8` and `dflash_hadi8`: 6 of 6).
+`macaq_iu8`, `macaq_iu8f`, `mxfp4_hadi8`, `attn_glue_hadi8`, `saber_ar_hadi8` and `dflash_hadi8`: 6 of 6). The 29
+objects added with the MACaQ Flash-Next experts (`moe_macfn3`, `moe_macfn7`, `moe_macfn9`) and the Inkling 2 path
+(`ink_*`) are ROCm 10.1 builds.
 
 The MXFP4 GEMM sources were derived from `tools/reference/ref_mxfp4_fp8.hip` by
 `tools/gen_hip_sources.py`. The committed `.hip` files are the inputs that were compiled, not the
@@ -678,7 +709,9 @@ W8A8 bodies, from the Flash-Next W8 sources) and `tools/gen_arnq_had.py --check`
 decode GEMM's reduce epilogue) regenerate them exactly. The W4A8-iu8 path adds two more:
 `tools/gen_macaq_iu8.py --check` (the per-token int8 twins of the Hadamard producers, from their had32 sources)
 and `tools/gen_macaq_iu8f.py --check` (the fused decode pair, the reduce-epilogue row and the prefill band tiles,
-sliced from `macaq_iu8.hip` and the had32 sources).
+sliced from `macaq_iu8.hip` and the had32 sources). The MACaQ Flash-Next experts add
+`tools/gen_macfn7_back.py --check` (the fused int4 back half, from `moe_macfn3.hip` and `moe_grouped_far.hip`) and
+`tools/gen_macfn9_pf.py --check` (the wide-chunk prefill body, from `moe_macfn3.hip`).
 
 ## Layout
 

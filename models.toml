@@ -137,3 +137,21 @@ legacy_dirs = ["qwen38-dflash2-drafter-fp8", "qwen38-dflash2-drafter-quarkhead"]
 path = "tp1"
 bytes = 7668395208
 legacy_dirs = ["qwen38-dflash2-drafter-fp8-tp1", "qwen38-dflash2-drafter-quarkhead-tp1"]
+
+# ---------------------------------------------------------------------------------------------
+# Served by their own launchers, not by `saber serve --model` (the registry's entries are the dense
+# 27B's packs; these engines take other flags). Listed here so every published pack has one place:
+#
+#   Qwen3.8 Flash-Next (MoE), MACaQ int4 experts -- the default Flash-Next
+#     repo     Launch80/Qwen3.8-Flash-Next-MACaQ-SABER (pack, 71.1 GB) + 83 shards of
+#              amd/Qwen3.8-Flash-Next-Quark-MXFP4 at b2091c3809eb51902f46a163973362d8176f9e58 (139.5 GB)
+#     fetch    tools/fetch_packs.sh flashnext        serve  tools/serve_flashnext.sh
+#     rollback Launch80/Qwen3.8-Flash-Next-SABER (MXFP4 experts): tools/fetch_packs.sh flashnext-mxfp4,
+#              FN_EXPERTS_FMT=mxfp4 tools/serve_flashnext.sh
+#
+#   Inkling 2 Mini (MoE), NVFP4 / MXFP8 experts, 8-bit trunk, bundled drafter -- served id Inkling-2-Mini
+#     repo     Launch80/Inkling-2-Mini-NVFP4-SABER (self-contained, 20.73 GB; no checkpoint download)
+#     fetch    tools/fetch_packs.sh inkling          serve  tools/serve_inkling.sh   (TP=2)
+#     access   the repository is private for now: the fetch needs HF_TOKEN with access to it; once it
+#              is public, the same command downloads it with no login
+#     license  Apache-2.0, a derivative of thinkingmachines/Inkling-2-Mini (see the repo's NOTICE)

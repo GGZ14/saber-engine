@@ -73,7 +73,12 @@ While `config.toml` is absent or the setup is unfinished, the console opens the 
    runtime and image, disk free on the pack and KV volumes, a conflicting server.
 2. **Model**: the catalog (`tools/models.json`), size and fit for this machine; packs download
    with resume, sha256 verification and progress (the list survives a console restart: a running
-   download comes back paused, resume continues from its `.part` files). The 27B asks **how many
+   download comes back paused, resume continues from its `.part` files). Flash-Next has two
+   entries (CAT1 / CAT2): **MACaQ** (`flashnext`, what `tools/serve_flashnext.sh` boots, marked
+   default; `Launch80/Qwen3.8-Flash-Next-MACaQ-SABER`) and **MXFP4** (`flashnext-mxfp4`, the
+   rollback: its own pack + `--fn-experts-fmt mxfp4`); both read the same 83-shard subset of AMD's
+   Quark checkpoint (revision b2091c38) in place under the storage root (210.6 / 213.7 GB in all).
+   The 27B asks **how many
    cards**: two (TP=2, each card holds half of the model: the full 262,144-token context and 8
    sequences) or one (TP=1, the whole model on one GPU with the single-card `-tp1` packs: one
    conversation at a time with up to ~128k tokens of context by default, other requests queue;
