@@ -2,6 +2,7 @@
 //! another file): what the setup wizard offers, where each component lands, and the hardware
 //! fit rules. `tools/saber-setup` (the terminal wizard) reads the same file.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -53,6 +54,10 @@ pub struct Model {
     // the terminal wizard's fields (kept so both tools read one file)
     #[serde(default)]
     pub launcher: String,
+    /// The environment the terminal wizard sets for `launcher` (CAT2: the MXFP4 rollback's
+    /// `FN_EXPERTS_FMT=mxfp4`); the console composes the same boot from `flags`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub launcher_env: BTreeMap<String, String>,
     #[serde(default)]
     pub container: String,
     #[serde(default)]
@@ -62,6 +67,15 @@ pub struct Model {
     /// `tools/fetch_packs.sh`'s target for this model (the terminal wizard's install step).
     #[serde(default)]
     pub fetch: String,
+    /// Engine flags this model's packs need beside the pack flags (CAT2: the Flash-Next MXFP4
+    /// rollback's `--fn-experts-fmt mxfp4`): set by [`config_for`]; a `null` value removes an
+    /// override another variant of the same preset may have left (the preset's own value).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub flags: BTreeMap<String, Option<FlagValue>>,
+    /// A variant of the preset that is what its launcher boots with no override (shown as the
+    /// default when a preset has several catalog models).
+    #[serde(default)]
+    pub default_variant: bool,
     /// The single-card (TP=1) form: what differs from the TP=2 entry above (the `-tp1` packs,
     /// their sizes and fit). A model without it is TP=2 only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -638,6 +652,16 @@ pub fn config_for_tp(
     }
     c.engine.preset = model.preset;
     c.engine.tp = tp;
+    for (k, v) in &model.flags {
+        match v {
+            Some(v) => {
+                c.engine.flags.insert(k.clone(), v.clone());
+            }
+            None => {
+                c.engine.flags.remove(k);
+            }
+        }
+    }
     c.engine.runtime = if model.preset == Preset::Mock {
         Runtime::Direct
     } else {
@@ -649,6 +673,7 @@ pub fn config_for_tp(
             c.engine.paths.tokenizer = m.engine.paths.tokenizer;
         }
     }
+    let mut fn_pack = None;
     for comp in &model.components {
         let Some(at) = comp.installed_at(roots) else {
             anyhow::bail!(
@@ -661,6 +686,9 @@ pub fn config_for_tp(
                 model.name
             );
         };
+        if model.preset == Preset::Flashnext && comp.flag == "--pack" {
+            fn_pack = Some(at.clone());
+        }
         if !comp.flag.is_empty() {
             let arg = crate::apply::pack_arg(model.preset, &at);
             c.engine
@@ -676,7 +704,77 @@ pub fn config_for_tp(
             }
         }
     }
+    // A Flash-Next pack reads its checkpoint in place (CAT1): the engine finds it at the path the
+    // manifest records or REBASED under the storage root (HF2, `saber-cli` `flashnext::paths`);
+    // a pack whose checkpoint the engine would not find is refused here, by name.
+    if let Some(at) = fn_pack {
+        fn_checkpoint_for(&at, roots)?;
+    }
     Ok(c)
+}
+
+/// The checkpoint directory a Flash-Next pack's `manifest.json` names (`checkpoint.dir`, an
+/// absolute path the loader and `ple/ple_index.json` read in place), or `None` when the pack has
+/// no readable manifest or names none.
+#[must_use]
+pub fn manifest_checkpoint_dir(pack: &Path) -> Option<PathBuf> {
+    let t = std::fs::read_to_string(pack.join("manifest.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&t).ok()?;
+    let d = v.get("checkpoint")?.get("dir")?.as_str()?;
+    (!d.is_empty()).then(|| PathBuf::from(d))
+}
+
+/// The file that marks a checkpoint directory (`saber-cli` `flashnext::paths::CKPT_MARKER`).
+pub const CKPT_MARKER: &str = "model.safetensors.index.json";
+
+/// Where the console-launched engine finds `pack`'s checkpoint (CAT2; HF2's law as the container
+/// sees it): the manifest's recorded directory when it is under the storage root (the only tree
+/// mounted into the container), else the recorded path rebased under the storage root and then
+/// under the directory above the pack's parent, longest suffix first (`<root>/models/<name>`,
+/// `<root>/<name>`); the first holding [`CKPT_MARKER`] wins. `Ok(None)`: the pack names no
+/// checkpoint. No `/mnt/nvme` literal: the recorded path is the pack's own.
+pub fn fn_checkpoint_for(pack: &Path, roots: &Roots) -> anyhow::Result<Option<PathBuf>> {
+    let Some(rec) = manifest_checkpoint_dir(pack) else {
+        return Ok(None);
+    };
+    let nvme = roots.models.parent().unwrap_or(&roots.models).to_path_buf();
+    if rec.starts_with(&nvme) && rec.is_dir() {
+        return Ok(Some(rec));
+    }
+    let mut bases = vec![nvme];
+    if let Some(r) = pack.parent().and_then(Path::parent) {
+        if !bases.iter().any(|b| b == r) {
+            bases.push(r.to_path_buf());
+        }
+    }
+    let comps: Vec<_> = rec
+        .components()
+        .filter(|c| matches!(c, std::path::Component::Normal(_)))
+        .collect();
+    let mut cands: Vec<PathBuf> = Vec::new();
+    for b in &bases {
+        for k in 1..comps.len() {
+            let mut p = b.clone();
+            p.extend(&comps[k..]);
+            if !cands.contains(&p) {
+                cands.push(p);
+            }
+        }
+    }
+    if let Some(c) = cands.iter().find(|c| c.join(CKPT_MARKER).is_file()) {
+        return Ok(Some(c.clone()));
+    }
+    anyhow::bail!(
+        "{} reads the original checkpoint in place ({} in its manifest.json), and none of {} \
+         holds it ({CKPT_MARKER}): install the checkpoint component under the storage root",
+        pack.display(),
+        rec.display(),
+        cands
+            .iter()
+            .map(|c| c.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 /// Switch `cfg` to `tp` (the Settings page's TP choice): `engine.tp` (and, at TP=1, the card)
@@ -772,17 +870,95 @@ mod tests {
         let c = Catalog::embedded();
         assert_eq!(c.version, 1);
         let ids: Vec<_> = c.models.iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, ["27b", "flashnext", "mock"]);
+        assert_eq!(ids, ["27b", "flashnext", "flashnext-mxfp4", "mock"]);
+        // the two Flash-Next expert formats (CAT1): MACaQ is the launcher's default
         let fnx = c.model("flashnext").unwrap();
         assert_eq!(fnx.preset, Preset::Flashnext);
+        assert!(fnx.default_variant);
+        assert_eq!(fnx.components[0].name, "qwen38-flashnext-macaq-tp2-trunk8");
         assert_eq!(
-            fnx.components[0].aliases,
+            fnx.components[0].source.hf_repo,
+            "Launch80/Qwen3.8-Flash-Next-MACaQ-SABER"
+        );
+        assert!(fnx.components[0]
+            .required
+            .iter()
+            .any(|f| f == "rank1/experts.macaq.xtier"));
+        let mx = c.model("flashnext-mxfp4").unwrap();
+        assert_eq!(mx.preset, Preset::Flashnext);
+        assert!(!mx.default_variant);
+        assert_eq!(
+            mx.components[0].aliases,
             ["qwen38-flashnext-quark-ep2-trunk8"]
         );
-        // the terminal wizard's fields are there too
+        assert!(mx.components[0]
+            .required
+            .iter()
+            .any(|f| f == "rank1/experts.tp2.xtier"));
+        // both read the AMD Quark checkpoint in place, pinned to the revision the packs were cut from
+        for m in [fnx, mx] {
+            let ck = &m.components[1];
+            assert_eq!(ck.name, "Qwen3.8-Flash-Next-Quark-MXFP4");
+            assert_eq!(ck.source.hf_repo, "amd/Qwen3.8-Flash-Next-Quark-MXFP4");
+            assert!(ck.source.revision.starts_with("b2091c38"), "{ck:?}");
+            // only the files that really carry the pack magic are checked for it
+            for f in &m.components[0].pack_magic {
+                assert!(f.ends_with("dense.pack") || f.starts_with("vision/"), "{f}");
+            }
+        }
+        // the format flag: MACaQ removes an override the rollback left, the rollback sets mxfp4
+        assert_eq!(fnx.flags.get("--fn-experts-fmt"), Some(&None));
+        assert_eq!(
+            mx.flags.get("--fn-experts-fmt"),
+            Some(&Some(FlagValue::Str("mxfp4".into())))
+        );
+        // the terminal wizard's fields are there too (CAT2: the rollback is the launcher's
+        // FN_EXPERTS_FMT=mxfp4)
         assert_eq!(fnx.launcher, "tools/serve_flashnext.sh");
+        assert!(fnx.launcher_env.is_empty());
+        assert_eq!(mx.launcher, "tools/serve_flashnext.sh");
+        assert_eq!(
+            mx.launcher_env.get("FN_EXPERTS_FMT").map(String::as_str),
+            Some("mxfp4")
+        );
         assert_eq!(c.model("27b").unwrap().packs.len(), 2);
         assert!(c.model("mock").unwrap().components.is_empty());
+    }
+
+    /// CAT2: both Flash-Next entries install the checkpoint SUBSET their packs read (what
+    /// `tools/fetch_packs.sh flashnext` fetches: 83 of 131 shards + the small files), and the
+    /// catalog shows the true download sizes (pack + subset).
+    #[test]
+    fn cat2_the_flashnext_checkpoint_is_the_pack_listed_subset_and_the_sizes_are_true() {
+        let c = Catalog::embedded();
+        let (fnx, mx) = (
+            c.model("flashnext").unwrap(),
+            c.model("flashnext-mxfp4").unwrap(),
+        );
+        assert_eq!(fnx.components[1], mx.components[1]);
+        let ck = &fnx.components[1];
+        let shards: Vec<_> = ck
+            .files
+            .iter()
+            .filter(|f| f.path.ends_with(".safetensors"))
+            .collect();
+        assert_eq!(shards.len(), 83);
+        assert!(shards
+            .iter()
+            .all(|f| f.path.ends_with("-of-00131.safetensors")));
+        let shard_bytes: u64 = shards.iter().map(|f| f.size.unwrap()).sum();
+        assert_eq!(shard_bytes, 139_459_734_528);
+        for f in [CKPT_MARKER, "config.json", "tokenizer.json"] {
+            assert!(ck.files.iter().any(|x| x.path == f), "{f}");
+            assert!(ck.required.iter().any(|x| x == f), "{f}");
+        }
+        assert!(ck.approx_bytes >= shard_bytes && ck.approx_bytes < shard_bytes + 100_000_000);
+        for (m, gb) in [(fnx, 210.6), (mx, 213.7)] {
+            let total: u64 = m.components.iter().map(|x| x.approx_bytes).sum();
+            assert!(((total as f64 / 1e9) - gb).abs() < 0.05, "{} {total}", m.id);
+            assert!((m.download_gb - gb).abs() < 1e-9, "{}", m.id);
+            assert!(m.note.contains(&format!("{gb} GB")), "{}", m.note);
+        }
     }
 
     #[test]
@@ -872,7 +1048,7 @@ mod tests {
         cfg.engine.paths.repo = dir.path().join("repo");
         let roots = Roots::for_config(&cfg, Path::new("/h"));
         let c = Catalog::embedded();
-        let fnx = c.model("flashnext").unwrap();
+        let fnx = c.model("flashnext-mxfp4").unwrap();
         assert!(fnx.components[0].installed_at(&roots).is_none());
         assert!(config_for(&cfg, fnx, &roots).is_err());
         // the maintainers' local name counts
@@ -919,6 +1095,89 @@ mod tests {
         let out = config_for(&cfg, c.model("mock").unwrap(), &roots).unwrap();
         assert_eq!(out.engine.runtime, Runtime::Direct);
         out.validate().unwrap();
+    }
+
+    /// CAT1: a catalog-driven Flash-Next boot serves the format its entry names -- the MACaQ
+    /// entry composes the MACaQ pack with no format flag (the binary's `auto` reads it as macaq),
+    /// the rollback composes the MXFP4 pack + `--fn-experts-fmt mxfp4` right after
+    /// `--fn-experts` (the launcher's `FN_EXPERTS_FMT=mxfp4`); switching back drops the flag.
+    #[test]
+    fn cat1_the_flashnext_entries_compose_their_pack_and_expert_format() {
+        let dir = saber_test_scratch::ScratchDir::new("console-catalog-cat1");
+        let mut cfg = Config::default();
+        cfg.engine.paths.nvme = dir.path().join("nvme");
+        cfg.engine.paths.repo = dir.path().join("repo");
+        let roots = Roots::for_config(&cfg, Path::new("/h"));
+        let c = Catalog::embedded();
+        let (fnx, mx) = (
+            c.model("flashnext").unwrap(),
+            c.model("flashnext-mxfp4").unwrap(),
+        );
+        let ck = roots.models.join("Qwen3.8-Flash-Next-Quark-MXFP4");
+        let macaq = roots.packs.join("qwen38-flashnext-macaq-tp2-trunk8");
+        let mxp = roots.packs.join("qwen38-flashnext-quark-trunk8");
+        // the manifests name the checkpoint by absolute path, as the published packs do
+        let manifest = |at: &Path, ckdir: &Path| {
+            std::fs::create_dir_all(at).unwrap();
+            let m = serde_json::json!({"model": "qwen4_exp", "checkpoint": {"dir": ckdir}});
+            std::fs::write(at.join("manifest.json"), m.to_string()).unwrap();
+        };
+        manifest(&macaq, &ck);
+        manifest(&mxp, &ck);
+        // the checkpoint component missing: refused by name
+        let e = config_for(&cfg, fnx, &roots).unwrap_err();
+        assert!(format!("{e:#}").contains("not installed"), "{e:#}");
+        std::fs::create_dir_all(&ck).unwrap();
+        std::fs::write(ck.join(CKPT_MARKER), b"{}").unwrap();
+        let ctx = crate::compose::ComposeCtx {
+            home: "/h".into(),
+            exe: "/usr/bin/saber".into(),
+            fn3_prompts_present: false,
+            fn_legacy_pack_present: false,
+            p2p_mounts: vec![],
+        };
+        let argv = |cfg: &Config| crate::compose::compose(&cfg.engine, &ctx).engine;
+        let after = |a: &[String], k: &str| a.iter().position(|x| x == k).map(|i| a[i + 1].clone());
+
+        let a = config_for(&cfg, fnx, &roots).unwrap();
+        a.validate().unwrap();
+        let la = argv(&a);
+        assert_eq!(after(&la, "--pack"), Some(macaq.display().to_string()));
+        assert!(!la.iter().any(|x| x == "--fn-experts-fmt"), "{la:?}");
+
+        let e = config_for(&a, mx, &roots).unwrap();
+        e.validate().unwrap();
+        let le = argv(&e);
+        assert_eq!(after(&le, "--pack"), Some(mxp.display().to_string()));
+        assert_eq!(after(&le, "--fn-experts-fmt"), Some("mxfp4".into()));
+        let i = le.iter().position(|x| x == "--fn-experts").unwrap();
+        assert_eq!(le[i + 2], "--fn-experts-fmt", "{le:?}");
+
+        // back to the default entry: the rollback's format flag does not survive
+        let back = config_for(&e, fnx, &roots).unwrap();
+        assert_eq!(argv(&back), la);
+
+        // CAT2 (HF2's law): a manifest recorded under another drive root (the maintainers'
+        // `/mnt/nvme/models/...`, absent here) is rebased under the console's storage root
+        let rec = Path::new("/nonexistent/cat2/models/Qwen3.8-Flash-Next-Quark-MXFP4");
+        manifest(&macaq, rec);
+        assert_eq!(fn_checkpoint_for(&macaq, &roots).unwrap(), Some(ck.clone()));
+        assert_eq!(argv(&config_for(&cfg, fnx, &roots).unwrap()), la);
+        // ... and refused by name when no candidate holds the checkpoint's index
+        std::fs::remove_file(ck.join(CKPT_MARKER)).unwrap();
+        let e = config_for(&cfg, fnx, &roots).unwrap_err();
+        let m = format!("{e:#}");
+        assert!(
+            m.contains(CKPT_MARKER) && m.contains(&ck.display().to_string()),
+            "{m}"
+        );
+        // the control: the recorded path under the storage root is taken as recorded
+        assert_eq!(manifest_checkpoint_dir(&mxp).as_deref(), Some(ck.as_path()));
+        assert_eq!(fn_checkpoint_for(&mxp, &roots).unwrap(), Some(ck.clone()));
+        assert_eq!(
+            fn_checkpoint_for(&dir.path().join("none"), &roots).unwrap(),
+            None
+        );
     }
 
     #[test]

@@ -331,9 +331,11 @@ async fn call_raw(port: u16, method: &str, path: &str, headers: &str, body: &str
 }
 
 fn set_cookie(r: &Reply) -> Option<String> {
-    r.head
-        .lines()
-        .find_map(|l| l.to_ascii_lowercase().starts_with("set-cookie:").then(|| l[11..].trim().to_string()))
+    r.head.lines().find_map(|l| {
+        l.to_ascii_lowercase()
+            .starts_with("set-cookie:")
+            .then(|| l[11..].trim().to_string())
+    })
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -349,22 +351,49 @@ async fn sign_in_remembers_this_browser() {
     // a login needs the CSRF header; a wrong token is refused and sets no cookie
     let r = call_raw(f.port, "POST", "/api/auth/login", "", &good).await;
     assert_eq!(r.code, 403, "{}", r.body);
-    let r = call_raw(f.port, "POST", "/api/auth/login", csrf, "{\"token\": \"nope\"}").await;
+    let r = call_raw(
+        f.port,
+        "POST",
+        "/api/auth/login",
+        csrf,
+        "{\"token\": \"nope\"}",
+    )
+    .await;
     assert_eq!(r.code, 401, "{}", r.body);
     assert!(set_cookie(&r).is_none());
     // the right token sets a signed, HttpOnly, SameSite=Strict, 30-day cookie
     let r = call_raw(f.port, "POST", "/api/auth/login", csrf, &good).await;
     assert_eq!(r.code, 200, "{}", r.body);
     let c = set_cookie(&r).expect("a Set-Cookie");
-    for part in ["saber_session=", "HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/"] {
+    for part in [
+        "saber_session=",
+        "HttpOnly",
+        "SameSite=Strict",
+        "Max-Age=2592000",
+        "Path=/",
+    ] {
         assert!(c.contains(part), "{part} in {c}");
     }
     assert!(!c.contains(TOKEN), "the cookie never holds the token");
     let value = c.split(';').next().unwrap().to_string();
     // the cookie alone is a credential (no Authorization header)
-    let r = call_raw(f.port, "GET", "/api/status", &format!("Cookie: {value}\r\n"), "").await;
+    let r = call_raw(
+        f.port,
+        "GET",
+        "/api/status",
+        &format!("Cookie: {value}\r\n"),
+        "",
+    )
+    .await;
     assert_eq!(r.code, 200, "{}", r.body);
-    let r = call_raw(f.port, "GET", "/api/status", "Cookie: saber_session=1.00\r\n", "").await;
+    let r = call_raw(
+        f.port,
+        "GET",
+        "/api/status",
+        "Cookie: saber_session=1.00\r\n",
+        "",
+    )
+    .await;
     assert_eq!(r.code, 401);
     let r = call_raw(f.port, "GET", "/api/status", "", "").await;
     assert_eq!(r.code, 401);
@@ -383,8 +412,17 @@ async fn sign_in_remembers_this_browser() {
     assert_eq!(r.code, 200);
     assert!(set_cookie(&r).is_some_and(|c| c.contains("Max-Age=0")));
     // rotating the token ends every remembered browser
-    f.auth.set_admin(saber_console::auth::Admin::Flag("a-brand-new-token-0000".into()));
-    let r = call_raw(f.port, "GET", "/api/status", &format!("Cookie: {value}\r\n"), "").await;
+    f.auth.set_admin(saber_console::auth::Admin::Flag(
+        "a-brand-new-token-0000".into(),
+    ));
+    let r = call_raw(
+        f.port,
+        "GET",
+        "/api/status",
+        &format!("Cookie: {value}\r\n"),
+        "",
+    )
+    .await;
     assert_eq!(r.code, 401, "{}", r.body);
 }
 

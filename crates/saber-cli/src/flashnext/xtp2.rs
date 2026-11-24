@@ -27,7 +27,9 @@ use anyhow::{ensure, Context};
 use saber_hip::{HipThread, Stream};
 use saber_mem::expert_tier::Placement;
 use saber_mem::flashnext_budget::geometry;
-use saber_mem::xtier::{record_layout, record_layout_nvfp4, XtierFormat, XtierHeader};
+use saber_mem::xtier::{
+    record_layout, record_layout_macaq, record_layout_nvfp4, XtierFormat, XtierHeader,
+};
 
 use super::model::Owned;
 use super::run::FnFlags;
@@ -52,8 +54,11 @@ pub struct XGeom {
     pub fmt: XtierFormat,
 }
 
-/// `--fn-experts-fmt`: `mxfp4` = the default (FN150; `nvfp4` = the FP4-Local v2 tier).
-pub const DEFAULT_FN_EXPERTS_FMT: &str = "mxfp4";
+/// `--fn-experts-fmt`: MACFN8 (the user's decision 2026-11-22, LEDGER MACFN8): `auto` = the DEFAULT
+/// = MACaQ (int4 routed + int4 shared expert + the fused back half) on every tp2 boot of a pack that
+/// carries the MACaQ tier, MXFP4 on any other (`FnFlags::with_experts_fmt_of`); `mxfp4` = the
+/// rollback (FN150's default; `nvfp4` = the FP4-Local v2 tier).
+pub const DEFAULT_FN_EXPERTS_FMT: &str = "auto";
 
 /// FN150: the NVFP4 record's stride at Flash-Next's (2,560, 640) = `record_layout_nvfp4`'s (676
 /// pages; MXFP4's is 639).
@@ -108,10 +113,56 @@ impl XGeom {
         Ok(g)
     }
 
+    /// MACFN3b: the MACaQ int4 tier file (xtier v2 tag 3, tp2 half records) inside the pack.
+    pub const MACAQ_FILE: &'static str = "experts.macaq.xtier";
+    /// MACFN3b: the layer-shared gate_up t side record (f32 `[48, 2560]`) beside it.
+    pub const MACAQ_TSH_FILE: &'static str = "experts.tsh";
+    /// MACFN5: the shared expert's MACaQ int4 half records (`--fn-macaq-shared int4`): xtier v2
+    /// tag 3, 48 layers x expert 512 only, the routed tier's stride and sub-records.
+    pub const MACAQ_SHQ_FILE: &'static str = "experts.shq.xtier";
+
+    /// MACFN3b: the geometry of rank `r`'s MACaQ header, refused by name unless it is MACFN3's
+    /// tag-3 half-record law at 48 layers x 512 experts (inter 320 a half, split 2 / r).
+    pub fn from_macaq_header(h: &XtierHeader, r: u32) -> anyhow::Result<XGeom> {
+        let (sub, payload, stride) = record_layout_macaq(xsplit::HIDDEN, xsplit::INTER_H);
+        h.require_format(XtierFormat::MacaqI4RowTsh)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        ensure!(
+            h.split_parts == xsplit::PARTS as u32
+                && h.split_index == r
+                && h.first_expert == 0
+                && u64::from(h.experts) == xsplit::EXPERTS
+                && u64::from(h.layers) == xsplit::LAYERS
+                && u64::from(h.hidden) == xsplit::HIDDEN
+                && u64::from(h.inter) == xsplit::INTER_H
+                && h.sub == sub
+                && h.payload == payload
+                && h.stride == stride,
+            "--fn-experts-fmt macaq: rank {r}'s {} is not MACFN3's tag-3 half-record law              (split {} / {}, experts {}+{}, layers {}, inter {}, stride {})",
+            Self::MACAQ_FILE,
+            h.split_parts,
+            h.split_index,
+            h.first_expert,
+            h.experts,
+            h.layers,
+            h.inter,
+            h.stride
+        );
+        Ok(XGeom {
+            tp2: true,
+            stride,
+            records: h.records(),
+            entries: h.experts as usize + 1,
+            fmt: XtierFormat::MacaqI4RowTsh,
+        })
+    }
+
     /// The tier file of rank `r` under this form.
     #[must_use]
     pub fn file(&self, r: u32) -> String {
-        if self.tp2 {
+        if self.fmt == XtierFormat::MacaqI4RowTsh {
+            format!("rank{r}/{}", Self::MACAQ_FILE)
+        } else if self.tp2 {
             format!("rank{r}/{}", xsplit::FILE)
         } else {
             format!("rank{r}/experts.xtier")
@@ -179,6 +230,27 @@ impl XGeom {
             }
             return Ok(XGeom::NVFP4_EP);
         }
+        // MACFN3b: a MACaQ boot reads both ranks' tag-3 headers (tp2 half records only)
+        if f.experts_fmt() == XtierFormat::MacaqI4RowTsh {
+            ensure!(
+                f.experts_tp2(),
+                "--fn-experts-fmt macaq: the MACaQ tier is tp2 half records (--fn-experts tp2)"
+            );
+            let mut g = None;
+            for r in 0..2u32 {
+                let p = pack.join(format!("rank{r}/{}", XGeom::MACAQ_FILE));
+                ensure!(
+                    p.exists(),
+                    "--fn-experts-fmt macaq: this pack has no MACaQ tier ({} absent)",
+                    p.display()
+                );
+                let h = super::model::xtier_header(&p)?;
+                let x = XGeom::from_macaq_header(&h, r)?;
+                ensure!(g.is_none_or(|y| y == x), "the ranks' MACaQ files differ");
+                g = Some(x);
+            }
+            return g.context("geometry");
+        }
         if !f.experts_tp2() {
             return Ok(XGeom::EP);
         }
@@ -211,7 +283,11 @@ impl XGeom {
             self.stride,
             self.records,
             self.entries,
-            if self.tp2 {
+            if self.fmt == XtierFormat::MacaqI4RowTsh {
+                "; MACFN3b: MACaQ int4 tp2 halves on moe_macfn3's _sx cells (the token int8 row \
+                 once a layer, the layer-shared t resident), the shared expert on the shipped MXFP4 \
+                 cells, the MTP experts stay EP"
+            } else if self.tp2 {
                 "; both ranks route all 512 experts as local, the shared expert split, ONE \
                  mirrored placement; the MTP experts stay EP"
             } else if self.fmt == XtierFormat::Nvfp4E4m3G16 {
@@ -291,6 +367,53 @@ pub fn nvfp4_refusals(f: &FnFlags, tp: u32) -> Vec<String> {
     v
 }
 
+/// MACFN3b: refuse a MACaQ boot by name for every piece without a MACaQ body (the fused / `_far`
+/// back halves = `--fn-moe-train fused`, the shared-expert split, TP=1, the one-process form);
+/// empty for any other format.
+#[must_use]
+pub fn macaq_refusals(f: &FnFlags, tp: u32) -> Vec<String> {
+    let mut v = Vec::new();
+    if f.experts_fmt() != XtierFormat::MacaqI4RowTsh {
+        return v;
+    }
+    if tp != 2 {
+        v.push("TP=1 (the MACaQ tier is tp2 half records; --tp 2 only)".to_string());
+    }
+    if f.fn_one_process {
+        v.push("the one-process form (--fn-one-process; the worker form only)".to_string());
+    }
+    if !f.experts_tp2() {
+        v.push(
+            "--fn-experts ep (the MACaQ tier is tp2 half records: --fn-experts tp2)".to_string(),
+        );
+    }
+    // MACFN7: the fused train runs the MACaQ fused back half (`moe_macfn7`), the MACaQ shared
+    // expert's route only (MACFN3b's arm keeps the shared expert on the MXFP4 cells: no fused form)
+    let fused = f.fn_moe_train != super::exec::MoeTrain::Legacy;
+    match (fused, f.macaq_back(), f.macaq_shared()) {
+        (true, Some(_), true) | (false, None, _) => {}
+        (true, None, _) => v.push(
+            "--fn-moe-train fused with --fn-macaq-back legacy (the seven-launch MACaQ train: \
+             --fn-moe-train legacy, or --fn-macaq-back fused|fused-tk)"
+                .to_string(),
+        ),
+        (true, Some(_), false) => v.push(
+            "--fn-moe-train fused with --fn-macaq-shared mxfp4 (MACFN3b's route has no fused back \
+             half: --fn-moe-train legacy)"
+                .to_string(),
+        ),
+        (false, Some(_), _) => v.push(
+            "--fn-macaq-back fused|fused-tk with --fn-moe-train legacy (the fused back half rides \
+             the fused train)"
+                .to_string(),
+        ),
+    }
+    if f.shared_split() {
+        v.push("--fn-shared-expert split (no MACaQ shared lane)".to_string());
+    }
+    v
+}
+
 /// Refuse a tp2 boot where it cannot run (FN80b-2's arm: TP=2, the worker form).
 pub fn check(f: &FnFlags, tp: u32) -> anyhow::Result<()> {
     if !f.experts_tp2() {
@@ -331,6 +454,95 @@ pub fn shared_expert_half(
         *x = base + ds[i].0;
     }
     Ok(v)
+}
+
+/// MACFN5: rank `rank`'s half of the shared expert of every layer as MACaQ int4 records (the
+/// pack's `rank<r>/experts.shq.xtier`, refused by name unless it is the tag-3 half-record law at
+/// 48 layers x expert 512 + 1, part `rank` of 2): every record == its table row's sha256 (the
+/// table == the header's), meta == (layer, 512, part, 0x4D330404); each record uploaded as ONE
+/// buffer; returns the six sub-record addresses a layer (the xptr entry's: gate_up codes / row
+/// scales / meta, down codes / row scales / t_dn -- the routed records' order) + the table's
+/// sha256 for the boot line.
+pub fn shared_macaq_halves(
+    pack: &Path,
+    o: &mut Owned,
+    hip: &HipThread,
+    st: &Stream,
+    rank: u32,
+) -> anyhow::Result<(Vec<[u64; 6]>, String)> {
+    use std::os::unix::fs::FileExt;
+    let p = pack.join(format!("rank{rank}/{}", XGeom::MACAQ_SHQ_FILE));
+    ensure!(
+        p.exists(),
+        "--fn-macaq-shared int4 (the default `auto` under --fn-experts-fmt macaq since MACFN6): this \
+         pack has no MACaQ shared expert ({} absent); `--fn-macaq-shared mxfp4` = MACFN3b's route",
+        p.display()
+    );
+    let h = super::model::xtier_header(&p)?;
+    h.require_format(XtierFormat::MacaqI4RowTsh)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let (sub, payload, stride) = record_layout_macaq(xsplit::HIDDEN, xsplit::INTER_H);
+    ensure!(
+        u64::from(h.layers) == xsplit::LAYERS
+            && h.first_expert == 512
+            && h.experts == 1
+            && h.split_parts == xsplit::PARTS as u32
+            && h.split_index == rank
+            && u64::from(h.hidden) == xsplit::HIDDEN
+            && u64::from(h.inter) == xsplit::INTER_H
+            && h.sub == sub
+            && h.payload == payload
+            && h.stride == stride,
+        "--fn-macaq-shared int4: {} is not the shared-expert tag-3 half-record law (layers {}, \
+         experts {}+{}, split {} / {}, stride {})",
+        p.display(),
+        h.layers,
+        h.first_expert,
+        h.experts,
+        h.split_parts,
+        h.split_index,
+        h.stride
+    );
+    let f = std::fs::File::open(&p)?;
+    let mut table = vec![0u8; h.table_bytes as usize];
+    f.read_exact_at(&mut table, h.table_off)?;
+    ensure!(
+        saber_mem::xtier::table_digest(&table) == h.table_sha256,
+        "{}: the table's sha256 is not the header's",
+        p.display()
+    );
+    let mut v = Vec::with_capacity(h.layers as usize);
+    let mut rec = vec![0u8; stride as usize];
+    for l in 0..h.layers {
+        f.read_exact_at(&mut rec, h.record_offset(u64::from(l)))?;
+        let d = saber_mem::xtier::record_digest(&rec);
+        ensure!(
+            d[..] == table[32 * l as usize..32 * (l as usize + 1)],
+            "{}: layer {l}'s record is not its sha256",
+            p.display()
+        );
+        let m = |i: usize| {
+            let o = sub[2].0 as usize + 4 * i;
+            u32::from_le_bytes([rec[o], rec[o + 1], rec[o + 2], rec[o + 3]])
+        };
+        ensure!(
+            (m(0), m(1), m(2), m(3)) == (l, 512, rank, 0x4D33_0404),
+            "{}: layer {l}'s meta ({}, {}, {}, {:#x}) is not (layer, 512, part {rank}, int4/int4)",
+            p.display(),
+            m(0),
+            m(1),
+            m(2),
+            m(3)
+        );
+        let base = o.up(hip, st, &rec)?;
+        let mut a = [0u64; 6];
+        for (i, x) in a.iter_mut().enumerate() {
+            *x = base + sub[i].0;
+        }
+        v.push(a);
+    }
+    let hex: String = h.table_sha256.iter().map(|b| format!("{b:02x}")).collect();
+    Ok((v, hex))
 }
 
 /// The shared expert's six records of layer `l` as ONE whole-layout payload.

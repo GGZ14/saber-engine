@@ -314,6 +314,24 @@ async fn metrics_equal_the_shutdown_census_counter_for_counter() {
     // the KV pool's gauges and lazy-growth counters are serving-plane families too (LR-F/G)
     let serving_kv =
         |k: &str| k.starts_with("saber:kv_") || k == "saber:admission_refused_kv_requests_total";
+    // the request / latency plane (TTFT, inter-token, queue, step time, request and token
+    // counters, spec-decode counters) is the server's own, not an engine census line
+    let serving_request_family = |k: &str| {
+        [
+            "saber:e2e_request_latency_seconds",
+            "saber:generation_tokens_total",
+            "saber:inter_token_latency_seconds",
+            "saber:num_requests_",
+            "saber:prompt_tokens_total",
+            "saber:request_queue_time_seconds",
+            "saber:request_success_total",
+            "saber:spec_decode_num_",
+            "saber:step_time_seconds",
+            "saber:time_to_first_token_seconds",
+        ]
+        .iter()
+        .any(|p| k.starts_with(p))
+    };
     let bad = mismatches(&live, &census);
     assert!(
         bad.is_empty(),
@@ -328,6 +346,7 @@ async fn metrics_equal_the_shutdown_census_counter_for_counter() {
                 |k| !k.starts_with("saber:request_refused")
                     && !k.starts_with("saber:stream_abort")
                     && !k.starts_with("saber:image_")
+                    && !serving_request_family(k)
                     && !serving_kv(k)
             )
             .count(),

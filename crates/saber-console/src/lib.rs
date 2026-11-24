@@ -150,7 +150,10 @@ pub fn gen_admin_token(config_path: &std::path::Path) -> anyhow::Result<String> 
     // the config keeps only the hash; this 0600 file is how the owner (and the startup banner)
     // gets the sign-in link again
     if let Err(e) = write_private(&token_file(config_path), &format!("{token}\n")) {
-        eprintln!("saber ui: could not write {}: {e}", token_file(config_path).display());
+        eprintln!(
+            "saber ui: could not write {}: {e}",
+            token_file(config_path).display()
+        );
     }
     Ok(token)
 }
@@ -197,7 +200,10 @@ fn session_secret(data_dir: &std::path::Path) -> Option<[u8; 32]> {
 fn lan_ip() -> Option<IpAddr> {
     let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     sock.connect("192.0.2.1:9").ok()?;
-    sock.local_addr().ok().map(|a| a.ip()).filter(|ip| !ip.is_unspecified())
+    sock.local_addr()
+        .ok()
+        .map(|a| a.ip())
+        .filter(|ip| !ip.is_unspecified())
 }
 
 /// Run the console until Ctrl-C / SIGTERM; the engine it started is stopped on the way out.
@@ -215,10 +221,12 @@ pub fn run(mut args: ConsoleArgs) -> anyhow::Result<()> {
     let mut stored = config::Config::load(&args.config_path).ok().flatten();
     // A first start with no token and no host chosen: make one now, so the console is
     // reachable from the LAN and guarded (`--no-auth` and `--engine mock` runs opt out).
-    let chosen_host = args
-        .host
-        .clone()
-        .or_else(|| stored.as_ref().map(|c| c.console.host.clone()).filter(|h| !h.is_empty()));
+    let chosen_host = args.host.clone().or_else(|| {
+        stored
+            .as_ref()
+            .map(|c| c.console.host.clone())
+            .filter(|h| !h.is_empty())
+    });
     // a host the owner chose keeps its old rule (loopback is open; anything else needs a token they made)
     let host_chosen = chosen_host.is_some();
     let have_token = args.admin_token.as_deref().is_some_and(|t| !t.is_empty())
@@ -388,7 +396,10 @@ async fn serve(args: ConsoleArgs, signin: Option<String>) -> anyhow::Result<()> 
         } else {
             bound.ip().to_string()
         };
-        println!("saber ui: sign in (once per browser): http://{shown}:{}/#token={t}", bound.port());
+        println!(
+            "saber ui: sign in (once per browser): http://{shown}:{}/#token={t}",
+            bound.port()
+        );
     }
 
     if autostart {

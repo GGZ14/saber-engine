@@ -126,6 +126,16 @@ pub struct Dims {
     pub xnv: bool,
     /// FN152: FN150's route (FN148's plain cells, no fused back half) -- the byte control.
     pub xnv_plain: bool,
+    /// MACFN3b (`--fn-experts-fmt macaq`): the TARGET's routed-expert records are the MACaQ int4
+    /// tp2 half records (xtier v2 tag 3): the seven-launch train runs the MACaQ route
+    /// ([`Emitter::moe_experts`]: the token int8 row + the shared-only tables, the shared expert
+    /// on the shipped MXFP4 cells, the routed experts on `moe_macfn3`'s `_sx` cells). False for the
+    /// MTP layer ([`Dims::mtp_form`]).
+    pub xmq: bool,
+    /// MACFN5 (`--fn-macaq-shared int4`, with [`Self::xmq`]): the shared expert's xptr entry is its
+    /// MACaQ int4 half record, so the route runs EVERY tile on `moe_macfn3`'s stage-2 cells (no
+    /// `_sx` exit, no shared-only tables, no MXFP4 shared cells). False for the MTP layer.
+    pub xmq_sh: bool,
 }
 
 impl Dims {
@@ -154,12 +164,32 @@ impl Dims {
             xtp2: false,
             xnv: false,
             xnv_plain: false,
+            xmq: false,
+            xmq_sh: false,
         }
     }
     /// FN150: the dims of the NVFP4 expert records (`--fn-experts-fmt nvfp4`).
     #[must_use]
     pub fn experts_nvfp4(self) -> Dims {
         Dims { xnv: true, ..self }
+    }
+    /// MACFN3b: the dims of the MACaQ int4 expert records (`--fn-experts-fmt macaq`, tp2 only).
+    #[must_use]
+    pub fn experts_macaq(self) -> Dims {
+        assert!(self.xtp2, "--fn-experts-fmt macaq is a tp2 form");
+        Dims { xmq: true, ..self }
+    }
+    /// MACFN5: [`Self::experts_macaq`] with the shared expert on its MACaQ int4 record.
+    #[must_use]
+    pub fn experts_macaq_shared(self) -> Dims {
+        assert!(
+            self.xmq,
+            "--fn-macaq-shared int4 needs --fn-experts-fmt macaq"
+        );
+        Dims {
+            xmq_sh: true,
+            ..self
+        }
     }
     /// FN152: [`Self::experts_nvfp4`] on FN150's route (FN148's plain cells only): the control.
     #[must_use]
@@ -206,6 +236,8 @@ impl Dims {
             xtp2: false,
             xnv: false,
             xnv_plain: false,
+            xmq: false,
+            xmq_sh: false,
             ..self
         }
     }
@@ -868,6 +900,52 @@ pub struct MixOutBufs {
     pub scale: u64,
 }
 
+/// MACFN3b: the MACaQ route's boot region (one a rank, outside the arena, billed with the shared
+/// expert's class): the layer-shared gate_up t of every layer (`rank<r>/experts.tsh`, f32
+/// `[48, 2560]`) and the token producer's outputs (int8 rows + f32 scales for up to `rows` tokens,
+/// and the shared-only route tables for up to `tiles` tiles), reused layer after layer on the
+/// step's stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mq3Region {
+    pub tsh: u64,
+    pub base: u64,
+    pub rows: u64,
+    pub tiles: u64,
+}
+
+impl Mq3Region {
+    /// The token rows' bytes, 256-aligned.
+    #[must_use]
+    pub fn q_bytes(rows: u64) -> u64 {
+        (rows * H).div_ceil(256) * 256
+    }
+    /// The scratch region's bytes for `rows` tokens (the int8 rows, their scales, meta_sh and the
+    /// three shared-only tables of `tiles` entries).
+    #[must_use]
+    pub fn scratch_bytes(rows: u64, tiles: u64) -> u64 {
+        Self::q_bytes(rows)
+            + (rows * 4).div_ceil(256) * 256
+            + 256
+            + 3 * (tiles * 4).div_ceil(256) * 256
+    }
+    /// The tsh side record's bytes (48 layers x 2,560 f32).
+    pub const TSH_BYTES: u64 = 48 * H * 4;
+    /// The shared-only tables' capacity for a boot whose widest MoE block has `rows` rows (the route
+    /// cuts the shared expert's rows into 16-row blocks; one tile = at least one block).
+    #[must_use]
+    pub fn tiles_for(rows: u64) -> u64 {
+        rows.div_ceil(16)
+    }
+    fn addrs(&self) -> (u64, u64, u64, u64, u64, u64) {
+        let q = self.base;
+        let sc = q + Self::q_bytes(self.rows);
+        let msh = sc + (self.rows * 4).div_ceil(256) * 256;
+        let tb = (self.tiles * 4).div_ceil(256) * 256;
+        let te = msh + 256;
+        (q, sc, msh, te, te + tb, te + 2 * tb)
+    }
+}
+
 /// FN110: the MTP drafter's routed-expert record form (`--fn-mtp-experts`): `Fp8` = FN50's
 /// default, `Bf16` = the control, `Slab4` = the expert tier's native MXFP4 record form in a fixed
 /// VRAM slab (the trunk's grouped W4A8 train; numerics: the drafts move, the target's verify does
@@ -1271,6 +1349,12 @@ pub struct Emitter<'d> {
     /// FN30: `--fn-moe-train` (the target's MoE train; `Fused` = FN26's back half at a decode step
     /// of <= 64 rows, the default; `Legacy` = FN4's seven launches, the control).
     pub moe_train: MoeTrain,
+    /// MACFN7 (`--fn-macaq-back`): the MACaQ fused back half's token-row form (`Some(tk)`), `None`
+    /// = the seven-launch MACaQ train (a fused MACaQ block then refuses).
+    pub macaq_back: Option<bool>,
+    /// MACFN9 (`--fn-macaq-prefill wc`): the MACaQ shared-expert route's tm 4 (prefill) cells run
+    /// `moe_macfn9`'s cached-W twins (byte-equal); `false` = MACFN5's cells.
+    pub macaq_prefill_wc: bool,
     /// FN30: the device address of this rank's fused-MoE `sync` region ([`moe_sync_bytes`], zeroed
     /// ONCE at boot, outside the arena: the counters are back at zero after every launch); 0 = none
     /// (a fused block then refuses).
@@ -1376,6 +1460,13 @@ pub struct Emitter<'d> {
     /// FN122c: the dequant launches the dq family added to the layer being emitted (the declared
     /// law's count plus these is what the layer emits).
     pub pf122_added: u32,
+    /// MACFN3b: the MACaQ route's boot region (`--fn-experts-fmt macaq`; `None` otherwise).
+    pub mq3: Option<Mq3Region>,
+    /// MACFN3b: the launches the MACaQ route added to the layer's MoE block (the token producer +
+    /// the shared expert's two MXFP4 cells), for the layer's launch law.
+    pub mq3_added: u32,
+    /// MACFN7: MACaQ fused back halves emitted (the end line's count).
+    pub macaq_fused: u64,
     /// FN124 which-path counter: fp8 QSA prefill gathers on the qsa124 body (`[0]`) / the shipped
     /// symbol (`[1]`); the in-situ twins emitted; the twin's counter (device; None = no twin).
     pub pf124_n: [u64; 2],
@@ -1857,6 +1948,8 @@ impl<'d> Emitter<'d> {
             ar_decode: false,
             mtile_twin: 0,
             moe_train: MoeTrain::default(),
+            macaq_back: None,
+            macaq_prefill_wc: false,
             moe_sync: 0,
             shared_split: 0,
             glue: None,
@@ -1890,6 +1983,9 @@ impl<'d> Emitter<'d> {
             pf122_n: [0; 2],
             pf122_dq: [0; 2],
             pf122_added: 0,
+            mq3: None,
+            mq3_added: 0,
+            macaq_fused: 0,
             pf124_n: [0; 2],
             sel128_n: [[0; 2]; 3],
             down131_n: [0; 2],
@@ -4557,6 +4653,9 @@ impl<'d> Emitter<'d> {
             tm,
             ..
         } = *rt;
+        if self.dims.xmq {
+            return self.moe_experts_macaq(rt, mx, m, xgu, xdn, carry_out);
+        }
         let grouped = |em: &mut Self,
                        g: MoeGemm,
                        a: u64,
@@ -4685,6 +4784,392 @@ impl<'d> Emitter<'d> {
         Ok(out)
     }
 
+    /// MACFN3b: [`Self::moe_experts`] over the MACaQ int4 tp2 half records (`Dims::xmq`): the token
+    /// producer (the layer-shared t, had32, the int8 row a token -- once a layer -- + the route's
+    /// shared-expert tiles copied into shared-only tables), gate_up as the shipped MXFP4 cell over the
+    /// shared-only tables (the shared expert's MXFP4 record, the e4m3 block input, the route's own
+    /// class split) + the MACaQ `_sx` cell over the full route (its shared tiles exit), the silu twin
+    /// (routed rows: the expert's own t_dn + had32 + int8; shared rows: the shipped silu-quant's e4m3
+    /// law), down the same pair, FN4's combine. 3 launches more than the seven-launch train
+    /// (`mq3_added`).
+    pub fn moe_experts_macaq(
+        &mut self,
+        rt: &MoeRoute,
+        mx: &MixOutBufs,
+        m: u64,
+        xgu: u64,
+        xdn: u64,
+        carry_out: bool,
+    ) -> anyhow::Result<u64> {
+        let MoeRoute {
+            sg,
+            wts,
+            pos,
+            row_tok,
+            te,
+            t0,
+            tr,
+            meta,
+            pcap,
+            tc,
+            tm,
+            gu_ks,
+            dn_ks,
+            ..
+        } = *rt;
+        let mq = self
+            .mq3
+            .context("--fn-experts-fmt macaq: the MACaQ route's boot region is not set")?;
+        ensure!(
+            self.dims.xtp2 && self.dims.shared && self.dims.eloc == 512,
+            "--fn-experts-fmt macaq: the tp2 form with the shared expert's half on both ranks"
+        );
+        ensure!(
+            m <= mq.rows,
+            "--fn-experts-fmt macaq: a MoE block of {m} rows past the region's {} rows",
+            mq.rows
+        );
+        let sh_tiles = m.div_ceil(16).div_ceil(tm);
+        ensure!(
+            sh_tiles <= mq.tiles,
+            "--fn-experts-fmt macaq: {sh_tiles} shared tiles past the region's {}",
+            mq.tiles
+        );
+        let l = u64::try_from(self.layer.max(0)).unwrap_or(0);
+        ensure!(l < 48, "--fn-experts-fmt macaq: layer {l} has no tsh row");
+        let (tq, tsc, msh, te_sh, t0_sh, tr_sh) = mq.addrs();
+        let shape = self.dims.xshape();
+        let inter = self.dims.x_inter();
+        let i = |x: u64| Arg::I(x as i32);
+        if self.dims.xmq_sh {
+            return self.moe_experts_macaq_shq(rt, mx, m, xgu, xdn, carry_out, (tq, tsc));
+        }
+        // the token producer (+ the shared-only tables)
+        self.run(
+            moe::MACFN3_TOK_SH_SYMBOL,
+            [m, 1, 1],
+            256,
+            vec![
+                Arg::P(mx.bi),
+                Arg::P(mq.tsh + l * H * 4),
+                Arg::P(tq),
+                Arg::P(tsc),
+                i(H),
+                Arg::P(meta),
+                Arg::P(te),
+                Arg::P(t0),
+                Arg::P(tr),
+                Arg::P(msh),
+                Arg::P(te_sh),
+                Arg::P(t0_sh),
+                Arg::P(tr_sh),
+                i(sh_tiles),
+                i(u64::from(self.dims.eloc)),
+            ],
+            Group::Moe,
+        )?;
+        // one shipped MXFP4 cell over the shared-only tables (the shared expert's record)
+        let shared = |em: &mut Self,
+                      g: MoeGemm,
+                      a: u64,
+                      a_s: u64,
+                      xp: u64,
+                      c: u64,
+                      n: u64,
+                      k: u64,
+                      ks: u64|
+         -> anyhow::Result<()> {
+            let (part, cnt) = if ks > 1 {
+                (em.s(ks * pcap * n * 4)?, em.z(sh_tiles * (n / 128) * 4)?)
+            } else {
+                (0, 0)
+            };
+            let cell = moe::Cell {
+                ks: ks as u32,
+                tm: tm as u32,
+            };
+            let sym = match g {
+                MoeGemm::GateUp => shape.gate_up_symbol(cell, moe::DECODE_BODY),
+                MoeGemm::Down => shape
+                    .down_symbol(cell, moe::DECODE_BODY)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?,
+            };
+            em.run(
+                &sym,
+                [n / 128, sh_tiles, ks],
+                256,
+                vec![
+                    Arg::P(a),
+                    Arg::P(xp),
+                    Arg::P(te_sh),
+                    Arg::P(t0_sh),
+                    Arg::P(tr_sh),
+                    Arg::P(row_tok),
+                    Arg::P(msh),
+                    Arg::P(a_s),
+                    Arg::P(part),
+                    Arg::P(cnt),
+                    Arg::P(c),
+                    i(n),
+                    i(k),
+                    i(pcap),
+                ],
+                Group::Moe,
+            )
+        };
+        // one MACaQ `_sx` cell over the full route (ks 1)
+        let routed = |em: &mut Self,
+                      g: MoeGemm,
+                      a: u64,
+                      a_s: u64,
+                      xp: u64,
+                      c: u64,
+                      n: u64,
+                      k: u64|
+         -> anyhow::Result<()> {
+            let sym =
+                moe::macfn3_symbol(shape, g, tm as u32).map_err(|e| anyhow::anyhow!("{e}"))?;
+            em.run(
+                &sym,
+                [n / 128, tc, 1],
+                256,
+                vec![
+                    Arg::P(a),
+                    Arg::P(xp),
+                    Arg::P(te),
+                    Arg::P(t0),
+                    Arg::P(tr),
+                    Arg::P(row_tok),
+                    Arg::P(meta),
+                    Arg::P(a_s),
+                    Arg::P(0),
+                    Arg::P(0),
+                    Arg::P(c),
+                    i(n),
+                    i(k),
+                    i(pcap),
+                ],
+                Group::Moe,
+            )
+        };
+        let gu = self.s(pcap * 2 * inter * 2)?;
+        shared(
+            self,
+            MoeGemm::GateUp,
+            mx.q8,
+            mx.scale,
+            xgu,
+            gu,
+            2 * inter,
+            H,
+            gu_ks,
+        )?;
+        routed(self, MoeGemm::GateUp, tq, tsc, xgu, gu, 2 * inter, H)?;
+        let q = self.s(pcap * inter)?;
+        let sc = self.s(pcap * 4)?;
+        self.run(
+            moe::MACFN3_SILU_MX_SYMBOL,
+            [tc, 1, 1],
+            64,
+            vec![
+                Arg::P(gu),
+                Arg::P(xdn),
+                Arg::P(te),
+                Arg::P(t0),
+                Arg::P(tr),
+                Arg::P(meta),
+                Arg::P(q),
+                Arg::P(sc),
+                Arg::P(0),
+                i(inter),
+            ],
+            Group::Moe,
+        )?;
+        let y = self.s(pcap * H * 2)?;
+        shared(self, MoeGemm::Down, q, sc, xdn, y, H, inter, dn_ks)?;
+        routed(self, MoeGemm::Down, q, sc, xdn, y, H, inter)?;
+        if self.tap_moe && self.layer == self.tap_layer {
+            for (n, a_, b_) in [
+                ("moe.gu", gu, pcap * 2 * inter * 2),
+                ("moe.q", q, pcap * inter),
+                ("moe.sc", sc, pcap * 4),
+                ("moe.y", y, pcap * H * 2),
+            ] {
+                self.taps.push((n.to_string(), a_, b_));
+            }
+        }
+        let out = if carry_out {
+            let slot = (self.layer.max(0) as usize) % 2;
+            self.arena.carry[slot].take(m * H * 2)?
+        } else {
+            self.s(m * H * 2)?
+        };
+        self.run(
+            moe::COMBINE_SYMBOL,
+            [m, 1, 1],
+            256,
+            vec![
+                Arg::P(y),
+                Arg::P(wts),
+                Arg::P(pos),
+                Arg::P(sg),
+                Arg::P(meta),
+                Arg::P(out),
+                Arg::I(H as i32),
+            ],
+            Group::Moe,
+        )?;
+        self.mq3_added += 3;
+        Ok(out)
+    }
+
+    /// MACFN5 (`Dims::xmq_sh`): [`Self::moe_experts_macaq`] with the shared expert on its MACaQ int4
+    /// half record (its xptr entry, `xtp2::shared_macaq_halves`): the token int8 row (MACFN3's
+    /// stage-2 producer, once a layer), gate_up on the MACaQ cell over the FULL route (no `_sx`
+    /// exit), the MACaQ silu on every tile (the shared expert's own t_dn), down the same, FN4's
+    /// combine -- ONE launch more than the seven-launch train (`mq3_added`).
+    #[allow(clippy::too_many_arguments)]
+    fn moe_experts_macaq_shq(
+        &mut self,
+        rt: &MoeRoute,
+        mx: &MixOutBufs,
+        m: u64,
+        xgu: u64,
+        xdn: u64,
+        carry_out: bool,
+        (tq, tsc): (u64, u64),
+    ) -> anyhow::Result<u64> {
+        let MoeRoute {
+            sg,
+            wts,
+            pos,
+            row_tok,
+            te,
+            t0,
+            tr,
+            meta,
+            pcap,
+            tc,
+            tm,
+            ..
+        } = *rt;
+        let mq = self
+            .mq3
+            .context("--fn-macaq-shared int4: the MACaQ route's boot region is not set")?;
+        let l = u64::try_from(self.layer.max(0)).unwrap_or(0);
+        let shape = self.dims.xshape();
+        let inter = self.dims.x_inter();
+        let i = |x: u64| Arg::I(x as i32);
+        self.run(
+            moe::MACFN3_TOK_SYMBOL,
+            [m, 1, 1],
+            256,
+            vec![
+                Arg::P(mx.bi),
+                Arg::P(mq.tsh + l * H * 4),
+                Arg::P(tq),
+                Arg::P(tsc),
+                i(H),
+            ],
+            Group::Moe,
+        )?;
+        let cell = |em: &mut Self,
+                    g: MoeGemm,
+                    a: u64,
+                    a_s: u64,
+                    xp: u64,
+                    c: u64,
+                    n: u64,
+                    k: u64|
+         -> anyhow::Result<()> {
+            let sym = if em.macaq_prefill_wc && tm == 4 {
+                moe::macfn9_prefill_symbol(shape, g, 4)
+            } else {
+                moe::macfn5_symbol(shape, g, tm as u32)
+            }
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            em.run(
+                &sym,
+                [n / 128, tc, 1],
+                256,
+                vec![
+                    Arg::P(a),
+                    Arg::P(xp),
+                    Arg::P(te),
+                    Arg::P(t0),
+                    Arg::P(tr),
+                    Arg::P(row_tok),
+                    Arg::P(meta),
+                    Arg::P(a_s),
+                    Arg::P(0),
+                    Arg::P(0),
+                    Arg::P(c),
+                    i(n),
+                    i(k),
+                    i(pcap),
+                ],
+                Group::Moe,
+            )
+        };
+        let gu = self.s(pcap * 2 * inter * 2)?;
+        cell(self, MoeGemm::GateUp, tq, tsc, xgu, gu, 2 * inter, H)?;
+        let q = self.s(pcap * inter)?;
+        let sc = self.s(pcap * 4)?;
+        self.run(
+            moe::MACFN3_SILU_SYMBOL,
+            [tc, 1, 1],
+            64,
+            vec![
+                Arg::P(gu),
+                Arg::P(xdn),
+                Arg::P(te),
+                Arg::P(t0),
+                Arg::P(tr),
+                Arg::P(meta),
+                Arg::P(q),
+                Arg::P(sc),
+                Arg::P(0),
+                i(inter),
+            ],
+            Group::Moe,
+        )?;
+        let y = self.s(pcap * H * 2)?;
+        cell(self, MoeGemm::Down, q, sc, xdn, y, H, inter)?;
+        if self.tap_moe && self.layer == self.tap_layer {
+            for (n, a_, b_) in [
+                ("moe.gu", gu, pcap * 2 * inter * 2),
+                ("moe.q", q, pcap * inter),
+                ("moe.sc", sc, pcap * 4),
+                ("moe.y", y, pcap * H * 2),
+            ] {
+                self.taps.push((n.to_string(), a_, b_));
+            }
+        }
+        let out = if carry_out {
+            let slot = (self.layer.max(0) as usize) % 2;
+            self.arena.carry[slot].take(m * H * 2)?
+        } else {
+            self.s(m * H * 2)?
+        };
+        self.run(
+            moe::COMBINE_SYMBOL,
+            [m, 1, 1],
+            256,
+            vec![
+                Arg::P(y),
+                Arg::P(wts),
+                Arg::P(pos),
+                Arg::P(sg),
+                Arg::P(meta),
+                Arg::P(out),
+                Arg::I(H as i32),
+            ],
+            Group::Moe,
+        )?;
+        self.mq3_added += 1;
+        Ok(out)
+    }
+
     /// FN30: FN26's fused back half (`moe::BackTrain`, ONE launch: the shared-expert gate GEMV,
     /// gate_up, silu-quant, down and the combine, ticket-ordered) over the route `rt` taken with
     /// `fused`; the split pair is the route's own class cell (`gu_ks` / `dn_ks`: FN24's width-1
@@ -4721,6 +5206,9 @@ impl<'d> Emitter<'d> {
             !self.dims.xnv_plain,
             "--fn-experts-fmt nvfp4 on FN150's plain route: no fused back half (FN152's is P1's)"
         );
+        if self.dims.xmq {
+            return self.moe_back_macaq(rt, lw, mx, m, xgu, xdn, carry_out);
+        }
         let bt = moe::BackTrain {
             gu_ks: gu_ks as u32,
             dn_ks: dn_ks as u32,
@@ -4880,6 +5368,197 @@ impl<'d> Emitter<'d> {
             args,
             Group::Moe,
         )?;
+        if far.is_some() {
+            self.ar_far += 1;
+            return Ok(red);
+        }
+        Ok(out)
+    }
+
+    /// MACFN7 (`--fn-macaq-back fused|fused-tk`, `Dims::xmq_sh`): the MACaQ fused back half
+    /// (`moe_macfn7`, ONE ticket-ordered launch: the shared-gate GEMV, (`tk`) the token int8 rows,
+    /// gate_up, the silu-had32-int8 down input, down, the combine, + FN137's fused reduce when the
+    /// layer took the channel) over the fused route `rt`. Without `tk` the token producer
+    /// (`macfn3_tok_hadi8_t256`) runs first (+1 launch, `mq3_added`). Byte law: MACFN5's
+    /// seven-launch MACaQ train (exact int32 sums at any split, a max amax).
+    #[allow(clippy::too_many_arguments)]
+    fn moe_back_macaq(
+        &mut self,
+        rt: &MoeRoute,
+        lw: &LayerW,
+        mx: &MixOutBufs,
+        m: u64,
+        xgu: u64,
+        xdn: u64,
+        carry_out: bool,
+    ) -> anyhow::Result<u64> {
+        let MoeRoute {
+            sg,
+            wts,
+            pos,
+            row_tok,
+            te,
+            t0,
+            tr,
+            meta,
+            pcap,
+            tc,
+            tm,
+            gu_ks,
+            dn_ks,
+            ..
+        } = *rt;
+        // the split is not numerics here (exact int32 over K): the probe's fastest pair at every T
+        let (mgu, mdn) = moe::MACFN7_KS;
+        let tk = self
+            .macaq_back
+            .context("--fn-experts-fmt macaq: a fused MoE block under --fn-macaq-back legacy")?;
+        ensure!(
+            self.dims.xmq_sh,
+            "--fn-macaq-back fused: the MACaQ shared expert's route only (--fn-macaq-shared int4)"
+        );
+        ensure!(
+            tm == 1 && (1..=u64::from(moe::BackTrain::MAX_TOKENS)).contains(&m),
+            "the MACaQ fused back half serves tm 1 at T <= {}, not tm {tm} T {m}",
+            moe::BackTrain::MAX_TOKENS
+        );
+        ensure!(
+            self.miss_order
+                .symbol(&moe::BackTrain {
+                    gu_ks: gu_ks as u32,
+                    dn_ks: dn_ks as u32,
+                    prefetch: true,
+                })
+                .is_none()
+                && self.shared_split == 0,
+            "--fn-macaq-back fused: the id order without a shared split only"
+        );
+        ensure!(
+            self.moe_sync != 0,
+            "the fused MoE train needs the boot's sync region (fn.moe.sync)"
+        );
+        let mq = self
+            .mq3
+            .context("--fn-experts-fmt macaq: the MACaQ route's boot region is not set")?;
+        ensure!(
+            m <= mq.rows,
+            "--fn-experts-fmt macaq: a MoE block of {m} rows past the region's {} rows",
+            mq.rows
+        );
+        let l = u64::try_from(self.layer.max(0)).unwrap_or(0);
+        ensure!(l < 48, "--fn-experts-fmt macaq: layer {l} has no tsh row");
+        let (tq, tsc, ..) = mq.addrs();
+        let tsh = mq.tsh + l * H * 4;
+        let slot = moe_sync_slot_bytes(self.dims.eloc);
+        ensure!(
+            (moe::macfn7_sync_words(tc as u32) + moe::FrontTrain::SYNC_WORDS) * 4 <= slot,
+            "MACFN7: sync words of tc {tc} past the slot"
+        );
+        let sync = self.moe_sync + (m - 1) * slot;
+        let shape = self.dims.xshape();
+        let inter = self.dims.x_inter();
+        let gun = 2 * inter;
+        let i = |x: u64| Arg::I(x as i32);
+        if !tk {
+            self.run(
+                moe::MACFN3_TOK_SYMBOL,
+                [m, 1, 1],
+                256,
+                vec![Arg::P(mx.bi), Arg::P(tsh), Arg::P(tq), Arg::P(tsc), i(H)],
+                Group::Moe,
+            )?;
+            self.mq3_added += 1;
+        }
+        let (mgu, mdn) = (u64::from(mgu), u64::from(mdn));
+        let p_gu = if mgu > 1 {
+            self.s(mgu * pcap * gun * 4)?
+        } else {
+            0
+        };
+        let p_dn = if mdn > 1 {
+            self.s(mdn * pcap * H * 4)?
+        } else {
+            0
+        };
+        let cnt_gu = self.z(tc * (gun / 64) * 4)?;
+        let cnt_dn = self.z(tc * (H / 64) * 4)?;
+        let gu = self.s(pcap * gun * 2)?;
+        let q = self.s(pcap * inter)?;
+        let sc = self.s(pcap * 4)?;
+        let y = self.s(pcap * H * 2)?;
+        let far = self.far_next.take();
+        let out = if carry_out && far.is_none() {
+            let slot = (self.layer.max(0) as usize) % 2;
+            self.arena.carry[slot].take(m * H * 2)?
+        } else {
+            self.s(m * H * 2)?
+        };
+        let red = if far.is_some() {
+            let slot = (self.layer.max(0) as usize) % 2;
+            self.arena.carry[slot].take(m * H * 2)?
+        } else {
+            0
+        };
+        self.miss_launches[self.miss_order.index()] += 1;
+        let sym = moe::macfn7_back_symbol(shape, mgu as u32, mdn as u32, far.is_some(), tk)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let mut args = vec![
+            Arg::P(tq),
+            Arg::P(tsc),
+            Arg::P(xgu),
+            Arg::P(xdn),
+            Arg::P(te),
+            Arg::P(t0),
+            Arg::P(tr),
+            Arg::P(row_tok),
+            Arg::P(meta),
+            Arg::P(p_gu),
+            Arg::P(p_dn),
+            Arg::P(cnt_gu),
+            Arg::P(cnt_dn),
+            Arg::P(gu),
+            Arg::P(q),
+            Arg::P(sc),
+            Arg::P(y),
+            Arg::P(wts),
+            Arg::P(pos),
+            Arg::P(lw.sg),
+            Arg::P(mx.bi),
+            Arg::P(sg),
+            Arg::P(out),
+            Arg::P(sync),
+            i(m),
+            i(pcap),
+            i(tc),
+            Arg::P(tsh),
+        ];
+        if let Some(ch) = &far {
+            args.push(Arg::Blob(ch.blob(red)));
+        }
+        if self.tap_moe && self.layer == self.tap_layer {
+            for (n, a_, b_) in [
+                ("moe.gu", gu, pcap * gun * 2),
+                ("moe.q", q, pcap * inter),
+                ("moe.sc", sc, pcap * 4),
+                ("moe.y", y, pcap * H * 2),
+            ] {
+                self.taps.push((n.to_string(), a_, b_));
+            }
+        }
+        self.run(
+            &sym,
+            [
+                u64::from(moe::macfn7_back_grid(
+                    m as u32, mgu as u32, mdn as u32, tk, tc as u32,
+                )),
+                1,
+                1,
+            ],
+            u64::from(moe::BackTrain::THREADS),
+            args,
+            Group::Moe,
+        )?;
+        self.macaq_fused += 1;
         if far.is_some() {
             self.ar_far += 1;
             return Ok(red);
@@ -5343,6 +6022,7 @@ pub fn emit_layer(
         em.fuse86_saved = 0;
         em.df_saved = 0;
         em.pf122_added = 0;
+        em.mq3_added = 0;
     }
     // FN85: an incoming MoE partial (the previous layer's `Pending.rp`) is reduced by this layer's
     // attention-side combine down over the channel

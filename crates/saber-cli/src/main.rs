@@ -51,6 +51,8 @@ mod forward_tp2;
 mod gate;
 mod gdn_race;
 mod gpu_idle;
+mod inkling2;
+mod inkling2_exec;
 mod layer;
 mod ledger_law;
 mod load;
@@ -3198,6 +3200,11 @@ enum Cmd {
         #[command(flatten)]
         fnx: flashnext::run::FnFlags,
 
+        /// The Inkling 2 path's flags: used only when the pack's manifest names
+        /// `inkling2_loop`; any other pack refuses any of them off its default.
+        #[command(flatten)]
+        ink: inkling2::InkFlags,
+
         /// The plane's API keys and recent-requests ring (`--fn-serve`).
         #[command(flatten)]
         plane: plane_flags::PlaneFlags,
@@ -5641,12 +5648,24 @@ fn dispatch(cmd: Cmd) -> anyhow::Result<()> {
             deadline_s,
             hip_lib,
             fnx,
+            ink,
             plane,
         } => {
             plane.install()?;
             // FN12, the model selection law: the pack's manifest decides the path. A Flash-Next
             // pack (`"model": "qwen4_exp"`) boots the Flash-Next engine and returns; every other
             // pack takes the 27B's path below, unchanged (and refuses the Flash-Next flags).
+            // INK2: an Inkling 2 pack (`"model": "inkling2_loop"`) boots its own path (today the
+            // host dry run; `saber_cli::inkling2`); it reads no `--fn-*` flag, and every other
+            // pack refuses the `--ink-*` flags.
+            if flashnext::pack_model(&pack)?.as_deref() == Some("inkling2_loop") {
+                anyhow::Context::context(
+                    fnx.refuse_on_27b(),
+                    "an inkling2_loop pack reads no --fn-* flag",
+                )?;
+                return inkling2::main(&pack, tp, &prebuilt, &hip_lib, device, &ink);
+            }
+            ink.refuse_elsewhere()?;
             if flashnext::is_flashnext_pack(&pack)? {
                 // FN57: the host-wait arm crosses into the Flash-Next flags by value
                 let mut fnx = fnx;

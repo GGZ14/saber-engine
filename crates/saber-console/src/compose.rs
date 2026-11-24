@@ -15,9 +15,11 @@ use crate::config::{EngineConfig, FlagValue, Preset, Runtime};
 /// The prefill row ladder both launchers pass (`DEFAULT_PREFILL_ROWS` in saber-cli).
 pub const PREFILL_ROWS: &str = "96,128,192,256,320,384,512,768,1024,1536,2048";
 
-/// Flash-Next's pack as `tools/fetch_packs.sh flashnext` installs it (under `<nvme>`).
-pub const FN_PACK: &str = "saber-packs/qwen38-flashnext-quark-trunk8";
-/// The same files under the name a pack built locally carries; the launcher prefers it.
+/// Flash-Next's served pack (MACaQ experts) as `tools/fetch_packs.sh flashnext` installs it (under `<nvme>`).
+pub const FN_PACK: &str = "saber-packs/qwen38-flashnext-macaq-tp2-trunk8";
+/// The MXFP4-expert rollback pack under the name a locally built pack carries
+/// (`FN_EXPERTS_FMT=mxfp4 tools/serve_flashnext.sh`; `tools/fetch_packs.sh flashnext-mxfp4` installs it as
+/// `qwen38-flashnext-quark-trunk8`).
 pub const FN_LEGACY_PACK: &str = "saber-packs/qwen38-flashnext-quark-ep2-trunk8";
 
 /// Flash-Next's agent-load defaults (`FN_AGENT_DEFAULTS=1`), in the launcher's order.
@@ -85,8 +87,9 @@ pub struct ComposeCtx {
     pub exe: PathBuf,
     /// Flash-Next: `$SHARED/ws-fn3/ref/run1` exists (the launcher passes `--prompt-ids` then).
     pub fn3_prompts_present: bool,
-    /// Flash-Next: `<nvme>/saber-packs/qwen38-flashnext-quark-ep2-trunk8` exists (the
-    /// launcher then serves that local name of the pack instead of `qwen38-flashnext-quark-trunk8`).
+    /// Flash-Next: `<nvme>/saber-packs/qwen38-flashnext-quark-ep2-trunk8` exists (the launcher's
+    /// MXFP4 rollback, `FN_EXPERTS_FMT=mxfp4`, then serves that local name of the pack instead of
+    /// `qwen38-flashnext-quark-trunk8`; the served MACaQ default does not read it).
     pub fn_legacy_pack_present: bool,
     /// The container runtime's P2PDMA pool mounts (`tools/capture/p2p_mounts.sh`).
     pub p2p_mounts: Vec<String>,
@@ -158,11 +161,9 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
     let port = cfg.port.to_string();
     let (binary, sub, mut base): (String, &str, Flags) = match cfg.preset {
         Preset::Flashnext => {
-            let pack = paths.nvme.join(if ctx.fn_legacy_pack_present {
-                FN_LEGACY_PACK
-            } else {
-                FN_PACK
-            });
+            // the MACaQ pack is the served default; the MXFP4 rollback (FN_EXPERTS_FMT=mxfp4) is
+            // the launcher's, not a console preset
+            let pack = paths.nvme.join(FN_PACK);
             let mut b: Flags = vec![
                 f("--pack", p(&pack)),
                 f("--fn-trunk", "w8-hc8-head"),
@@ -170,6 +171,12 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
                 f("--fn-vram-elastic-kv-max-gib", "0.5"),
                 f("--fn-experts", "tp2"),
             ];
+            // `FN_EXPERTS_FMT` other than `auto`: the launcher passes `--fn-experts-fmt` right
+            // after `--fn-experts` (CAT1: the catalog's MXFP4 rollback entry sets it, so the
+            // override below fills this slot instead of landing among the extra arguments).
+            if cfg.flags.contains_key("--fn-experts-fmt") {
+                b.push(f("--fn-experts-fmt", "auto"));
+            }
             if ctx.fn3_prompts_present {
                 b.push(f("--prompt-ids", p(&paths.shared.join("ws-fn3/ref/run1"))));
             }
@@ -352,6 +359,18 @@ pub fn compose(cfg: &EngineConfig, ctx: &ComposeCtx) -> EngineCommand {
                 tail.push((*v).to_string());
             }
         }
+    }
+
+    // The launcher: the engine's `--fn-kv-dir` default is `/mnt/nvme/saber-kv`; under another
+    // storage root that path is not mounted, so the mounted `<nvme>/saber-kv` is named.
+    if cfg.preset == Preset::Flashnext
+        && paths.nvme != Path::new("/mnt/nvme")
+        && !tail
+            .iter()
+            .any(|a| a == "--fn-kv-dir" || a.starts_with("--fn-kv-dir="))
+    {
+        tail.push("--fn-kv-dir".to_string());
+        tail.push(p(&paths.nvme.join("saber-kv")));
     }
 
     let mut engine = vec![binary, sub.to_string()];
@@ -704,9 +723,50 @@ mod tests {
             .contains("--engine mock --mock /h/saber/examples/mock-script.toml"));
     }
 
-    fn on_path(bin: &str) -> bool {
-        std::env::var_os("PATH")
-            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
+    /// The launcher runs under this bash prologue (`$0` = the script): the print mode runs no
+    /// container, but the launcher's runtime check wants one named, so on a build image with
+    /// neither podman nor docker (and no `SABER_CONTAINER` of the caller's) it names `true`. The
+    /// check lives in the shell, not here: structural rule 2 keeps env reads out of this crate.
+    const LAUNCHER_PRELUDE: &str = r#"[ -n "${SABER_CONTAINER+x}" ] || command -v podman >/dev/null 2>&1 || command -v docker >/dev/null 2>&1 || export SABER_CONTAINER=true; exec "$BASH" "$0" "$@""#;
+
+    /// bash by absolute path (a test may hand the child a PATH without it).
+    fn bash() -> &'static str {
+        ["/usr/bin/bash", "/bin/bash"]
+            .into_iter()
+            .find(|b| Path::new(b).is_file())
+            .unwrap_or("bash")
+    }
+
+    /// PUB2: the prologue names `true` only when the caller set no `SABER_CONTAINER` and neither
+    /// runtime is on the PATH; the caller's value and a runtime on the PATH win (the old in-crate
+    /// check's behavior).
+    #[test]
+    fn the_launcher_prelude_names_a_runtime_only_when_none_is_there() {
+        let dir = saber_test_scratch::ScratchDir::new("console-prelude");
+        let script = dir.path().join("show.sh");
+        std::fs::write(&script, "printf '%s' \"${SABER_CONTAINER-unset}\"\n").unwrap();
+        let empty = dir.path().join("empty");
+        let withp = dir.path().join("withp");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&withp).unwrap();
+        let fake = withp.join("podman");
+        std::fs::write(&fake, "#!/bin/sh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = |path: &Path, sc: Option<&str>| {
+            let mut c = std::process::Command::new(bash());
+            c.arg("-c").arg(LAUNCHER_PRELUDE).arg(&script);
+            c.env("PATH", path).env_remove("SABER_CONTAINER");
+            if let Some(v) = sc {
+                c.env("SABER_CONTAINER", v);
+            }
+            let o = c.output().unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8(o.stdout).unwrap()
+        };
+        assert_eq!(run(&empty, None), "true");
+        assert_eq!(run(&empty, Some("docker")), "docker");
+        assert_eq!(run(&withp, None), "unset");
     }
 
     /// Run a launcher in its `SABER_PRINT_CMD=1` mode and return the engine argv it would boot.
@@ -717,8 +777,12 @@ mod tests {
         args: &[&str],
     ) -> Vec<String> {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let mut cmd = std::process::Command::new("bash");
-        cmd.arg(repo.join(script)).arg("--no-build").args(args);
+        let mut cmd = std::process::Command::new(bash());
+        cmd.arg("-c")
+            .arg(LAUNCHER_PRELUDE)
+            .arg(repo.join(script))
+            .arg("--no-build")
+            .args(args);
         // the scratch NVMe root beside `shared` (the test's config points at the same one)
         let nvme = shared.parent().unwrap().join("nvme");
         cmd.env("SABER_PRINT_CMD", "1")
@@ -726,12 +790,6 @@ mod tests {
             .env("SABER_NVME", &nvme)
             .env("SABER_PACKS", nvme.join("saber-packs"))
             .env_remove("PORT");
-        if std::env::var_os("SABER_CONTAINER").is_none() && !on_path("podman") && !on_path("docker")
-        {
-            // the print mode runs no container, but the launcher's runtime check wants one named
-            // (a build image without podman or docker)
-            cmd.env("SABER_CONTAINER", "true");
-        }
         if script.ends_with("serve_27b.sh") {
             // the console mounts the configured tokenizer / chat template at these two paths
             cmd.env("TOKENIZER", "/serve-tokenizer.json")
@@ -924,7 +982,7 @@ mod tests {
             launcher_argv("tools/serve_flashnext.sh", &shared, &env, &[])
         );
 
-        // A locally built Flash-Next pack under its own name: the launcher prefers it.
+        // A locally built MXFP4 pack under its own name does not change the MACaQ default.
         std::fs::create_dir_all(dir.path().join("nvme").join(FN_LEGACY_PACK)).unwrap();
         let c = mk(Preset::Flashnext);
         let mut ctx2 = ctx1.clone();
@@ -932,6 +990,32 @@ mod tests {
         assert_eq!(
             compose(&c, &ctx2).engine,
             launcher_argv("tools/serve_flashnext.sh", &shared, &[], &[])
+        );
+
+        // CAT1: the catalog's MXFP4 rollback entry (its pack + `--fn-experts-fmt mxfp4`) is the
+        // launcher's one-line rollback `FN_EXPERTS_FMT=mxfp4`, argument for argument (the
+        // launcher picks the local MXFP4 pack made above).
+        let mut c = mk(Preset::Flashnext);
+        c.flags.insert(
+            "--pack".into(),
+            FlagValue::Str(
+                dir.path()
+                    .join("nvme")
+                    .join(FN_LEGACY_PACK)
+                    .display()
+                    .to_string(),
+            ),
+        );
+        c.flags
+            .insert("--fn-experts-fmt".into(), FlagValue::Str("mxfp4".into()));
+        assert_eq!(
+            compose(&c, &ctx1).engine,
+            launcher_argv(
+                "tools/serve_flashnext.sh",
+                &shared,
+                &[("FN_EXPERTS_FMT", "mxfp4")],
+                &[]
+            )
         );
     }
 

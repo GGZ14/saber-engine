@@ -63,6 +63,18 @@ const EXTRA_FLAGS: &[(&str, &str)] = &[
     // impl placed below that pragma -- every line contracts exactly as in the object it was taken from.
     // FN153: FN148 form (b) in the grouped prefill tile (byte-equal to the ks1 cells; the same flag).
     ("moe_fn153", "-ffp-contract=off"),
+    // MACFN3: the MACaQ int4 expert bodies are reproduced bit for bit by numpy (tools/capture/macfn3/m3probe.py
+    // over tools/capture/macaq21/iu8_ref.py); every product and sum rounded where the source writes it.
+    ("moe_macfn3", "-ffp-contract=off"),
+    // MACFN7: the MACaQ fused back half (tools/gen_macfn7_back.py): moe_macfn3's bodies + moe_grouped_far's
+    // contract-off region (GEMV, combine, FN137's exchange) -- every line was contract-off where it came from.
+    ("moe_macfn7", "-ffp-contract=off"),
+    // INK3 / INK3b: the Inkling 2 bodies are bound-gated against f64 twins that round every f32 op
+    // on its own (tools/capture/ink3/ink3_probe.py, ink3b_probe.py); nothing may contract.
+    ("ink_", "-ffp-contract=off"),
+    // MACFN9: the MACaQ prefill tiles (tools/gen_macfn9_pf.py): moe_macfn3's GEMM body verbatim + one cache-policy
+    // template parameter and the W-stationary probe form; built as the parent.
+    ("moe_macfn9", "-ffp-contract=off"),
     // FN5: the HC kernels' host reference (tools/capture/fn5/hc_ref.py) reproduces every fp32
     // multiply and add as its own IEEE op; a contraction would fuse one across that. The one
     // function that must contract like `mxfp4_quant` (the bf16 gdn-norm twin) says so by pragma.

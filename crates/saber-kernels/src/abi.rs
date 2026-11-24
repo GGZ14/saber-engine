@@ -512,6 +512,73 @@ pub const SIG_MOE_BACK_FAR: &[SigArg] = &[
     a("fa", FAR_ARGS),
 ];
 
+/// MACFN7's MACaQ fused back half (`macfn7_back_h2_gu*_dn*[_tk]`, `hip/moe_macfn7.hip`):
+/// [`SIG_MOE_BACK`] (`a` / `as` = the token int8 rows + scales, `q` = the int8 down input, the
+/// partials int32) + `tsh`, the layer's gate_up t (read by the `_tk` token rows only).
+pub const SIG_MACFN7_BACK: &[SigArg] = &[
+    a("a", Buffer),
+    a("as", Buffer),
+    a("xgu", Buffer),
+    a("xdn", Buffer),
+    a("tile_expert", Buffer),
+    a("tile_row0", Buffer),
+    a("tile_rows", Buffer),
+    a("row_tok", Buffer),
+    a("meta", Buffer),
+    a("p_gu", Buffer),
+    a("p_dn", Buffer),
+    a("cnt_gu", Buffer),
+    a("cnt_dn", Buffer),
+    a("gu", Buffer),
+    a("q", Buffer),
+    a("q_scale", Buffer),
+    a("y", Buffer),
+    a("topk_w", Buffer),
+    a("route_pos", Buffer),
+    a("w_sg", Buffer),
+    a("bi", Buffer),
+    a("sgate", Buffer),
+    a("out", Buffer),
+    a("sync", Buffer),
+    a("t", I32),
+    a("pmax", I32),
+    a("tc", I32),
+    a("tsh", Buffer),
+];
+
+/// MACFN7: [`SIG_MACFN7_BACK`] + FN137's channel (`macfn7_back_h2_far_*`).
+pub const SIG_MACFN7_BACK_FAR: &[SigArg] = &[
+    a("a", Buffer),
+    a("as", Buffer),
+    a("xgu", Buffer),
+    a("xdn", Buffer),
+    a("tile_expert", Buffer),
+    a("tile_row0", Buffer),
+    a("tile_rows", Buffer),
+    a("row_tok", Buffer),
+    a("meta", Buffer),
+    a("p_gu", Buffer),
+    a("p_dn", Buffer),
+    a("cnt_gu", Buffer),
+    a("cnt_dn", Buffer),
+    a("gu", Buffer),
+    a("q", Buffer),
+    a("q_scale", Buffer),
+    a("y", Buffer),
+    a("topk_w", Buffer),
+    a("route_pos", Buffer),
+    a("w_sg", Buffer),
+    a("bi", Buffer),
+    a("sgate", Buffer),
+    a("out", Buffer),
+    a("sync", Buffer),
+    a("t", I32),
+    a("pmax", I32),
+    a("tc", I32),
+    a("tsh", Buffer),
+    a("fa", FAR_ARGS),
+];
+
 /// FN137's oracle skew kernel `fn137_delay(unsigned long long ticks)` (probe only).
 pub const SIG_FN137_DELAY: &[SigArg] = &[a("ticks", I64)];
 
@@ -647,6 +714,51 @@ pub const SIG_FN148_GROUPED: &[SigArg] = &[
     a("k", I32),
     a("pmax", I32),
     a("gsplit", I32),
+];
+
+/// MACFN3 (`hip/moe_macfn3.hip`): the MoE input's per-token int8 row (`x * t_layer`, had32, the iu8 law).
+pub const SIG_MACFN3_TOK: &[SigArg] = &[
+    a("x", Buffer),
+    a("t", Buffer),
+    a("q", Buffer),
+    a("sc", Buffer),
+    a("k", I32),
+];
+
+/// MACFN3b (the engine route): [`SIG_MACFN3_TOK`] + the shared-only route tables the shipped MXFP4
+/// cells read for the shared expert (block 0 copies the route's last `sh_tiles` tiles; a tile of
+/// another expert there traps).
+pub const SIG_MACFN3_TOK_SH: &[SigArg] = &[
+    a("x", Buffer),
+    a("t", Buffer),
+    a("q", Buffer),
+    a("sc", Buffer),
+    a("k", I32),
+    a("meta", Buffer),
+    a("tile_expert", Buffer),
+    a("tile_row0", Buffer),
+    a("tile_rows", Buffer),
+    a("meta_sh", Buffer),
+    a("te_sh", Buffer),
+    a("t0_sh", Buffer),
+    a("tr_sh", Buffer),
+    a("sh_tiles", I32),
+    a("e_shared", I32),
+];
+
+/// MACFN3: the down input a route row (bf16 silu(g) * u, the expert's own t from `xptr[3e + 2]`, had32,
+/// the iu8 law); `vdbg` (nullable) = the oracle's copy of the pre-transform v.
+pub const SIG_MACFN3_SILU: &[SigArg] = &[
+    a("c", Buffer),
+    a("xptr", Buffer),
+    a("tile_expert", Buffer),
+    a("tile_row0", Buffer),
+    a("tile_rows", Buffer),
+    a("meta", Buffer),
+    a("q", Buffer),
+    a("sc", Buffer),
+    a("vdbg", Buffer),
+    a("i", I32),
 ];
 
 /// `saber_gdn_norm_quant`.
@@ -3489,10 +3601,1318 @@ fn macaq_twin_signature(kernel: &str) -> Option<&'static [SigArg]> {
     }))
 }
 
+// ------------------------------------------------------------------------------------------------
+// INK3 / INK3b: the Inkling 2 (`inkling2_loop`) bodies (`hip/ink_glue.hip`, `hip/ink_attn.hip`,
+// `hip/ink_loop.hip`; docs/INKLING2.md section 9). Named one symbol each, in the kernels' own order.
+/// `ink_kv_conv_post_append`.
+pub const SIG_INK_KV_CONV: &[SigArg] = &[
+    a("kraw", Buffer),
+    a("vraw", Buffer),
+    a("ld_kv", I32),
+    a("qraw", Buffer),
+    a("ld_q", I32),
+    a("rraw", Buffer),
+    a("ld_r", I32),
+    a("dyn_k", Buffer),
+    a("dyn_v", Buffer),
+    a("ld_dyn", I32),
+    a("wk", Buffer),
+    a("wv", Buffer),
+    a("c_stride", I32),
+    a("lag0", I32),
+    a("lag_stride", I32),
+    a("q_scale", Buffer),
+    a("rel_scale", Buffer),
+    a("st_k_in", Buffer),
+    a("st_v_in", Buffer),
+    a("st_k_out", Buffer),
+    a("st_v_out", Buffer),
+    a("k_pool", Buffer),
+    a("v_pool", Buffer),
+    a("table", Buffer),
+    a("table_ld", I32),
+    a("row_seq", Buffer),
+    a("row_pos", Buffer),
+    a("q_post", Buffer),
+    a("ld_qp", I32),
+    a("r_post", Buffer),
+    a("ld_rp", I32),
+    a("t", I32),
+    a("kv", I32),
+    a("global_layer", I32),
+    a("qk_clip", F32),
+    a("rel_clip", F32),
+    a("n_floor", F32),
+    a("alpha", F32),
+];
+
+/// `ink_post_norm_route_e128`.
+pub const SIG_INK_ROUTE: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("gain", Buffer),
+    a("wr", Buffer),
+    a("bias", Buffer),
+    a("u", Buffer),
+    a("ld_u", I32),
+    a("ids", Buffer),
+    a("wts", Buffer),
+    a("d", I32),
+    a("route_scale", F32),
+];
+
+/// INK37 `ink37_post_norm_route_e128_r{4,8}`: `SIG_INK_ROUTE` + the row count (R rows a workgroup).
+pub const SIG_INK37_ROUTE: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("gain", Buffer),
+    a("wr", Buffer),
+    a("bias", Buffer),
+    a("u", Buffer),
+    a("ld_u", I32),
+    a("ids", Buffer),
+    a("wts", Buffer),
+    a("d", I32),
+    a("route_scale", F32),
+    a("t", I32),
+];
+
+/// `ink_swiglu_softcap`.
+pub const SIG_INK_SWIGLU: &[SigArg] = &[
+    a("gu", Buffer),
+    a("ld_gu", I32),
+    a("a", Buffer),
+    a("ld_a", I32),
+    a("rows", I32),
+    a("i", I32),
+    a("gc", F32),
+    a("uc", F32),
+];
+
+/// `ink_attn_bias_sink_v0`.
+pub const SIG_INK_ATTN_V0: &[SigArg] = &[
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("k_pool", Buffer),
+    a("v_pool", Buffer),
+    a("table", Buffer),
+    a("table_ld", I32),
+    a("row_seq", Buffer),
+    a("row_pos", Buffer),
+    a("rel", Buffer),
+    a("ld_rel", I32),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("h", I32),
+    a("kv", I32),
+    a("extent", I32),
+    a("window", I32),
+];
+
+/// `ink_gemm_f32_bf16`.
+pub const SIG_INK_GEMM: &[SigArg] = &[
+    a("a", Buffer),
+    a("lda", I32),
+    a("w", Buffer),
+    a("ldw", I32),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+    a("acc", I32),
+];
+
+/// `ink_depth_attend`.
+pub const SIG_INK_DEPTH: &[SigArg] = &[
+    a(
+        "ptrs",
+        ArgKind::Struct {
+            bytes: 160,
+            align: 8,
+        },
+    ),
+    a("s", I32),
+    a("nq", I32),
+    a("ld_s", I32),
+    a("ld_o", I32),
+    a("eps", F32),
+];
+
+/// `ink_rmsnorm`.
+pub const SIG_INK_RMSNORM: &[SigArg] = &[
+    a("x", Buffer),
+    a("ld_x", I32),
+    a("gain", Buffer),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("d", I32),
+    a("eps", F32),
+];
+
+/// `ink_msg_gate`.
+pub const SIG_INK_MSG_GATE: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("m", Buffer),
+    a("ld_m", I32),
+    a("wd", Buffer),
+    a("wf", Buffer),
+    a("wg", Buffer),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("eps", F32),
+];
+
+/// `ink_sconv_resid`.
+pub const SIG_INK_SCONV: &[SigArg] = &[
+    a("x", Buffer),
+    a("ld_x", I32),
+    a("w", Buffer),
+    a("st_in", Buffer),
+    a("st_out", Buffer),
+    a("resid", Buffer),
+    a("ld_r", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("t", I32),
+    a("c", I32),
+];
+
+/// `ink_out_gate`.
+pub const SIG_INK_OUT_GATE: &[SigArg] = &[
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("g", Buffer),
+    a("ld_g", I32),
+    a("y", Buffer),
+    a("ld_y", I32),
+    a("t", I32),
+    a("n", I32),
+];
+
+/// `ink_rel_bias`.
+pub const SIG_INK_REL_BIAS: &[SigArg] = &[
+    a("r", Buffer),
+    a("ld_r", I32),
+    a("p", Buffer),
+    a("rel", Buffer),
+    a("ld_rel", I32),
+    a("extent", I32),
+];
+
+/// `ink_route_sort_e128`.
+pub const SIG_INK_ROUTE_SORT: &[SigArg] = &[
+    a("ids", Buffer),
+    a("t", I32),
+    a("lo", I32),
+    a("nloc", I32),
+    a("row_tok", Buffer),
+    a("row_slot", Buffer),
+    a("tile_e", Buffer),
+    a("tile_r0", Buffer),
+    a("tile_n", Buffer),
+    a("meta", Buffer),
+    a("pos", Buffer),
+];
+
+/// `ink_act_quant_rows`.
+pub const SIG_INK_ACT_QUANT: &[SigArg] = &[
+    a("x", Buffer),
+    a("ld_x", I32),
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("scale", Buffer),
+    a("k", I32),
+];
+
+/// `ink_swiglu_q8`.
+pub const SIG_INK_SWIGLU_Q8: &[SigArg] = &[
+    a("gu", Buffer),
+    a("ld_gu", I32),
+    a("row_slot", Buffer),
+    a("meta", Buffer),
+    a("act", Buffer),
+    a("ld_act", I32),
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("scale", Buffer),
+    a("i", I32),
+    a("gc", F32),
+    a("uc", F32),
+];
+
+/// `ink_moe_combine`.
+pub const SIG_INK_MOE_COMBINE: &[SigArg] = &[
+    a("c", Buffer),
+    a("ld_c", I32),
+    a("pos", Buffer),
+    a("wts", Buffer),
+    a("y", Buffer),
+    a("ld_y", I32),
+    a("d", I32),
+    a("acc", I32),
+];
+
+/// `ink_softcap`.
+pub const SIG_INK_SOFTCAP: &[SigArg] = &[a("x", Buffer), a("n", I64), a("cap", F32)];
+
+/// INK6: `ink_mx8_w8a8_g{1,0}` (`hip/ink_moe.hip`): the native MXFP8 W8A8 grouped cell;
+/// `xptr[3e + {0, 1}]` = the record's e4m3 `w` [N, K] and e8m0 `ws` [K/32, N].
+pub const SIG_INK_MX8_W8A8: &[SigArg] = &[
+    a("a", Buffer),
+    a("xptr", Buffer),
+    a("tile_expert", Buffer),
+    a("tile_row0", Buffer),
+    a("tile_rows", Buffer),
+    a("row_tok", Buffer),
+    a("meta", Buffer),
+    a("as", Buffer),
+    a("c", Buffer),
+    a("n", I32),
+    a("k", I32),
+];
+
+/// INK6: `ink_mx8_a16_ref_g{1,0}`: the MXFP8 record's bf16-A oracle (the activation-class arm).
+pub const SIG_INK_MX8_A16: &[SigArg] = &[
+    a("a", Buffer),
+    a("xptr", Buffer),
+    a("tile_expert", Buffer),
+    a("tile_row0", Buffer),
+    a("tile_rows", Buffer),
+    a("row_tok", Buffer),
+    a("meta", Buffer),
+    a("c", Buffer),
+    a("n", I32),
+    a("k", I32),
+];
+
+/// INK8: `ink_p2p_xchg` (`hip/ink_p2p.hip`): the two-card reduce (`sum` 1) / head gather (`sum` 0)
+/// over P2P with the on-card call-numbered handshake (`link` / `peer_link`: 4 u32 words a rank).
+pub const SIG_INK_P2P_XCHG: &[SigArg] = &[
+    a("own", Buffer),
+    a("ld_own", I32),
+    a("peer", Buffer),
+    a("ld_peer", I32),
+    a("out", Buffer),
+    a("ld_out", I32),
+    a("rows", I32),
+    a("n0", I32),
+    a("n1", I32),
+    a("sum", I32),
+    a("link", Buffer),
+    a("peer_link", Buffer),
+];
+
+/// INK16: `ink_p2p_push_v5` (`hip/ink_pf2.hip`): the prefill reduce as a push into the peer's
+/// two-slot receive window (`slot_elems` f32 a slot), v4's link words.
+pub const SIG_INK_PUSH5: &[SigArg] = &[
+    a("own", Buffer),
+    a("ld_own", I32),
+    a("mywin", Buffer),
+    a("peerwin", Buffer),
+    a("slot_elems", I64),
+    a("out", Buffer),
+    a("ld_out", I32),
+    a("rows", I32),
+    a("cols", I32),
+    a("link", Buffer),
+    a("peer_link", Buffer),
+];
+
+/// INK9: `ink_msg_z` (`hip/ink_fast.hip`): the message gate's z rows.
+pub const SIG_INK_MSG_Z: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("m", Buffer),
+    a("ld_m", I32),
+    a("wd", Buffer),
+    a("z", Buffer),
+    a("eps", F32),
+];
+
+/// INK9: `ink_msg_out`: the message gate's output from z.
+pub const SIG_INK_MSG_OUT: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("m", Buffer),
+    a("ld_m", I32),
+    a("z", Buffer),
+    a("wf", Buffer),
+    a("wg", Buffer),
+    a("o", Buffer),
+    a("ld_o", I32),
+];
+
+/// INK37 `ink37_msg_out_r8`: `SIG_INK_MSG_OUT` + D + the row count (8 rows a workgroup).
+pub const SIG_INK37_MSG_OUT: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("m", Buffer),
+    a("ld_m", I32),
+    a("z", Buffer),
+    a("wf", Buffer),
+    a("wg", Buffer),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("d", I32),
+    a("t", I32),
+];
+
+/// INK9: `ink_route_logits`: the post norm + the router scores of 8 experts a workgroup.
+pub const SIG_INK_ROUTE_LOGITS: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("gain", Buffer),
+    a("wr", Buffer),
+    a("bias", Buffer),
+    a("u", Buffer),
+    a("ld_u", I32),
+    a("sk", Buffer),
+    a("d", I32),
+];
+
+/// INK9: `ink_route_top8`: the route's rank / select / renorm tail.
+pub const SIG_INK_ROUTE_TOP8: &[SigArg] = &[
+    a("sk", Buffer),
+    a("ids", Buffer),
+    a("wts", Buffer),
+    a("route_scale", F32),
+];
+
+/// INK9: `ink_gemv_gate_f32_bf16`: the GEMV with A = o * sigmoid(g).
+pub const SIG_INK_GEMV_GATE: &[SigArg] = &[
+    a("a", Buffer),
+    a("lda", I32),
+    a("g", Buffer),
+    a("ldg", I32),
+    a("w", Buffer),
+    a("ldw", I32),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+    a("acc", I32),
+];
+
+/// INK9: `ink_route_tail`: top-8 + the route sort (block 0) + the act quant (blocks 1..T).
+pub const SIG_INK_ROUTE_TAIL: &[SigArg] = &[
+    a("sk", Buffer),
+    a("ids", Buffer),
+    a("wts", Buffer),
+    a("route_scale", F32),
+    a("x", Buffer),
+    a("ld_x", I32),
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("scale", Buffer),
+    a("k", I32),
+    a("t", I32),
+    a("lo", I32),
+    a("nloc", I32),
+    a("row_tok", Buffer),
+    a("row_slot", Buffer),
+    a("tile_e", Buffer),
+    a("tile_r0", Buffer),
+    a("tile_n", Buffer),
+    a("meta", Buffer),
+    a("pos", Buffer),
+];
+
+/// INK9: `ink_attn_bias_sink_v1`: v0 with the band bias formed in the body.
+pub const SIG_INK_ATTN_V1: &[SigArg] = &[
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("k_pool", Buffer),
+    a("v_pool", Buffer),
+    a("table", Buffer),
+    a("table_ld", I32),
+    a("row_seq", Buffer),
+    a("row_pos", Buffer),
+    a("rp", Buffer),
+    a("ld_rp", I32),
+    a("p", Buffer),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("h", I32),
+    a("kv", I32),
+    a("extent", I32),
+    a("window", I32),
+];
+
+/// INK27: `ink_fa_rt{8,16}` (`hip/ink_fa.hip`): v1's arguments + the row count T (after `ld_o`).
+pub const SIG_INK_FA_RT: &[SigArg] = &[
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("k_pool", Buffer),
+    a("v_pool", Buffer),
+    a("table", Buffer),
+    a("table_ld", I32),
+    a("row_seq", Buffer),
+    a("row_pos", Buffer),
+    a("rp", Buffer),
+    a("ld_rp", I32),
+    a("p", Buffer),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("t", I32),
+    a("h", I32),
+    a("kv", I32),
+    a("extent", I32),
+    a("window", I32),
+];
+
+/// INK9: `ink_sconv_rows`: the static short conv at one token a row, per-row state slots.
+pub const SIG_INK_SCONV_ROWS: &[SigArg] = &[
+    a("x", Buffer),
+    a("ld_x", I32),
+    a("w", Buffer),
+    a("st", Buffer),
+    a("rseq", Buffer),
+    a("resid", Buffer),
+    a("ld_r", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("t", I32),
+    a("c", I32),
+];
+
+/// INK10: `ink_gemv_gate_push` (`hip/ink_fuse.hip`): the gated o GEMV + the push of its partial.
+pub const SIG_INK_GEMV_GATE_PUSH: &[SigArg] = &[
+    a("a", Buffer),
+    a("lda", I32),
+    a("g", Buffer),
+    a("ldg", I32),
+    a("w", Buffer),
+    a("ldw", I32),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+    a("acc", I32),
+    a("pwin", Buffer),
+    a("ld_win", I32),
+    a("pflags", Buffer),
+    a("ctr", Buffer),
+];
+
+/// INK10: `ink_combine_push`: the MoE combine + the push of its row.
+pub const SIG_INK_COMBINE_PUSH: &[SigArg] = &[
+    a("c", Buffer),
+    a("ld_c", I32),
+    a("pos", Buffer),
+    a("wts", Buffer),
+    a("y", Buffer),
+    a("ld_y", I32),
+    a("d", I32),
+    a("acc", I32),
+    a("pwin", Buffer),
+    a("ld_win", I32),
+    a("pflags", Buffer),
+    a("ctr", Buffer),
+];
+
+/// INK10: `ink_xsd`: the push reduce's consumer + sconv + depth attend.
+pub const SIG_INK_XSD: &[SigArg] = &[
+    a("own", Buffer),
+    a("ld_own", I32),
+    a("win", Buffer),
+    a("ld_win", I32),
+    a("flags", Buffer),
+    a("ctr", Buffer),
+    a("nfl", I32),
+    a("per_row", I32),
+    a("xmode", I32),
+    a("w", Buffer),
+    a("st", Buffer),
+    a("rseq", Buffer),
+    a("resid", Buffer),
+    a("ld_r", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a(
+        "ptrs",
+        ArgKind::Struct {
+            bytes: 160,
+            align: 8,
+        },
+    ),
+    a("s", I32),
+    a("nq", I32),
+    a("ld_s", I32),
+    a("ld_qo", I32),
+    a("eps", F32),
+    a("diag", Buffer),
+];
+
+/// INK17: `ink_xsdc` (`hip/ink_vt.hip`): `ink_xsd` for the chained rows of ONE sequence (a verify
+/// chunk) + the history entry it writes and the last arriver's counter.
+pub const SIG_INK_XSDC: &[SigArg] = &[
+    a("own", Buffer),
+    a("ld_own", I32),
+    a("win", Buffer),
+    a("ld_win", I32),
+    a("flags", Buffer),
+    a("ctr", Buffer),
+    a("nfl", I32),
+    a("per_row", I32),
+    a("xmode", I32),
+    a("w", Buffer),
+    a("st", Buffer),
+    a("rseq", Buffer),
+    a("resid", Buffer),
+    a("ld_r", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a(
+        "ptrs",
+        ArgKind::Struct {
+            bytes: 160,
+            align: 8,
+        },
+    ),
+    a("s", I32),
+    a("nq", I32),
+    a("ld_s", I32),
+    a("ld_qo", I32),
+    a("eps", F32),
+    a("diag", Buffer),
+    a("hist", Buffer),
+    a("arrive", Buffer),
+];
+
+/// INK30: `ink_xsd_pw` (`ink_r28`, measurement only): `ink_xsd` + the `wt` stamp words.
+pub const SIG_INK_XSD_W: &[SigArg] = &[
+    a("own", Buffer),
+    a("ld_own", I32),
+    a("win", Buffer),
+    a("ld_win", I32),
+    a("flags", Buffer),
+    a("ctr", Buffer),
+    a("nfl", I32),
+    a("per_row", I32),
+    a("xmode", I32),
+    a("w", Buffer),
+    a("st", Buffer),
+    a("rseq", Buffer),
+    a("resid", Buffer),
+    a("ld_r", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a(
+        "ptrs",
+        ArgKind::Struct {
+            bytes: 160,
+            align: 8,
+        },
+    ),
+    a("s", I32),
+    a("nq", I32),
+    a("ld_s", I32),
+    a("ld_qo", I32),
+    a("eps", F32),
+    a("diag", Buffer),
+    a("wtk", Buffer),
+];
+
+/// INK30: `ink_xsdc_pw` (`ink_r28`, measurement only): `ink_xsdc` + the `wt` stamp words.
+pub const SIG_INK_XSDC_W: &[SigArg] = &[
+    a("own", Buffer),
+    a("ld_own", I32),
+    a("win", Buffer),
+    a("ld_win", I32),
+    a("flags", Buffer),
+    a("ctr", Buffer),
+    a("nfl", I32),
+    a("per_row", I32),
+    a("xmode", I32),
+    a("w", Buffer),
+    a("st", Buffer),
+    a("rseq", Buffer),
+    a("resid", Buffer),
+    a("ld_r", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a(
+        "ptrs",
+        ArgKind::Struct {
+            bytes: 160,
+            align: 8,
+        },
+    ),
+    a("s", I32),
+    a("nq", I32),
+    a("ld_s", I32),
+    a("ld_qo", I32),
+    a("eps", F32),
+    a("diag", Buffer),
+    a("hist", Buffer),
+    a("arrive", Buffer),
+    a("wtk", Buffer),
+];
+
+/// INK10: `ink_route_fused`: route logits + the last workgroup's route tail.
+pub const SIG_INK_ROUTE_FUSED: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("gain", Buffer),
+    a("wr", Buffer),
+    a("bias", Buffer),
+    a("u", Buffer),
+    a("ld_u", I32),
+    a("sk", Buffer),
+    a("d", I32),
+    a("ids", Buffer),
+    a("wts", Buffer),
+    a("route_scale", F32),
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("scale", Buffer),
+    a("t", I32),
+    a("lo", I32),
+    a("nloc", I32),
+    a("row_tok", Buffer),
+    a("row_slot", Buffer),
+    a("tile_e", Buffer),
+    a("tile_r0", Buffer),
+    a("tile_n", Buffer),
+    a("meta", Buffer),
+    a("pos", Buffer),
+    a("arrive", Buffer),
+];
+
+/// INK17: `ink_route_fused_rt` (`hip/ink_vt.hip`): the route with the tail per row (+ the
+/// per-row last-arriver counters).
+pub const SIG_INK_ROUTE_FUSED_RT: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("gain", Buffer),
+    a("wr", Buffer),
+    a("bias", Buffer),
+    a("u", Buffer),
+    a("ld_u", I32),
+    a("sk", Buffer),
+    a("d", I32),
+    a("ids", Buffer),
+    a("wts", Buffer),
+    a("route_scale", F32),
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("scale", Buffer),
+    a("t", I32),
+    a("lo", I32),
+    a("nloc", I32),
+    a("row_tok", Buffer),
+    a("row_slot", Buffer),
+    a("tile_e", Buffer),
+    a("tile_r0", Buffer),
+    a("tile_n", Buffer),
+    a("meta", Buffer),
+    a("pos", Buffer),
+    a("arrive", Buffer),
+    a("rarrive", Buffer),
+];
+
+/// INK10: `ink_msg_z3`: up to three message gates' z rows (one gate a blockIdx.z).
+pub const SIG_INK_MSG_Z3: &[SigArg] = &[
+    a(
+        "set",
+        ArgKind::Struct {
+            bytes: 96,
+            align: 8,
+        },
+    ),
+    a("ld", I32),
+    a("eps", F32),
+];
+
+/// INK10: `ink_msg_out3n`: the gates' outputs + the last arriver's in norm of each normed row.
+pub const SIG_INK_MSG_OUT3N: &[SigArg] = &[
+    a(
+        "set",
+        ArgKind::Struct {
+            bytes: 192,
+            align: 8,
+        },
+    ),
+    a("ld", I32),
+    a("eps", F32),
+    a("arrive", Buffer),
+];
+
+/// INK11: `ink_depth_mq` (`hip/ink_fuse11.hip`): the depth attend for 4 x gridDim.y queries over one
+/// state list (a pass's 48 messages in one launch).
+pub const SIG_INK_DEPTH_MQ: &[SigArg] = &[
+    a(
+        "states",
+        ArgKind::Struct {
+            bytes: 64,
+            align: 8,
+        },
+    ),
+    a("s", I32),
+    a("q0", Buffer),
+    a("ldq", I32),
+    a("o0", Buffer),
+    a("o_stride", I64),
+    a("ld_s", I32),
+    a("ld_o", I32),
+    a("eps", F32),
+];
+
+/// INK11: `ink_gemv3_f32_bf16`: the M <= 8 GEMV over up to three (A, W, C, N) segments.
+pub const SIG_INK_GEMV3: &[SigArg] = &[
+    a(
+        "segs",
+        ArgKind::Struct {
+            bytes: 96,
+            align: 8,
+        },
+    ),
+    a("lda", I32),
+    a("m", I32),
+    a("k", I32),
+];
+
+/// INK11: `ink_attn_kvc`: the decode rows' kv conv / post / append folded into the attention.
+pub const SIG_INK_ATTN_KVC: &[SigArg] = &[
+    a("kraw", Buffer),
+    a("vraw", Buffer),
+    a("ld_kv", I32),
+    a("qraw", Buffer),
+    a("ld_q", I32),
+    a("rraw", Buffer),
+    a("ld_r", I32),
+    a("dyn_k", Buffer),
+    a("dyn_v", Buffer),
+    a("ld_dyn", I32),
+    a("wk", Buffer),
+    a("wv", Buffer),
+    a("c_stride", I32),
+    a("lag0", I32),
+    a("lag_stride", I32),
+    a("q_scale", Buffer),
+    a("rel_scale", Buffer),
+    a("st_k0", Buffer),
+    a("st_k1", Buffer),
+    a("st_v0", Buffer),
+    a("st_v1", Buffer),
+    a("k_pool", Buffer),
+    a("v_pool", Buffer),
+    a("table", Buffer),
+    a("table_ld", I32),
+    a("row_seq", Buffer),
+    a("row_pos", Buffer),
+    a("p", Buffer),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("h", I32),
+    a("kv", I32),
+    a("extent", I32),
+    a("window", I32),
+    a("global_layer", I32),
+    a("qk_clip", F32),
+    a("rel_clip", F32),
+    a("n_floor", F32),
+    a("alpha", F32),
+];
+
+/// INK11: `ink_seam_p1` / `ink_seam_p2`: the sampler's device seam (top 64 + log-sum-exps).
+pub const SIG_INK_SEAM_P1: &[SigArg] = &[
+    a("lg", Buffer),
+    a("ld", I64),
+    a("ncols", I32),
+    a("temp", Buffer),
+    a("part", Buffer),
+];
+pub const SIG_INK_SEAM_P2: &[SigArg] = &[a("part", Buffer), a("out", Buffer)];
+
+/// INK12 (`hip/ink_draft.hip`): the block drafter's bodies + the verify rollback.
+pub const SIG_INK_DR_COPY: &[SigArg] = &[a("src", Buffer), a("dst", Buffer), a("n", I64)];
+pub const SIG_INK_DR_MIXNORM: &[SigArg] = &[
+    a("taps", Buffer),
+    a("plane", I64),
+    a("row0", I32),
+    a("a0", F32),
+    a("a1", F32),
+    a("a2", F32),
+    a("a3", F32),
+    a("gain", Buffer),
+    a("o", Buffer),
+    a("eps", F32),
+];
+pub const SIG_INK_DR_HNR: &[SigArg] = &[
+    a("x", Buffer),
+    a("ld", I32),
+    a("gain", Buffer),
+    a("ppos", Buffer),
+    a("add", I32),
+    a("eps", F32),
+];
+pub const SIG_INK_DR_ATTN: &[SigArg] = &[
+    a("q", Buffer),
+    a("ldq", I32),
+    a("kc", Buffer),
+    a("vc", Buffer),
+    a("bk", Buffer),
+    a("bv", Buffer),
+    a("ldb", I32),
+    a("ppos", Buffer),
+    a("window", I32),
+    a("o", Buffer),
+    a("ldo", I32),
+    a("scale", F32),
+];
+pub const SIG_INK_DR_SILU_MUL: &[SigArg] = &[a("g", Buffer), a("u", Buffer), a("n", I64)];
+pub const SIG_INK_DR_GRU: &[SigArg] = &[
+    a("s_in", Buffer),
+    a("w1", Buffer),
+    a("ptok", Buffer),
+    a("wlo", Buffer),
+    a("ldw", I32),
+    a("ca", Buffer),
+    a("cb", Buffer),
+    a("bias", Buffer),
+    a("s_out", Buffer),
+    a("lat", Buffer),
+];
+pub const SIG_INK_DR_FOLD: &[SigArg] = &[
+    a("fw", Buffer),
+    a("fb", Buffer),
+    a("base", Buffer),
+    a("lat", Buffer),
+    a("v", I32),
+    a("cap", F32),
+    a("part", Buffer),
+];
+pub const SIG_INK_DR_ARGMAX: &[SigArg] = &[a("part", Buffer), a("n", I32), a("tok", Buffer)];
+/// INK18: `ink_dr_argmax_map` (`hip/ink_dr2.hip`): the pruned vocabulary's argmax, mapped to its id.
+pub const SIG_INK_DR_ARGMAX_MAP: &[SigArg] = &[
+    a("part", Buffer),
+    a("n", I32),
+    a("map", Buffer),
+    a("tok", Buffer),
+];
+/// INK33: `ink_dr6_fold_p` / `ink_dr6_argmax_map_p` (`hip/ink_dr6.hip`): the fold + the pruned
+/// argmax with each draft's top-1 probability (the confidence-gated depth arm).
+pub const SIG_INK_DR6_FOLD_P: &[SigArg] = &[
+    a("fw", Buffer),
+    a("fb", Buffer),
+    a("base", Buffer),
+    a("lat", Buffer),
+    a("v", I32),
+    a("cap", F32),
+    a("part", Buffer),
+    a("psum", Buffer),
+];
+pub const SIG_INK_DR6_ARGMAX_MAP_P: &[SigArg] = &[
+    a("part", Buffer),
+    a("n", I32),
+    a("map", Buffer),
+    a("tok", Buffer),
+    a("psum", Buffer),
+    a("cap", F32),
+    a("p1", Buffer),
+];
+/// INK18: `ink_dr_gemv_sk_{bf16,w8}` (`hip/ink_dr2.hip`): the drafter's split-K GEMV (M <= 8).
+pub const SIG_INK_DR_GEMV_SK: &[SigArg] = &[
+    a("a", Buffer),
+    a("lda", I32),
+    a("w", Buffer),
+    a("ws", Buffer),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+    a("acc", I32),
+    a("ks", I32),
+    a("np", I32),
+    a("part", Buffer),
+    a("ctr", Buffer),
+];
+pub const SIG_INK_DR_HIST: &[SigArg] = &[
+    a("st", Buffer),
+    a("x", Buffer),
+    a("ldx", I32),
+    a("w", I32),
+    a("hist", Buffer),
+];
+pub const SIG_INK_DR_COMMIT: &[SigArg] = &[a("tab", Buffer), a("keep", I32)];
+/// INK20: the batched drafter pass (`hip/ink_dr3.hip`): ink_draft / ink_dr2 bodies with a
+/// sequence index (per-sequence position, context slot and state strides).
+pub const SIG_INK_DR3_HNR: &[SigArg] = &[
+    a("x", Buffer),
+    a("ld", I32),
+    a("gain", Buffer),
+    a("ppos", Buffer),
+    a("add", I32),
+    a("rows", I32),
+    a("eps", F32),
+];
+pub const SIG_INK_DR3_ATTN: &[SigArg] = &[
+    a("q", Buffer),
+    a("ldq", I32),
+    a("kc0", Buffer),
+    a("vc0", Buffer),
+    a("cstride", I64),
+    a("slots", Buffer),
+    a("bk", Buffer),
+    a("bv", Buffer),
+    a("ldb", I32),
+    a("ppos", Buffer),
+    a("window", I32),
+    a("o", Buffer),
+    a("ldo", I32),
+    a("scale", F32),
+];
+pub const SIG_INK_DR3_GATHER: &[SigArg] = &[
+    a("src", Buffer),
+    a("stride", I64),
+    a("slots", Buffer),
+    a("dst", Buffer),
+    a("n", I32),
+];
+pub const SIG_INK_DR3_GRU: &[SigArg] = &[
+    a("s_in0", Buffer),
+    a("w1", Buffer),
+    a("ptok0", Buffer),
+    a("wlo", Buffer),
+    a("ldw", I32),
+    a("ca0", Buffer),
+    a("ca_stride", I64),
+    a("cb0", Buffer),
+    a("bias", Buffer),
+    a("s_out0", Buffer),
+    a("lat0", Buffer),
+];
+pub const SIG_INK_DR3_FOLD: &[SigArg] = &[
+    a("fw", Buffer),
+    a("fb", Buffer),
+    a("base0", Buffer),
+    a("base_stride", I64),
+    a("lat0", Buffer),
+    a("V", I32),
+    a("cap", F32),
+    a("part0", Buffer),
+    a("part_stride", I64),
+];
+pub const SIG_INK_DR3_ARGMAX_MAP: &[SigArg] = &[
+    a("part0", Buffer),
+    a("part_stride", I64),
+    a("n", I32),
+    a("map", Buffer),
+    a("tok0", Buffer),
+    a("tok_stride", I32),
+];
+/// INK21: the batched drafter's GEMMs on the matrix cores (`hip/ink_dr4.hip`).
+pub const SIG_INK_DR4_MM: &[SigArg] = &[
+    a("a", Buffer),
+    a("lda", I32),
+    a("w", Buffer),
+    a("ws", Buffer),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+    a("acc", I32),
+    a("ks", I32),
+    a("part", Buffer),
+];
+pub const SIG_INK_DR4_KSUM: &[SigArg] = &[
+    a("part", Buffer),
+    a("ks", I32),
+    a("m", I32),
+    a("n", I32),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("acc", I32),
+];
+/// INK22: the batched drafter append's row scatter (`hip/ink_dr5.hip`).
+pub const SIG_INK_DR5_SCATTER: &[SigArg] = &[
+    a("src", Buffer),
+    a("ld", I32),
+    a("dst", Buffer),
+    a("sstride", I64),
+    a("pstride", I64),
+    a("n", I32),
+    a("slots", Buffer),
+    a("pos", Buffer),
+];
+/// INK20: the multi-sequence verify glue (`hip/ink_mv.hip`): the segmented sconv, the history
+/// entry and the rollback of B sequences x W chained rows at once.
+pub const SIG_INK_MV_SCONV: &[SigArg] = &[
+    a("x", Buffer),
+    a("ld_x", I32),
+    a("w", Buffer),
+    a("st", Buffer),
+    a("row_seq", Buffer),
+    a("resid", Buffer),
+    a("ld_r", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("W", I32),
+    a("C", I32),
+];
+pub const SIG_INK_MV_HIST: &[SigArg] = &[
+    a("st", Buffer),
+    a("row_seq", Buffer),
+    a("x", Buffer),
+    a("ldx", I32),
+    a("C", I32),
+    a("W", I32),
+    a("hist", Buffer),
+];
+pub const SIG_INK_MV_COMMIT: &[SigArg] = &[
+    a("tab", Buffer),
+    a("keeps", Buffer),
+    a("row_seq", Buffer),
+    a("W", I32),
+];
+
+/// INK14: the 8-bit trunk GEMV / GEMM (`hip/ink_w8.hip`): int8 codes [N, K] + bf16 scales
+/// [N, K / 32] in place of the bf16 weight.
+pub const SIG_INK_W8_GEMM: &[SigArg] = &[
+    a("a", Buffer),
+    a("lda", I32),
+    a("w", Buffer),
+    a("ldw", I32),
+    a("sc", Buffer),
+    a("ldsc", I32),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+    a("acc", I32),
+];
+
+/// INK25: `ink_gemm_i8_w8` (`hip/ink_i8.hip`): int8 activation codes [M, K] + f32 scales
+/// [M, K / 32] (from `ink_act_q8_b32`) x INK14's 8-bit record.
+pub const SIG_INK_I8_GEMM: &[SigArg] = &[
+    a("qa", Buffer),
+    a("sa", Buffer),
+    a("w", Buffer),
+    a("ldw", I32),
+    a("sc", Buffer),
+    a("ldsc", I32),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("M", I32),
+    a("N", I32),
+    a("K", I32),
+    a("acc", I32),
+];
+
+/// INK29: `ink29_msg_norm2`: [rmsnorm(h) ; rmsnorm(m)] a row -> f32 [T, 2D].
+pub const SIG_INK29_MSG_NORM2: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("m", Buffer),
+    a("ld_m", I32),
+    a("out", Buffer),
+    a("eps", F32),
+];
+
+/// INK29: `ink29_out_gate_q8` = `ink_out_gate`'s arguments + the codes / scales of y.
+pub const SIG_INK29_OUT_GATE_Q8: &[SigArg] = &[
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("g", Buffer),
+    a("ld_g", I32),
+    a("y", Buffer),
+    a("ld_y", I32),
+    a("T", I32),
+    a("N", I32),
+    a("q", Buffer),
+    a("s", Buffer),
+];
+
+/// INK25: `ink_act_q8_b32`: f32 activations [M, lda] -> int8 codes [M, K] + f32 scales [M, K / 32].
+pub const SIG_INK_ACT_Q8: &[SigArg] = &[
+    a("a", Buffer),
+    a("lda", I32),
+    a("q", Buffer),
+    a("s", Buffer),
+    a("M", I32),
+    a("K", I32),
+];
+
+/// INK14: `ink_gemv_gate_f32_w8`.
+pub const SIG_INK_W8_GATE: &[SigArg] = &[
+    a("a", Buffer),
+    a("lda", I32),
+    a("g", Buffer),
+    a("ldg", I32),
+    a("w", Buffer),
+    a("ldw", I32),
+    a("sc", Buffer),
+    a("ldsc", I32),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+    a("acc", I32),
+];
+
+/// INK14: `ink_gemv_gate_push_w8` / `_n16_w8`.
+pub const SIG_INK_W8_GATE_PUSH: &[SigArg] = &[
+    a("a", Buffer),
+    a("lda", I32),
+    a("g", Buffer),
+    a("ldg", I32),
+    a("w", Buffer),
+    a("ldw", I32),
+    a("sc", Buffer),
+    a("ldsc", I32),
+    a("c", Buffer),
+    a("ldc", I32),
+    a("m", I32),
+    a("n", I32),
+    a("k", I32),
+    a("acc", I32),
+    a("pwin", Buffer),
+    a("ld_win", I32),
+    a("pflags", Buffer),
+    a("ctr", Buffer),
+];
+
+/// INK14: `ink_gemv3_f32_w8`: three (A, W codes, W scales, C, N) segments.
+pub const SIG_INK_W8_GEMV3: &[SigArg] = &[
+    a(
+        "segs",
+        ArgKind::Struct {
+            bytes: 120,
+            align: 8,
+        },
+    ),
+    a("lda", I32),
+    a("m", I32),
+    a("k", I32),
+];
+
+fn ink_signature(kernel: &str) -> Option<&'static [SigArg]> {
+    Some(match kernel {
+        // INK29 (`hip/ink_p29.hip`): the parents' signatures + the fused out_gate quant
+        "ink29_q8_ls" | "ink29_q8_b16" => SIG_INK_ACT_Q8,
+        "ink29_gemm_i8_kx2" | "ink29_gemm_i8_kx3" | "ink29_gemm_i8b16" => SIG_INK_I8_GEMM,
+        k if k.starts_with("ink29_gemm_bw_s") => SIG_INK_GEMM,
+        "ink35_gemm_bws_s6" => SIG_INK_GEMM,
+        k if k.starts_with("ink29_route_sort_e128_v2") => SIG_INK_ROUTE_SORT,
+        "ink37_route_sort_e128_v2_t128" => SIG_INK_ROUTE_SORT,
+        "ink37_msg_out_r8" => SIG_INK37_MSG_OUT,
+        "ink37_post_norm_route_e128_r4" | "ink37_post_norm_route_e128_r8" => SIG_INK37_ROUTE,
+        "ink29_out_gate_q8" | "ink29_out_gate_q8_b16" => SIG_INK29_OUT_GATE_Q8,
+        "ink29_msg_norm2" => SIG_INK29_MSG_NORM2,
+        "ink_gemv_f32_w8" | "ink_gemv_n16_f32_w8" | "ink_gemm_f32_w8" => SIG_INK_W8_GEMM,
+        // INK15: the prefill GEMM re-tiles (`hip/ink_pf.hip`): the parents' signatures
+        k if k.starts_with("ink_gemm_pf_f32_w8_t") => SIG_INK_W8_GEMM,
+        k if k.starts_with("ink_gemm_pf_f32_bf16_t") => SIG_INK_GEMM,
+        // INK16: the column-lane prefill GEMM (`hip/ink_pf2.hip`): the parents' signatures
+        k if k.starts_with("ink_gemm_cl_f32_w8_r") => SIG_INK_W8_GEMM,
+        k if k.starts_with("ink_gemm_cl_f32_bf16_r") => SIG_INK_GEMM,
+        "ink_p2p_push_v5" => SIG_INK_PUSH5,
+        "ink_gemm_i8_w8" => SIG_INK_I8_GEMM,
+        "ink_act_q8_b32" | "ink_act_q8_b32_v2" => SIG_INK_ACT_Q8,
+        "ink_gemv_gate_f32_w8" => SIG_INK_W8_GATE,
+        "ink_gemv_gate_push_w8" | "ink_gemv_gate_push_n16_w8" => SIG_INK_W8_GATE_PUSH,
+        "ink_gemv3_f32_w8" => SIG_INK_W8_GEMV3,
+        "ink_msg_z3" | "ink_msg_z3_p" => SIG_INK_MSG_Z3,
+        "ink_msg_out3n" | "ink_msg_out3n_p" => SIG_INK_MSG_OUT3N,
+        "ink_gemv_gate_push" | "ink_gemv_gate_push_n16" | "ink_gemv_gate_push_n32" => {
+            SIG_INK_GEMV_GATE_PUSH
+        }
+        "ink_gemv_n16_f32_bf16" | "ink_gemv_n32_f32_bf16" => SIG_INK_GEMM,
+        "ink_combine_push" | "ink_combine_push_p" => SIG_INK_COMBINE_PUSH,
+        "ink_xsd" | "ink_xsd_l" | "ink_xsd2" | "ink_xsd_p" => SIG_INK_XSD,
+        "ink_xsd_pw" => SIG_INK_XSD_W,
+        "ink_xsdc_pw" => SIG_INK_XSDC_W,
+        "ink_xsdc" | "ink_xsdc_l" | "ink_xsdc_p" => SIG_INK_XSDC,
+        "ink_route_fused_rt" | "ink_route_r1" => SIG_INK_ROUTE_FUSED_RT,
+        "ink_depth_mq" => SIG_INK_DEPTH_MQ,
+        "ink_gemv3_f32_bf16" => SIG_INK_GEMV3,
+        "ink_attn_kvc" => SIG_INK_ATTN_KVC,
+        "ink_seam_p1" => SIG_INK_SEAM_P1,
+        "ink_seam_p2" => SIG_INK_SEAM_P2,
+        "ink_dr_copy" => SIG_INK_DR_COPY,
+        "ink_dr_mixnorm" => SIG_INK_DR_MIXNORM,
+        "ink_dr_hnr" => SIG_INK_DR_HNR,
+        "ink_dr_attn" => SIG_INK_DR_ATTN,
+        "ink_dr_silu_mul" => SIG_INK_DR_SILU_MUL,
+        "ink_dr_gru" => SIG_INK_DR_GRU,
+        "ink_dr_fold" | "ink_dr_fold_rows" => SIG_INK_DR_FOLD,
+        "ink_dr_argmax" => SIG_INK_DR_ARGMAX,
+        "ink_dr_argmax_map" => SIG_INK_DR_ARGMAX_MAP,
+        "ink_dr_gemv_sk_bf16" | "ink_dr_gemv_sk_w8" => SIG_INK_DR_GEMV_SK,
+        "ink_dr_hist" => SIG_INK_DR_HIST,
+        "ink_dr_commit" => SIG_INK_DR_COMMIT,
+        "ink_mv_sconv" => SIG_INK_MV_SCONV,
+        "ink_dr4_mm_w8" | "ink_dr4_mm_bf16" => SIG_INK_DR4_MM,
+        "ink_dr4_ksum" => SIG_INK_DR4_KSUM,
+        "ink_dr5_scatter" => SIG_INK_DR5_SCATTER,
+        "ink_dr6_fold_p" => SIG_INK_DR6_FOLD_P,
+        "ink_dr6_argmax_map_p" => SIG_INK_DR6_ARGMAX_MAP_P,
+        "ink_dr3_hnr" => SIG_INK_DR3_HNR,
+        "ink_dr3_attn" => SIG_INK_DR3_ATTN,
+        "ink_dr3_gather" => SIG_INK_DR3_GATHER,
+        "ink_dr3_gru" => SIG_INK_DR3_GRU,
+        "ink_dr3_fold" => SIG_INK_DR3_FOLD,
+        "ink_dr3_argmax_map" => SIG_INK_DR3_ARGMAX_MAP,
+        "ink_mv_hist" => SIG_INK_MV_HIST,
+        "ink_mv_commit" => SIG_INK_MV_COMMIT,
+        "ink_route_fused" => SIG_INK_ROUTE_FUSED,
+        "ink_kv_conv_post_append" => SIG_INK_KV_CONV,
+        "ink_post_norm_route_e128" => SIG_INK_ROUTE,
+        "ink_swiglu_softcap" => SIG_INK_SWIGLU,
+        "ink_attn_bias_sink_v0" => SIG_INK_ATTN_V0,
+        "ink_gemm_f32_bf16" | "ink_gemv_f32_bf16" => SIG_INK_GEMM,
+        "ink_depth_attend" => SIG_INK_DEPTH,
+        "ink_rmsnorm" => SIG_INK_RMSNORM,
+        "ink_msg_gate" => SIG_INK_MSG_GATE,
+        "ink_sconv_resid" => SIG_INK_SCONV,
+        "ink_out_gate" => SIG_INK_OUT_GATE,
+        "ink_rel_bias" => SIG_INK_REL_BIAS,
+        "ink_route_sort_e128" => SIG_INK_ROUTE_SORT,
+        "ink_act_quant_rows" => SIG_INK_ACT_QUANT,
+        "ink_swiglu_q8" => SIG_INK_SWIGLU_Q8,
+        "ink_moe_combine" => SIG_INK_MOE_COMBINE,
+        "ink_softcap" => SIG_INK_SOFTCAP,
+        "ink_p2p_xchg" | "ink_p2p_xchg_v4" => SIG_INK_P2P_XCHG,
+        "ink_msg_z" | "ink29_msg_z_p" => SIG_INK_MSG_Z,
+        "ink_msg_out" => SIG_INK_MSG_OUT,
+        "ink_route_logits" => SIG_INK_ROUTE_LOGITS,
+        "ink_route_top8" => SIG_INK_ROUTE_TOP8,
+        "ink_gemv_gate_f32_bf16" => SIG_INK_GEMV_GATE,
+        "ink_route_tail" => SIG_INK_ROUTE_TAIL,
+        "ink_attn_bias_sink_v1" => SIG_INK_ATTN_V1,
+        "ink_fa_rt8" | "ink_fa_rt16" | "ink_fa_rt8t" | "ink_fa35_wm" | "ink_fa35_wm32"
+        | "ink_fa35_wm128" => SIG_INK_FA_RT,
+        "ink_sconv_rows" => SIG_INK_SCONV_ROWS,
+        "ink_mx8_w8a8_g1" | "ink_mx8_w8a8_g0" => SIG_INK_MX8_W8A8,
+        "ink_mx8_a16_ref_g1" | "ink_mx8_a16_ref_g0" => SIG_INK_MX8_A16,
+        _ => return None,
+    })
+}
+
 /// The signature a kernel symbol must have, by name. The `.hsaco` metadata carries offsets but
 /// not meaning, so this is where an argument gets a NAME: `saber-kbuild` labels the manifest from
 /// here and refuses a kernel whose code-object layout does not pack the same way.
 pub fn signature_for(kernel: &str) -> Option<&'static [SigArg]> {
+    if let Some(sig) = ink_signature(kernel) {
+        return Some(sig);
+    }
     if let Some(sig) = macaq_twin_signature(kernel) {
         return Some(sig);
     }
@@ -3904,6 +5324,21 @@ pub fn signature_for(kernel: &str) -> Option<&'static [SigArg]> {
         || kernel.starts_with("fn153_w4a8b_")
     {
         SIG_FN148_GROUPED
+    } else if kernel.starts_with("macfn7_back_h2_far_") {
+        SIG_MACFN7_BACK_FAR
+    } else if kernel.starts_with("macfn7_back_h2_") {
+        SIG_MACFN7_BACK
+    } else if kernel.starts_with("macfn3_i4_") || kernel.starts_with("macfn9_i4") {
+        // MACFN9: moe_macfn3's GEMM body (the cached-W / W-stationary prefill forms), the same args
+        // MACFN3: int8 A, `xptr[3e + {0,1}]` = the tag-3 record's int4 codes (layout 17) + f32 row
+        // scales, int32 split-K partials
+        SIG_MOE_GROUPED
+    } else if kernel == "macfn3_tok_hadi8_t256" {
+        SIG_MACFN3_TOK
+    } else if kernel == "macfn3_tok_hadi8_sh_t256" {
+        SIG_MACFN3_TOK_SH
+    } else if kernel == "macfn3_silu_hadi8_t64" || kernel == "macfn3_silu_hadi8_mx_t64" {
+        SIG_MACFN3_SILU
     } else if kernel.starts_with("moe_silu_mul_quant_") {
         SIG_MOE_SILU
     } else if kernel.starts_with("moe_route_topk10_sort_")

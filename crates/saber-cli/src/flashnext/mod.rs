@@ -31,6 +31,7 @@ pub mod model;
 pub mod mtp8;
 pub mod mtpx4;
 pub mod overlap;
+pub mod paths;
 pub mod plan;
 pub mod ple121;
 pub mod run;
@@ -99,6 +100,11 @@ mod tests {
         assert!(is_flashnext_pack(&d).unwrap());
         std::fs::write(d.join("manifest.json"), r#"{"model":"qwen3_next"}"#).unwrap();
         assert!(!is_flashnext_pack(&d).unwrap());
+        // INK1: an Inkling 2 pack is not Flash-Next; main refuses it by this name.
+        std::fs::write(d.join("manifest.json"), r#"{"model":"inkling2_loop"}"#).unwrap();
+        assert!(!is_flashnext_pack(&d).unwrap());
+        assert_eq!(pack_model(&d).unwrap().as_deref(), Some("inkling2_loop"));
+        std::fs::write(d.join("manifest.json"), r#"{"model":"qwen3_next"}"#).unwrap();
         assert!(
             !is_flashnext_pack(&d.join("manifest.json")).unwrap(),
             "a file path is a 27B rank pack"

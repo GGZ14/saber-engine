@@ -15,7 +15,7 @@ use saber_kernels::manifest::{KernelDecl, Manifest};
 use saber_model::qwen4_exp::layer_graph::Group;
 
 /// The code objects the Flash-Next prefill forward launches (FN4-FN6, FN9b, FN11, the 27B's AR).
-pub const PLUGINS: [&str; 57] = [
+pub const PLUGINS: [&str; 60] = [
     "flashnext_hc",
     "flashnext_glue",
     "flashnext_attn",
@@ -101,6 +101,12 @@ pub const PLUGINS: [&str; 57] = [
     // FN152: FN151's `_p1` twins (the default NVFP4 route) + the NVFP4 fused back halves
     "moe_fn151",
     "moe_fn152",
+    // MACFN3b: the MACaQ int4 expert cells (`--fn-experts-fmt macaq`)
+    "moe_macfn3",
+    // MACFN7: the MACaQ fused back halves (`--fn-macaq-back fused|fused-tk`)
+    "moe_macfn7",
+    // MACFN9: the MACaQ prefill tiles (`--fn-macaq-prefill wc`)
+    "moe_macfn9",
     "saber_ar_exact",
     "saber_ar_wht",
 ];
