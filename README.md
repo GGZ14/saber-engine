@@ -383,8 +383,7 @@ One download serves both layouts: the pack's `tp1/` folder (286 KB) is the one-c
 reference sits 1 % above the two-card envelope (first-token KL inside it).
 The pack is a derivative of [thinkingmachines/Inkling-2-Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini)
 (Thinking Machines Lab), Apache-2.0 like the base model (its NOTICE lists the changes); use is also subject to the
-base model's acceptable use policy. *While the Hugging Face repository is private, the download needs a token with
-access (`HF_TOKEN`); once it is public, `tools/fetch_packs.sh inkling` needs no login.*
+base model's acceptable use policy. The repository is public: the download needs no login.
 
 **The n-gram (PLE) table.** Flash-Next's per-layer-embedding table is the n-gram lookup behind every
 token: 320,001,536 rows of 160 bf16 values (95.4 GiB, 128 shards, tensors named
