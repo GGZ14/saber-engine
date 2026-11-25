@@ -25,6 +25,7 @@ use saber_exec::loader::{FunctionTable, PluginSet};
 use saber_exec::LoadCounters;
 use saber_hip::{DevicePtr, Event, EventFlags, HipThread, Stream, StreamCaptureMode, StreamFlags};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::inkling2::{InkFlags, Pack, NATIVE_PACK_FORMAT};
 
@@ -730,7 +731,10 @@ struct Rec {
 
 /// The pack's records + the checkpoint's shapes (host side).
 struct PackReader {
+    /// where the bytes live (INK41: the TP=2 pack under a one-card view; else the pack)
     dir: PathBuf,
+    /// INK41: the one-card view's own directory (its index files); None for a TP=2 pack
+    view: Option<PathBuf>,
     ckpt: PathBuf,
     man: Value,
     recs: [BTreeMap<String, Rec>; 3],
@@ -756,6 +760,15 @@ struct T8Rec {
     scales_off: u64,
 }
 
+/// INK41: one 8-bit tensor of the one-card view -- its two rank records re-joined on `axis`
+/// (0 = row halves, 1 = column halves row by row), the whole bytes' sha256s pinned.
+struct T8Whole {
+    axis: u32,
+    parts: Vec<T8Rec>,
+    codes_sha256: String,
+    scales_sha256: String,
+}
+
 struct Trunk8 {
     dir: PathBuf,
     /// the head (`lm_head`) from the overlay too (`w8-head`)
@@ -764,9 +777,115 @@ struct Trunk8 {
     /// stays bf16; a full overlay refuses a missing record
     partial: bool,
     recs: BTreeMap<(String, u32), T8Rec>,
+    /// INK41: the one-card view's whole tensors (`trunk8.json`); empty for the TP=2 overlay
+    whole: BTreeMap<String, T8Whole>,
 }
 
 impl Trunk8 {
+    /// INK41: the one-card view's index (`<view>/trunk8.json`, `ink41-trunk8-view/1`) over the TP=2
+    /// overlay's files in `<blobs>/<dir>`; every whole tensor bound to the view's whole dense
+    /// record by its sha256 and the overlay manifest by its own.
+    fn open_view(
+        view: &Path,
+        blobs: &Path,
+        mode: &str,
+        base: &BTreeMap<String, Rec>,
+    ) -> anyhow::Result<Self> {
+        let head = match mode {
+            "w8" => false,
+            "w8-head" => true,
+            o => bail!("--ink-trunk {o:?}: bf16 (the control) | w8 | w8-head"),
+        };
+        let ip = view.join("trunk8.json");
+        let man: Value = serde_json::from_str(
+            &std::fs::read_to_string(&ip).with_context(|| ip.display().to_string())?,
+        )?;
+        ensure!(
+            man["format"].as_str() == Some(crate::inkling2::TRUNK8_VIEW_FORMAT),
+            "{}: format {:?}, this path reads {}",
+            ip.display(),
+            man["format"],
+            crate::inkling2::TRUNK8_VIEW_FORMAT
+        );
+        let dir = blobs.join(man["dir"].as_str().unwrap_or("trunk8"));
+        let raw = std::fs::read(dir.join("manifest.json"))
+            .with_context(|| dir.join("manifest.json").display().to_string())?;
+        let got = hex::encode(Sha256::digest(&raw));
+        ensure!(
+            man["overlay_manifest_sha256"].as_str() == Some(got.as_str()),
+            "{}: the view pins the overlay manifest {} but {} is {got}",
+            ip.display(),
+            man["overlay_manifest_sha256"],
+            dir.display()
+        );
+        let mut whole = BTreeMap::new();
+        for t in man["tensors"].as_array().context("trunk8 view tensors")? {
+            let name = t["tensor"].as_str().unwrap_or("").to_string();
+            let src = t["src_sha256"].as_str().unwrap_or("");
+            let b = base
+                .get(&name)
+                .with_context(|| format!("trunk8 view {name}: no whole dense record"))?;
+            ensure!(
+                src == b.sha256,
+                "trunk8 view {name}: built from {src}, the view's dense record is {}",
+                b.sha256
+            );
+            let u = |v: &Value, k: &str| v[k].as_u64().unwrap_or(0);
+            let parts = t["parts"]
+                .as_array()
+                .context("trunk8 view parts")?
+                .iter()
+                .map(|x| T8Rec {
+                    file: x["file"].as_str().unwrap_or("").to_string(),
+                    rows: u(x, "rows"),
+                    cols: u(x, "cols"),
+                    codes_off: u(x, "codes_off"),
+                    scales_off: u(x, "scales_off"),
+                })
+                .collect::<Vec<_>>();
+            let axis = u32::try_from(u(t, "axis"))?;
+            let (rows, cols) = (u(t, "rows"), u(t, "cols"));
+            ensure!(
+                parts.len() == 2
+                    && axis < 2
+                    && parts.iter().all(|x| x.cols % 32 == 0)
+                    && if axis == 0 {
+                        parts[0].cols == cols
+                            && parts[1].cols == cols
+                            && parts[0].rows + parts[1].rows == rows
+                    } else {
+                        parts[0].rows == rows
+                            && parts[1].rows == rows
+                            && parts[0].cols + parts[1].cols == cols
+                    },
+                "trunk8 view {name}: parts do not tile [{rows}, {cols}] on axis {axis}"
+            );
+            whole.insert(
+                name,
+                T8Whole {
+                    axis,
+                    parts,
+                    codes_sha256: t["codes_sha256"].as_str().unwrap_or("").to_string(),
+                    scales_sha256: t["scales_sha256"].as_str().unwrap_or("").to_string(),
+                },
+            );
+        }
+        println!(
+            "INK14 trunk8: --ink-trunk {mode} from the one-card view {} over {} ({} whole tensors, head {})",
+            ip.display(),
+            dir.display(),
+            whole.len(),
+            if head { "8-bit" } else { "bf16" }
+        );
+        Ok(Self {
+            dir,
+            head,
+            partial: man["partial"].as_bool().unwrap_or(false),
+            recs: BTreeMap::new(),
+            whole,
+        })
+    }
+
     /// `mode` = `w8` (attention projections + o_proj) | `w8-head` (+ the head).
     fn open(dir: &Path, mode: &str, base: &[BTreeMap<String, Rec>; 3]) -> anyhow::Result<Self> {
         let head = match mode {
@@ -821,6 +940,7 @@ impl Trunk8 {
             head,
             partial: man["partial"].as_bool().unwrap_or(false),
             recs,
+            whole: BTreeMap::new(),
         })
     }
 }
@@ -828,7 +948,13 @@ impl Trunk8 {
 impl PackReader {
     fn open(p: &Pack) -> anyhow::Result<Self> {
         let mut recs: [BTreeMap<String, Rec>; 3] = Default::default();
-        for (i, d) in ["shared", "rank0", "rank1"].iter().enumerate() {
+        // INK41: a one-card view's `shared/dense.json` holds EVERY tensor whole (no rank halves)
+        let dirs: &[&str] = if p.view {
+            &["shared"]
+        } else {
+            &["shared", "rank0", "rank1"]
+        };
+        for (i, d) in dirs.iter().enumerate() {
             let f = p.dir.join(d).join("dense.json");
             let v: Value = serde_json::from_str(&std::fs::read_to_string(&f)?)?;
             for r in v.as_array().context("dense.json")? {
@@ -874,7 +1000,8 @@ impl PackReader {
             }
         }
         Ok(Self {
-            dir: p.dir.clone(),
+            dir: p.blobs.clone(),
+            view: p.view.then(|| p.dir.clone()),
             ckpt: p.ckpt.clone(),
             man: p.manifest.clone(),
             recs,
@@ -888,6 +1015,31 @@ impl PackReader {
     /// `--ink-trunk` resolves to `DEFAULT_INK_TRUNK` when the overlay is present and the boot is
     /// the two-card form, else STANDS DOWN to bf16 by name; an explicit `w8*` refuses.
     fn with_trunk(mut self, f: &InkFlags, pack_dir: &Path, two_card: bool) -> anyhow::Result<Self> {
+        // INK41: the one-card view reads its whole-tensor index over the TP=2 overlay's files;
+        // its default follows `two_card` (the caller: the serve plane's form)
+        if let Some(view) = self.view.clone() {
+            ensure!(
+                f.ink_trunk8_dir.is_none(),
+                "--ink-trunk8-dir: the one-card view names its overlay (trunk8.json)"
+            );
+            let has = view.join("trunk8.json").is_file();
+            let mode = match f.ink_trunk.as_deref() {
+                Some(m) => m.to_string(),
+                None if two_card && has => crate::inkling2::DEFAULT_INK_TRUNK.to_string(),
+                None => {
+                    println!(
+                        "INK14 trunk8: STANDS DOWN to bf16 (the default {} on the one-card view: {})",
+                        crate::inkling2::DEFAULT_INK_TRUNK,
+                        if has { "the harness form" } else { "no trunk8.json" }
+                    );
+                    "bf16".to_string()
+                }
+            };
+            if mode != "bf16" {
+                self.t8 = Some(Trunk8::open_view(&view, &self.dir, &mode, &self.recs[0])?);
+            }
+            return Ok(self);
+        }
         let dir = f
             .ink_trunk8_dir
             .clone()
@@ -930,6 +1082,13 @@ impl PackReader {
         if head && !t8.head {
             return Ok(None);
         }
+        if !t8.whole.is_empty() {
+            ensure!(
+                rank.is_none(),
+                "the one-card view's 8-bit trunk is whole (no rank records)"
+            );
+            return self.tensor_w8_whole(t8, &format!("language_model.{name}"));
+        }
         let rk = rank.context("the 8-bit trunk is the two-card form's (a rank's records)")?;
         let key = (format!("language_model.{name}"), rk);
         if t8.partial && !t8.recs.contains_key(&key) {
@@ -946,6 +1105,53 @@ impl PackReader {
         let mut sc = vec![0u8; (r.rows * r.cols / 32 * 2) as usize];
         f.read_exact_at(&mut sc, r.scales_off)?;
         Ok(Some((codes, sc, vec![r.rows, r.cols])))
+    }
+
+    /// INK41: a whole 8-bit tensor of the one-card view, its two rank records re-joined on the
+    /// view's axis; the re-joined bytes must hash to the view's sha256s.
+    fn tensor_w8_whole(&self, t8: &Trunk8, key: &str) -> anyhow::Result<Option<W8Record>> {
+        let Some(w) = t8.whole.get(key) else {
+            ensure!(t8.partial, "trunk8 view: no record {key}");
+            return Ok(None);
+        };
+        let mut cs = Vec::new();
+        let mut ss = Vec::new();
+        for r in &w.parts {
+            let f = std::fs::File::open(t8.dir.join(&r.file))
+                .with_context(|| t8.dir.join(&r.file).display().to_string())?;
+            let mut c = vec![0u8; (r.rows * r.cols) as usize];
+            f.read_exact_at(&mut c, r.codes_off)?;
+            let mut sc = vec![0u8; (r.rows * r.cols / 32 * 2) as usize];
+            f.read_exact_at(&mut sc, r.scales_off)?;
+            cs.push(c);
+            ss.push(sc);
+        }
+        let (p0, p1) = (&w.parts[0], &w.parts[1]);
+        let join = |a: &[u8], b: &[u8], n0: usize, n1: usize| -> Vec<u8> {
+            if w.axis == 0 {
+                [a, b].concat()
+            } else {
+                let mut v = Vec::with_capacity(a.len() + b.len());
+                for i in 0..p0.rows as usize {
+                    v.extend_from_slice(&a[i * n0..(i + 1) * n0]);
+                    v.extend_from_slice(&b[i * n1..(i + 1) * n1]);
+                }
+                v
+            }
+        };
+        let codes = join(&cs[0], &cs[1], p0.cols as usize, p1.cols as usize);
+        let sc = join(&ss[0], &ss[1], p0.cols as usize / 16, p1.cols as usize / 16);
+        ensure!(
+            hex::encode(Sha256::digest(&codes)) == w.codes_sha256
+                && hex::encode(Sha256::digest(&sc)) == w.scales_sha256,
+            "trunk8 view {key}: the re-joined codes / scales differ from the view's sha256"
+        );
+        let (rows, cols) = if w.axis == 0 {
+            (p0.rows + p1.rows, p0.cols)
+        } else {
+            (p0.rows, p0.cols + p1.cols)
+        };
+        Ok(Some((codes, sc, vec![rows, cols])))
     }
 
     fn read_at(&self, file: &str, off: u64, buf: &mut [u8]) -> anyhow::Result<()> {
@@ -983,9 +1189,17 @@ impl PackReader {
             .get(&name)
             .with_context(|| format!("{name}: not in the checkpoint"))?;
         let es = if dt == "BF16" { 2 } else { 4 };
+        ensure!(
+            self.view.is_none() || rank.is_none(),
+            "{name}: rank {rank:?}'s half asked of the one-card view (whole records only)"
+        );
         if let Some(r) = self.recs[0].get(&name) {
             return Ok((self.rec_bytes(r)?, es, shape.clone()));
         }
+        ensure!(
+            self.view.is_none(),
+            "{name}: not in the one-card view's whole records"
+        );
         let r0 = self.recs[1].get(&name).with_context(|| name.clone())?;
         let r1 = self.recs[2].get(&name).with_context(|| name.clone())?;
         if let Some(rk) = rank {
@@ -3074,8 +3288,10 @@ impl Weights {
                 r,
             });
         }
+        // INK41: the whole head takes the 8-bit record when the trunk is bound (the one-card view's
+        // served form); unbound (the harness), the bf16 tensor as before
         let head = if tp == 1 {
-            vec![put(card, pk.tensor("lm_head.weight", None)?)?]
+            vec![put_dense(card, pk, "lm_head.weight", None, true)?]
         } else if let Some(r) = only {
             vec![put_dense(card, pk, "lm_head.weight", Some(r), true)?]
         } else {
@@ -3151,8 +3367,48 @@ impl Experts {
             }
             Ok(())
         };
+        // INK41: the one-card view's tier = two PARTS a format, part r = the TP=2 rank r file
+        // (experts 64 r .. 64 r + 63 of every layer): the same blobs map, the same 128-slot table
+        if pk.view.is_some() {
+            ensure!(
+                only.is_none(),
+                "the one-card view loads all 128 experts a layer"
+            );
+            for (k, tier) in man["tiers"]["0"].as_object().context("view tiers")? {
+                let stride = man["records"][k]["stride"].as_u64().context("stride")?;
+                let tl: Vec<u32> = tier["layers"]
+                    .as_array()
+                    .context("tier layers")?
+                    .iter()
+                    .filter_map(Value::as_u64)
+                    .map(|x| x as u32)
+                    .collect();
+                let parts = tier["parts"].as_array().context("view tier parts")?;
+                ensure!(parts.len() == 2, "view tier {k}: {} parts", parts.len());
+                for (r, part) in parts.iter().enumerate() {
+                    let file = part["file"].as_str().context("file")?;
+                    let f =
+                        std::fs::File::open(pk.dir.join(file)).with_context(|| file.to_string())?;
+                    let mut hdr = vec![0u8; 4096];
+                    f.read_exact_at(&mut hdr, 0)?;
+                    let w32 = |o: usize| u32::from_le_bytes(hdr[o..o + 4].try_into().expect("4"));
+                    // the v2 header's rank / first expert / count: part r IS rank r's 64 experts
+                    ensure!(
+                        &hdr[..8] == b"SBRXPRT1"
+                            && (w32(16), w32(24), w32(28)) == (r as u32, 64 * r as u32, 64)
+                            && w32(20) as usize == tl.len()
+                            && hex::encode(&hdr[184..216]) == part["table_sha256"].as_str().unwrap_or(""),
+                        "{}: view part {r} of {k} is not TP=2 rank {r}'s experts {}..{} (header / table pin)",
+                        pk.dir.join(file).display(),
+                        64 * r,
+                        64 * r + 63
+                    );
+                    read_tier(file, &tl, stride, r as u32, card, &mut blobs)?;
+                }
+            }
+        }
         for r in 0..2u32 {
-            if only.is_some_and(|o| o != r) {
+            if only.is_some_and(|o| o != r) || pk.view.is_some() {
                 continue;
             }
             let t = &man["tiers"][r.to_string()];
@@ -5397,9 +5653,16 @@ pub fn run(
 ) -> anyhow::Result<()> {
     if f.ink_serve.is_some() {
         ensure!(
-            tp == 2 && f.ink_run.is_none() && !f.ink_split,
-            "--ink-serve runs the two-card process: --tp 2, no --ink-run / --ink-split"
+            f.ink_run.is_none() && !f.ink_split,
+            "--ink-serve: no --ink-run / --ink-split"
         );
+        // INK41: one card = the one-rank plane on the pack's TP=1 view (open_pack refused the
+        // TP=2 pack at --tp 1 by name); two cards = the two-card process
+        if tp == 1 {
+            ensure!(p.view, "--tp 1 --ink-serve reads the one-card (TP=1) view");
+            return run_one_card(p, prebuilt, hip_lib, device, f);
+        }
+        ensure!(tp == 2, "--ink-serve: --tp 1 (the one-card view) or --tp 2");
         return run_two_card(p, prebuilt, hip_lib, f);
     }
     let mode = f.ink_run.clone().unwrap_or_default();
@@ -5444,6 +5707,10 @@ pub fn run(
         .map(String::from)
         .collect();
     ensure!(!only.is_empty(), "--ink-only p00,...");
+    ensure!(
+        !(f.ink_split && p.view),
+        "--ink-split runs the TP=2 halves on one card: it reads the TP=2 pack, not its one-card view"
+    );
     let wtp = if f.ink_split { 2 } else { 1 };
     let t0 = Instant::now();
     let hip = HipThread::spawn(hip_lib)?;
@@ -5753,6 +6020,98 @@ pub fn run(
 /// INK7 task 3: the two-card TP=2 / EP=2 process (one process, two HIP threads, card r = rank r):
 /// each rank its halves + its 64 experts a layer, the two reduces a visit as [`Peer::reduce`]
 /// (P2P), the head's halves gathered on the host. Rows -> `<id>.tp2x.tf.f32`.
+/// INK41: the ONE-CARD serve plane -- rank 0 alone on `device` with the pack's TP=1 view (all
+/// 128 experts a layer, every tensor whole, the whole head), no peer: no reduces, no command
+/// channel, no exchange. The levers that ARE the pair's (the push reduce `clp` / `--ink-p39
+/// push`, the half-chunk exchange `--ink-p36 ov`, the prefix cache's pair barrier) stand down
+/// by name; the prefix cache itself is refused (untested at one card).
+fn run_one_card(
+    p: &Pack,
+    prebuilt: &Path,
+    hip_lib: &str,
+    device: i32,
+    f: &InkFlags,
+) -> anyhow::Result<()> {
+    let t0 = Instant::now();
+    ensure!(
+        f.ink_prefix_cache == 0,
+        "--ink-prefix-cache: not at one card (INK41: the prefix cache stays off)"
+    );
+    let hip = HipThread::spawn(hip_lib)?;
+    hip.set_device(device)?;
+    let lc = LoadCounters::new();
+    let ps = PluginSet::load_named(&hip, prebuilt, &PLUGINS, &lc)?;
+    let k = Kernels::new(&ps, &hip)?;
+    let mut c = Card::new(&hip, k, f.ink_pass_mib << 20, f.ink_visit_mib << 20)?;
+    c.fast = match f.ink_bodies.as_str() {
+        "fast" => true,
+        "v0" => false,
+        o => bail!("--ink-bodies {o:?}: fast (the default) | v0 (the INK3b bodies, the control)"),
+    };
+    // the served form: the 8-bit trunk + head by default (the view's trunk8.json)
+    let pk = PackReader::open(p)?.with_trunk(f, &p.dir, true)?;
+    let x = Experts::load(&pk, &mut c, None)?;
+    let w = Weights::load(&pk, &mut c, 1, None)?;
+    c.fuse = fuse_bits(&f.ink_fuse)?;
+    (c.pf, c.cl, c.push) = prefill_gemm(&f.ink_prefill_gemm)?;
+    if c.push {
+        c.push = false;
+        println!(
+            "INK41 one card: --ink-prefill-gemm {} push reduce STANDS DOWN (no peer)",
+            f.ink_prefill_gemm
+        );
+    }
+    c.i8 = prefill_trunk(&f.ink_prefill_trunk)?;
+    (c.fa, c.fa_sym) = prefill_attn_sym(&f.ink_prefill_attn)?;
+    c.fa_floor = f.ink_prefill_attn_floor;
+    c.p29 = ink29_bits(&f.ink29)?;
+    c.p35 = ink35_bits(&f.ink35)?;
+    (c.p36, c.p36_xw) = ink36_bits(&f.ink36)?;
+    if c.p36 & P36_OV != 0 {
+        c.p36 &= !P36_OV;
+        println!(
+            "INK41 one card: --ink-p36 ov STANDS DOWN (the half-chunk exchange is the pair's)"
+        );
+    }
+    c.p37 = ink37_bits(&f.ink37)?;
+    (c.p40, c.p40_fam) = ink40_bits(&f.ink40)?;
+    c.p39 = ink39_bits(&f.ink_p39)?;
+    if c.p39 & P39_PUSH != 0 {
+        c.p39 &= !P39_PUSH;
+        println!("INK41 one card: --ink-p39 push STANDS DOWN (no peer)");
+    }
+    c.fz = c.alloc_zero(FZ_BYTES)?;
+    let (free, total) = hip.mem_info()?;
+    println!(
+        "INK41 one card: card {device} weights in {:.1} s ({:.2} of {:.2} GiB used), the TP=1 view {} over {}",
+        t0.elapsed().as_secs_f64(),
+        (total - free) as f64 / f64::from(1 << 30),
+        total as f64 / f64::from(1 << 30),
+        p.dir.display(),
+        p.blobs.display()
+    );
+    let fw = Forward {
+        w: &w,
+        x: &x,
+        sched: schedule(f.ink_control == "noloop"),
+        noloop: f.ink_control == "noloop",
+        nomsg: f.ink_control == "nomsg",
+        pos0: 0,
+        graph: false,
+        peer: None,
+        slot: 0,
+        batch: false,
+        vrow: false,
+        mrow: 0,
+    };
+    let r = serve::rank_serve(&mut c, &fw, &pk, &w, f, 0, &p.blobs.join("draft"));
+    drop(fw);
+    drop(c);
+    drop(ps);
+    drop(hip);
+    r
+}
+
 fn run_two_card(p: &Pack, prebuilt: &Path, hip_lib: &str, f: &InkFlags) -> anyhow::Result<()> {
     use std::sync::mpsc::channel;
     let (a_tx, b_rx) = channel();
@@ -5896,7 +6255,7 @@ fn rank_main(
         mrow: 0,
     };
     if f.ink_serve.is_some() {
-        let r = serve::rank_serve(&mut c, &fw, &pk, &w, f, link, &p.dir.join("draft"));
+        let r = serve::rank_serve(&mut c, &fw, &pk, &w, f, link, &p.blobs.join("draft"));
         drop(fw);
         drop(peer);
         drop(c);
@@ -6392,7 +6751,7 @@ fn mtp_gate(
         Some(draft::Drafter::load(
             c,
             pk,
-            &pack.dir.join("draft"),
+            &pack.blobs.join("draft"),
             &w.head[0],
             f.ink_cache_ctx,
             1024,
@@ -7328,7 +7687,7 @@ fn mtpm_gate(
         Some(draft::Drafter::load(
             c,
             pk,
-            &pack.dir.join("draft"),
+            &pack.blobs.join("draft"),
             &w.head[0],
             f.ink_cache_ctx,
             1024,
@@ -8038,6 +8397,7 @@ mod tests {
         let scratch = saber_test_scratch::ScratchDir::new("ink14-trunk");
         let pk = || PackReader {
             dir: scratch.path().to_path_buf(),
+            view: None,
             ckpt: scratch.path().to_path_buf(),
             man: Value::Null,
             recs: Default::default(),
@@ -8341,5 +8701,122 @@ mod tests {
             .filter(|a| !a.value_kind.starts_with("hidden"))
             .collect();
         assert_eq!(ex[1].size, 8, "the element count is a long");
+    }
+
+    /// INK41: the one-card view reads the TP=2 pack's bytes whole: every dense tensor == the TP=2
+    /// reader's halves assembled, the 8-bit trunk re-joined == the TP=2 overlay's rank records
+    /// joined by hand (row halves and column halves), the split / rank forms refused by name.
+    #[test]
+    fn ink41_the_one_card_view_reads_the_two_card_bytes_whole() {
+        let (vdir, tdir) = (
+            Path::new("/mnt/nvme/models/ink2-pack-nv-tp1"),
+            Path::new("/mnt/nvme/models/ink2-pack-nv"),
+        );
+        if !vdir.join("trunk8.json").is_file() || !tdir.join("trunk8/manifest.json").is_file() {
+            eprintln!("skip: {} absent", vdir.display());
+            return;
+        }
+        let pv = crate::inkling2::open_pack(vdir, 1).unwrap();
+        let p2 = crate::inkling2::open_pack(tdir, 2).unwrap();
+        assert!(pv.view && !p2.view);
+        assert_eq!(
+            pv.blobs.canonicalize().unwrap(),
+            tdir.canonicalize().unwrap()
+        );
+        assert_eq!(
+            (pv.ckpt.clone(), pv.plan_sha256.clone()),
+            (p2.ckpt.clone(), p2.plan_sha256.clone())
+        );
+        let rv = PackReader::open(&pv).unwrap();
+        let r2 = PackReader::open(&p2).unwrap();
+        assert_eq!(rv.recs[0].len(), 645);
+        assert!(rv.recs[1].is_empty() && rv.recs[2].is_empty());
+        for n in [
+            "model.layers.3.self_attn.q_proj.weight",
+            "model.layers.3.self_attn.o_proj.weight",
+            "model.layers.5.self_attn.k_sconv.static_weight",
+            "model.layers.0.self_attn.rel_scale",
+            "model.embed_norm.weight",
+        ] {
+            assert_eq!(
+                rv.tensor(n, None).unwrap(),
+                r2.tensor(n, None).unwrap(),
+                "{n}"
+            );
+        }
+        let e = rv
+            .tensor("model.layers.3.self_attn.q_proj.weight", Some(0))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("one-card view"), "{e}");
+        // the 8-bit trunk: the view's whole tensors vs the TP=2 overlay's rank records
+        let w8 = crate::inkling2::InkFlags {
+            ink_trunk: Some("w8-head".into()),
+            ..Default::default()
+        };
+        let rv = rv.with_trunk(&w8, vdir, false).unwrap();
+        let r2 = r2.with_trunk(&w8, tdir, true).unwrap();
+        for (n, axis) in [
+            ("model.layers.3.self_attn.q_proj.weight", 0),
+            ("model.layers.3.self_attn.o_proj.weight", 1),
+            ("model.layers.20.self_attn.v_proj.weight", 0),
+        ] {
+            let (c, s, sh) = rv.tensor_w8(n, None, false).unwrap().unwrap();
+            let (c0, s0, sh0) = r2.tensor_w8(n, Some(0), false).unwrap().unwrap();
+            let (c1, s1, sh1) = r2.tensor_w8(n, Some(1), false).unwrap().unwrap();
+            let join = |a: &[u8], b: &[u8], n0: usize, n1: usize| -> Vec<u8> {
+                if axis == 0 {
+                    [a, b].concat()
+                } else {
+                    (0..sh0[0] as usize)
+                        .flat_map(|i| {
+                            a[i * n0..(i + 1) * n0]
+                                .iter()
+                                .chain(&b[i * n1..(i + 1) * n1])
+                                .copied()
+                        })
+                        .collect()
+                }
+            };
+            let (k0, k1) = (sh0[1] as usize, sh1[1] as usize);
+            assert_eq!(c, join(&c0, &c1, k0, k1), "{n} codes");
+            assert_eq!(s, join(&s0, &s1, k0 / 16, k1 / 16), "{n} scales");
+            assert_eq!(
+                sh,
+                if axis == 0 {
+                    vec![sh0[0] + sh1[0], sh0[1]]
+                } else {
+                    vec![sh0[0], sh0[1] + sh1[1]]
+                }
+            );
+        }
+        assert!(rv
+            .tensor_w8("lm_head.weight", None, true)
+            .unwrap()
+            .is_some());
+        // a rank's record is not the view's form; the global layers stay bf16 (the overlay's policy)
+        assert!(rv
+            .tensor_w8("model.layers.3.self_attn.q_proj.weight", Some(0), false)
+            .is_err());
+        assert!(rv
+            .tensor_w8("model.layers.5.self_attn.q_proj.weight", None, false)
+            .unwrap()
+            .is_none());
+        // the harness form's default stands down to bf16 on the view; the served form takes w8-head
+        let f = crate::inkling2::InkFlags::default();
+        let pv = crate::inkling2::open_pack(vdir, 1).unwrap();
+        assert!(PackReader::open(&pv)
+            .unwrap()
+            .with_trunk(&f, vdir, false)
+            .unwrap()
+            .t8
+            .is_none());
+        let t8 = PackReader::open(&pv)
+            .unwrap()
+            .with_trunk(&f, vdir, true)
+            .unwrap()
+            .t8
+            .unwrap();
+        assert!(t8.head && t8.whole.len() == 141);
     }
 }

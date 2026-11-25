@@ -781,7 +781,13 @@ impl Eng<'_, '_, '_, '_> {
                 let (_, e, lg) = self.graphs[bi].as_ref().expect("captured");
                 let lg = *lg;
                 self.c.hip.graph_launch(e, &self.c.stream)?;
-                self.outs(lg, 2 * self.fw.w.head[0].rows(), n)
+                // the logits row stride: the gathered pair (2 halves) or the one card's whole head
+                let ld: u64 = if self.fw.peer.is_some() {
+                    2 * self.fw.w.head[0].rows()
+                } else {
+                    self.fw.w.head.iter().map(|h| h.shape[0]).sum()
+                };
+                self.outs(lg, ld, n)
             }
             Cmd::VerifyM { ref rows } => {
                 let b = rows.len() as u64;
@@ -1045,9 +1051,11 @@ pub(super) fn rank_serve(
     draft_dir: &std::path::Path,
 ) -> anyhow::Result<()> {
     use anyhow::{bail, ensure, Context};
-    let peer = fw.peer.context("the serve plane is the two-card process")?;
+    // INK41: the one-card plane has no peer (rank 0 alone, no command channel, no reduces)
+    let peer = fw.peer;
+    let rank = peer.map_or(0, |p| p.rank);
     ensure!(
-        peer.dev,
+        peer.is_none_or(|p| p.dev),
         "--ink-serve runs on the fused reduce (--ink-reduce p2p)"
     );
     let n = f.ink_serve_seqs as usize;
@@ -1057,7 +1065,7 @@ pub(super) fn rank_serve(
     let (free, total) = c.hip.mem_info()?;
     println!(
         "inkserve rank{}: {n} sequence slot(s) of {} tokens (+ the pad slot; local ring {} rows), {:.2} of {:.2} GiB used",
-        peer.rank,
+        rank,
         f.ink_serve_ctx,
         cache.ring_pages * super::PAGE,
         (total - free) as f64 / f64::from(1 << 30),
@@ -1071,7 +1079,7 @@ pub(super) fn rank_serve(
         graphs: (0..4).map(|_| None).collect(),
         emb_in,
         use_graph: f.ink_serve_graph,
-        rank: peer.rank,
+        rank,
         launches_eager: 0,
         seam: false,
         dense: true,
@@ -1102,7 +1110,7 @@ pub(super) fn rank_serve(
     // the drafter runs on the captured verify: the eager control (`--no-ink-serve-graph`) stands
     // it down by name
     let mtp_k = if eng.use_graph { f.mtp() } else { 0 };
-    if f.mtp() > 0 && mtp_k == 0 && peer.rank == 0 {
+    if f.mtp() > 0 && mtp_k == 0 && rank == 0 {
         println!(
             "inkserve: --ink-mtp {} STANDS DOWN under --no-ink-serve-graph (eager)",
             f.mtp()
@@ -1138,7 +1146,7 @@ pub(super) fn rank_serve(
     }
     if pfmm && f.ink_draft_mm != "wmma" {
         pfmm = false;
-        if peer.rank == 0 {
+        if rank == 0 {
             println!("inkserve: --ink-batch-append pfmm STANDS DOWN (--ink-draft-mm base)");
         }
     }
@@ -1151,7 +1159,7 @@ pub(super) fn rank_serve(
     let mut n_ahead_skip = 0u64;
     let mut released = false;
     let mut n_rel_plain = 0u64;
-    if peer.rank == 0 {
+    if rank == 0 {
         // INK26: the rollback by flag (the pre-flip serve defaults)
         println!(
             "inkserve: INK26 defaults; control: INK22's `{}`, + INK25's: `{}`",
@@ -1179,7 +1187,7 @@ pub(super) fn rank_serve(
             crate::inkling2::INK39_CONTROL
         );
     }
-    if !btable.is_empty() && !batch && peer.rank == 0 {
+    if !btable.is_empty() && !batch && rank == 0 {
         println!(
             "inkserve: --ink-mtp-batch STANDS DOWN ({})",
             if mtp_k == 0 {
@@ -1200,7 +1208,7 @@ pub(super) fn rank_serve(
             f.draft_vocab() > 0,
             "--ink-mtp-gate needs the pruned draft vocabulary (--ink-draft-vocab N)"
         );
-        if peer.rank == 0 {
+        if rank == 0 {
             println!(
                 "INK33 mtp gate: draft at k {mtp_k}, verify the leading drafts with {} top-1 \
                  probability >= {tau}, at least {dmin} (exactly {dmin} before output {first}; \
@@ -1221,7 +1229,7 @@ pub(super) fn rank_serve(
             f.draft_vocab() > 0,
             "--ink-mtp-bgate needs the pruned draft vocabulary (--ink-draft-vocab N)"
         );
-        if peer.rank == 0 {
+        if rank == 0 {
             println!(
                 "INK38 mtp bgate: batched rounds draft at the table's K, each sequence's depth = \
                  the leading drafts with {} top-1 probability >= {tau}, at least {dmin}; the round \
@@ -1229,7 +1237,7 @@ pub(super) fn rank_serve(
                 if prod { "running-product" } else { "own" }
             );
         }
-    } else if !f.ink_mtp_bgate.is_empty() && f.ink_mtp_bgate != "off" && peer.rank == 0 {
+    } else if !f.ink_mtp_bgate.is_empty() && f.ink_mtp_bgate != "off" && rank == 0 {
         println!("inkserve: --ink-mtp-bgate STANDS DOWN (no batched speculation)");
     }
     let mut bg_stat = [0u64; 8];
@@ -1252,7 +1260,7 @@ pub(super) fn rank_serve(
             tab,
             ..Default::default()
         });
-        if peer.rank == 0 {
+        if rank == 0 {
             eng.dr = Some(super::draft::Drafter::load(
                 eng.c,
                 pk,
@@ -1299,7 +1307,7 @@ pub(super) fn rank_serve(
         let (free, total) = eng.c.hip.mem_info()?;
         println!(
             "INK23 pcache rank{}: {} prefix nodes, {:.1} MiB ({} drafter regions), {:.2} of {:.2} GiB used",
-            peer.rank,
+            rank,
             st.n,
             st.bytes as f64 / f64::from(1 << 20),
             caps.len(),
@@ -1310,7 +1318,7 @@ pub(super) fn rank_serve(
     }
     if batch {
         eng.emb_m = eng.c.alloc_zero(super::MV_ROWS * D * 4)?;
-        eng.btap = peer.rank == 0;
+        eng.btap = rank == 0;
         eng.bapp = bapp;
     }
     // INK11: the decode sampler (`--ink-sampler`)
@@ -1319,7 +1327,7 @@ pub(super) fn rank_serve(
         "seam" | "check" => {
             eng.seam = true;
             eng.dense = f.ink_sampler == "check";
-            if peer.rank == 0 {
+            if rank == 0 {
                 let r = super::MV_ROWS;
                 eng.seam_part = eng.c.alloc_zero(r * SEAM_NCH * SEAM_W as u64 * 4)?;
                 eng.seam_out = eng.c.alloc_zero(r * SEAM_W as u64 * 4)?;
@@ -1328,7 +1336,7 @@ pub(super) fn rank_serve(
         }
         o => bail!("--ink-sampler {o:?}: seam | dense (the control) | check"),
     }
-    if peer.rank == 1 {
+    if rank == 1 {
         eng.dense = false;
     }
     match f.ink_first_token.as_str() {
@@ -1338,7 +1346,7 @@ pub(super) fn rank_serve(
     }
     let (mut n_first_seam, mut n_first_dense) = (0u64, 0u64);
     let (mut n_seam, mut n_fallback, mut n_checked, mut n_mismatch) = (0u64, 0u64, 0u64, 0u64);
-    if peer.rank == 1 {
+    if let Some(peer) = peer.filter(|p| p.rank == 1) {
         loop {
             let b = peer.rows_rx.recv().context("rank 0 gone")?;
             let cmd: Cmd = serde_json::from_slice(&b)?;
@@ -1363,9 +1371,13 @@ pub(super) fn rank_serve(
     let mut slot_of: BTreeMap<SeqId, (u32, u64)> = BTreeMap::new();
     let mut free_slots: Vec<u32> = (0..n as u32).rev().collect();
     let send = |cmd: &Cmd| -> anyhow::Result<()> {
-        peer.rows_tx
-            .send(serde_json::to_vec(cmd)?)
-            .context("rank 1 gone")
+        match peer {
+            Some(pr) => pr
+                .rows_tx
+                .send(serde_json::to_vec(cmd)?)
+                .context("rank 1 gone"),
+            None => Ok(()),
+        }
     };
     let mut steps = 0u64;
     // INK13: the drafter's owner (the one sequence whose every committed row the drafter's

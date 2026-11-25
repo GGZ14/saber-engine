@@ -151,7 +151,7 @@ legacy_dirs = ["qwen38-dflash2-drafter-fp8-tp1", "qwen38-dflash2-drafter-quarkhe
 #
 #   Inkling 2 Mini (MoE), NVFP4 / MXFP8 experts, 8-bit trunk, bundled drafter -- served id Inkling-2-Mini
 #     repo     Launch80/Inkling-2-Mini-NVFP4-SABER (self-contained, 20.73 GB; no checkpoint download)
-#     fetch    tools/fetch_packs.sh inkling          serve  tools/serve_inkling.sh   (TP=2)
+#     fetch    tools/fetch_packs.sh inkling          serve  tools/serve_inkling.sh   (TP=2; TP=1 on a one-GPU host, the pack's tp1/ view)
 #     access   the repository is private for now: the fetch needs HF_TOKEN with access to it; once it
 #              is public, the same command downloads it with no login
 #     license  Apache-2.0, a derivative of thinkingmachines/Inkling-2-Mini (see the repo's NOTICE)

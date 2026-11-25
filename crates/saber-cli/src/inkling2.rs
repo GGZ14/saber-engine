@@ -32,6 +32,20 @@ use sha2::{Digest, Sha256};
 pub const PACK_FORMAT: &str = "ink1-pack/1";
 /// INK6: the native pack's manifest format (`build_inkling2_pack.py` on a `--form native` plan).
 pub const NATIVE_PACK_FORMAT: &str = "ink6-pack/1";
+/// INK41: the manifest `layout` of the one-card view (`tools/pack/build_ink2_tp1.py`).
+pub const TP1_VIEW_LAYOUT: &str = "tp1-view";
+/// INK41: the view's directory inside a published pack (its `blobs` = "..").
+pub const TP1_VIEW_DIR: &str = "tp1";
+/// INK41: the view's 8-bit trunk index (`ink41-trunk8-view/1`), in the view's directory.
+pub const TRUNK8_VIEW_FORMAT: &str = "ink41-trunk8-view/1";
+
+/// INK41: true when `dir` holds the one-card view's manifest (no other check).
+pub fn is_tp1_view(dir: &Path) -> bool {
+    std::fs::read_to_string(dir.join("manifest.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .is_some_and(|m| m["layout"].as_str() == Some(TP1_VIEW_LAYOUT))
+}
 /// Flash-Next's default card fence (MiB), the same 32 GB card.
 pub const DEFAULT_INK_BUDGET_MIB: u64 = 30_500;
 
@@ -670,6 +684,11 @@ impl InkFlags {
 #[derive(Debug)]
 pub struct Pack {
     pub dir: PathBuf,
+    /// INK41: where the pack's BYTES live -- `dir` for a TP=2 pack; for the one-card view
+    /// (`layout: "tp1-view"`) the TP=2 pack its manifest's `blobs` names (relative to `dir`)
+    pub blobs: PathBuf,
+    /// INK41: the one-card (TP=1) view of a TP=2 pack (`tools/pack/build_ink2_tp1.py`)
+    pub view: bool,
     pub manifest: Value,
     pub ckpt: PathBuf,
     pub cfg: Inkling2Config,
@@ -728,25 +747,69 @@ pub fn open_pack(dir: &Path, tp: u32) -> anyhow::Result<Pack> {
     );
     let ptp = manifest.get("tp").and_then(Value::as_u64).unwrap_or(0);
     let pep = manifest.get("ep").and_then(Value::as_u64).unwrap_or(0);
-    ensure!(
-        (ptp, pep) == (2, 2),
-        "{}: a TP={ptp} / EP={pep} pack; the Inkling 2 path reads TP=2 / EP=2 packs",
-        mp.display()
-    );
-    ensure!(
-        tp == 2,
-        "--tp {tp}: this pack is TP=2 / EP=2 (a TP=1 boot needs a TP=1 pack, not built)"
-    );
-    let ranks: Vec<u64> = manifest["ranks"]
-        .as_array()
-        .map(|a| a.iter().filter_map(Value::as_u64).collect())
-        .unwrap_or_default();
-    ensure!(
-        ranks == [0, 1],
-        "{}: ranks {ranks:?}: a fixture pack (both ranks needed)",
-        mp.display()
-    );
-    let (ckpt, ckpt_from) = resolve_ckpt(dir, Path::new(s("checkpoint")))?;
+    // INK41: the one-card layout is a VIEW over a TP=2 pack's bytes (the same files)
+    let view = s("layout") == TP1_VIEW_LAYOUT;
+    let blobs = if view {
+        ensure!(
+            native && (ptp, pep) == (1, 1),
+            "{}: a {TP1_VIEW_LAYOUT} manifest of TP={ptp} / EP={pep} ({:?})",
+            mp.display(),
+            s("format")
+        );
+        ensure!(
+            tp == 1,
+            "--tp {tp}: {} is the ONE-CARD (TP=1) view of a TP=2 pack; a two-card boot reads \
+             the TP=2 pack itself ({})",
+            dir.display(),
+            dir.join(s("blobs")).display()
+        );
+        let b = dir.join(s("blobs"));
+        let braw = std::fs::read(b.join("manifest.json"))
+            .with_context(|| format!("{}: the view's blobs", b.join("manifest.json").display()))?;
+        let got = hex::encode(Sha256::digest(&braw));
+        ensure!(
+            got == s("blobs_manifest_sha256"),
+            "{}: the view pins the TP=2 manifest {} but {} is {got} (a view of another pack: \
+             rebuild it with tools/pack/build_ink2_tp1.py)",
+            mp.display(),
+            s("blobs_manifest_sha256"),
+            b.display()
+        );
+        let bm: Value = serde_json::from_slice(&braw)?;
+        ensure!(
+            (bm["tp"].as_u64(), bm["ep"].as_u64()) == (Some(2), Some(2))
+                && bm["plan_sha256"] == manifest["plan_sha256"]
+                && bm["checkpoint"] == manifest["checkpoint"],
+            "{}: the view's blobs are not its TP=2 pack (tp / plan / checkpoint)",
+            mp.display()
+        );
+        b
+    } else {
+        ensure!(
+            (ptp, pep) == (2, 2),
+            "{}: a TP={ptp} / EP={pep} pack; the Inkling 2 path reads TP=2 / EP=2 packs (or their \
+             {TP1_VIEW_LAYOUT})",
+            mp.display()
+        );
+        ensure!(
+            tp == 2,
+            "--tp {tp}: {} is the TWO-CARD (TP=2 / EP=2) pack; a one-card boot reads its TP=1 view \
+             ({}/{TP1_VIEW_DIR} in the published pack; tools/pack/build_ink2_tp1.py)",
+            dir.display(),
+            dir.display()
+        );
+        let ranks: Vec<u64> = manifest["ranks"]
+            .as_array()
+            .map(|a| a.iter().filter_map(Value::as_u64).collect())
+            .unwrap_or_default();
+        ensure!(
+            ranks == [0, 1],
+            "{}: ranks {ranks:?}: a fixture pack (both ranks needed)",
+            mp.display()
+        );
+        dir.to_path_buf()
+    };
+    let (ckpt, ckpt_from) = resolve_ckpt(&blobs, Path::new(s("checkpoint")))?;
     println!("inkpaths: checkpoint {} ({ckpt_from})", ckpt.display());
     let cj = ckpt.join("config.json");
     let cfg = Inkling2Config::from_config_json(
@@ -776,8 +839,17 @@ pub fn open_pack(dir: &Path, tp: u32) -> anyhow::Result<Pack> {
         s("plan_sha256"),
         ckpt.display()
     );
+    if view {
+        println!(
+            "inkpaths: the one-card (TP=1) view {} over the TP=2 pack {}",
+            dir.display(),
+            blobs.display()
+        );
+    }
     Ok(Pack {
         dir: dir.to_path_buf(),
+        blobs,
+        view,
         manifest,
         ckpt,
         cfg,
@@ -1160,8 +1232,15 @@ pub fn main(
             !f.ink_dry_run,
             "--ink-run and --ink-dry-run exclude each other"
         );
-        let p = open_pack(pack, 2)?;
-        let (f, said) = f.resolved(&p.dir);
+        // the one-card harness reads the TP=2 pack's halves (INK7's form) or its TP=1 view; the
+        // one-card serve plane reads the view only
+        let ptp = if tp == 1 && (is_tp1_view(pack) || f.ink_serve.is_some()) {
+            1
+        } else {
+            2
+        };
+        let p = open_pack(pack, ptp)?;
+        let (f, said) = f.resolved(&p.blobs);
         for l in said {
             println!("{l}");
         }
@@ -1352,7 +1431,7 @@ mod tests {
     fn ink2_the_pack_refusals_name_their_cause() {
         let Some(_) = pack() else { return };
         let e = open_pack(Path::new(PACK), 1).unwrap_err().to_string();
-        assert!(e.contains("--tp 1"), "{e}");
+        assert!(e.contains("--tp 1") && e.contains("TWO-CARD"), "{e}");
         let fx = Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../saber-cache/ws-ink1/packs/ink2-l0l20"
@@ -1367,6 +1446,39 @@ mod tests {
             ..InkFlags::default()
         };
         assert!(on.refuse_elsewhere().is_err());
+    }
+
+    /// INK41: a one-card view boots only at --tp 1, its TP=2 pack only at --tp 2 (each refusal
+    /// names the other layout); a view whose blobs are not the pinned TP=2 manifest is refused.
+    #[test]
+    fn ink41_each_layout_refuses_the_other_by_name() {
+        let (vdir, tdir) = (
+            Path::new("/mnt/nvme/models/ink2-pack-nv-tp1"),
+            Path::new("/mnt/nvme/models/ink2-pack-nv"),
+        );
+        if !vdir.join("manifest.json").is_file() {
+            eprintln!("skip: {} absent", vdir.display());
+            return;
+        }
+        assert!(is_tp1_view(vdir) && !is_tp1_view(tdir));
+        let v = open_pack(vdir, 1).unwrap();
+        assert!(v.view && v.manifest["experts_per_rank"] == 128);
+        let e = open_pack(vdir, 2).unwrap_err().to_string();
+        assert!(e.contains("ONE-CARD") && e.contains("--tp 2"), "{e}");
+        let e = open_pack(tdir, 1).unwrap_err().to_string();
+        assert!(e.contains("TWO-CARD") && e.contains("TP=1 view"), "{e}");
+        // a wrong pin: the view copied with its blobs absolute and the TP=2 manifest pin moved
+        let scratch = saber_test_scratch::ScratchDir::new("ink41-pin");
+        let mut m: Value =
+            serde_json::from_str(&std::fs::read_to_string(vdir.join("manifest.json")).unwrap())
+                .unwrap();
+        m["blobs"] = json!(tdir.display().to_string());
+        std::fs::write(scratch.path().join("manifest.json"), m.to_string()).unwrap();
+        assert!(open_pack(scratch.path(), 1).unwrap().view);
+        m["blobs_manifest_sha256"] = json!("0".repeat(64));
+        std::fs::write(scratch.path().join("manifest.json"), m.to_string()).unwrap();
+        let e = open_pack(scratch.path(), 1).unwrap_err().to_string();
+        assert!(e.contains("pins the TP=2 manifest"), "{e}");
     }
 
     /// HF3: a pack's own `base/` wins, else the recorded path (the control), else a refusal by name.

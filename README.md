@@ -20,8 +20,8 @@ one flag away: `tools/fetch_packs.sh 27b-macaq` and `tools/serve_27b.sh --weight
 **Qwen3.8 Flash-Next** (MoE) is served by the same binary, by default with its routed and shared experts in
 Saber's MACaQ int4 format ([`Launch80/Qwen3.8-Flash-Next-MACaQ-SABER`](https://huggingface.co/Launch80/Qwen3.8-Flash-Next-MACaQ-SABER));
 the MXFP4-expert pack is the one-variable rollback (`FN_EXPERTS_FMT=mxfp4`).
-**Inkling 2 Mini** (MoE, 128 experts top-8, a looped middle) is served by the same binary at TP=2 from a
-self-contained 20.73 GB pack ([`Launch80/Inkling-2-Mini-NVFP4-SABER`](https://huggingface.co/Launch80/Inkling-2-Mini-NVFP4-SABER)):
+**Inkling 2 Mini** (MoE, 128 experts top-8, a looped middle) is served by the same binary on two cards (TP=2) or one
+(TP=1) from a self-contained 20.73 GB pack ([`Launch80/Inkling-2-Mini-NVFP4-SABER`](https://huggingface.co/Launch80/Inkling-2-Mini-NVFP4-SABER)):
 the model's own NVFP4 / MXFP8 experts, an 8-bit attention trunk and its bundled block drafter; see "Inkling 2 Mini"
 below.
 
@@ -369,12 +369,18 @@ it. The checkpoint is AMD's, under its own license.
 
 **Inkling 2 Mini.** `tools/fetch_packs.sh inkling` downloads [`Launch80/Inkling-2-Mini-NVFP4-SABER`](https://huggingface.co/Launch80/Inkling-2-Mini-NVFP4-SABER)
 (20.73 GB) into `$SABER_NVME/saber-packs/inkling-2-mini-nvfp4`, and `tools/serve_inkling.sh` builds the binary and
-serves it on both cards (`SABER_NVME=/data/saber` for another storage root; model id `Inkling-2-Mini`;
+serves it on two cards, or on one when the host has one GPU (`INK_TP=1|2` forces the layout, `DEVICE=<index>`
+picks the card; `SABER_NVME=/data/saber` for another storage root; model id `Inkling-2-Mini`;
 `tools/serve_inkling.sh stop` stops it). The pack is self-contained: the routed experts keep the source's native
 NVFP4 (layers 0-19) and MXFP8 (layers 20-23) codes and scales, the attention projections and the LM head are int8
 (`trunk8/`), the model's bundled block drafter is in `draft/`, and every non-expert tensor plus the config, tokenizer
 and chat template are in `base/` (boot line `inkpaths: ... (the pack's own base/)`), so no checkpoint is downloaded.
-Text only, TP=2 only, 4,096 tokens a sequence by default (`--ink-serve-ctx` raises it), up to 8 sequences.
+Text only, 4,096 tokens a sequence by default (`--ink-serve-ctx` raises it), up to 8 sequences.
+One download serves both layouts: the pack's `tp1/` folder (286 KB) is the one-card view of the same files
+(`tools/pack/build_ink2_tp1.py`, checked by `tools/pack/check_ink2_tp1.py`). On one R9700 the weights take
+20.21 GiB and 8 sequences of 16,384 tokens fit; measured (BetterBench `--quick`): single stream 98.4 tok/s,
+8 concurrent 201.2 tok/s, prefill 3,280-3,708 tok/s from 1k to 16k tokens. Its decode-token KL against the
+reference sits 1 % above the two-card envelope (first-token KL inside it).
 The pack is a derivative of [thinkingmachines/Inkling-2-Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini)
 (Thinking Machines Lab), Apache-2.0 like the base model (its NOTICE lists the changes); use is also subject to the
 base model's acceptable use policy. *While the Hugging Face repository is private, the download needs a token with

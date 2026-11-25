@@ -376,13 +376,51 @@ impl Drafter {
         let (en, _, _) = pk.tensor("model.embed_norm.weight", None)?;
         // INK14: under `--ink-trunk w8-head` the target head is the 8-bit record (the drafter
         // reads the same kind for both halves)
-        let head1 = super::put_dense(c, pk, "lm_head.weight", Some(1), true)?;
+        // INK41: at one card the target head is WHOLE (VPAD rows): its two vocab halves are the
+        // same bytes at two addresses (the view re-joins the halves on rows), no second upload
+        let whole = head0.rows() == VPAD;
+        let half = VPAD / 2;
+        let (h0, head1) = if whole {
+            let cols = head0.shape[1];
+            let sc = |r: u64| {
+                if head0.sc == 0 {
+                    0
+                } else {
+                    head0.sc + r * (cols / 32) * 2
+                }
+            };
+            (
+                Tw {
+                    addr: head0.addr,
+                    es: head0.es,
+                    shape: vec![half, cols],
+                    sc: head0.sc,
+                },
+                Tw {
+                    addr: head0.addr + half * cols * head0.es,
+                    es: head0.es,
+                    shape: vec![VPAD - half, cols],
+                    sc: sc(half),
+                },
+            )
+        } else {
+            (
+                Tw {
+                    addr: head0.addr,
+                    es: head0.es,
+                    shape: head0.shape.clone(),
+                    sc: head0.sc,
+                },
+                super::put_dense(c, pk, "lm_head.weight", Some(1), true)?,
+            )
+        };
         ensure!(
-            head0.rows() + head1.rows() == VPAD,
+            h0.rows() + head1.rows() == VPAD,
             "the head halves: {} + {} rows",
-            head0.rows(),
+            h0.rows(),
             head1.rows()
         );
+        let head0 = &h0;
         let head = vec![
             Tw {
                 addr: head0.addr,
@@ -429,13 +467,34 @@ impl Drafter {
                 rf.display()
             );
             let mut halves = Vec::new();
-            for r in 0..2u32 {
-                if let Some((codes, sc, shape)) = pk.tensor_w8("lm_head.weight", Some(r), true)? {
-                    halves.push((codes, Some(sc), shape[0]));
+            if whole {
+                // INK41: the whole head split at the vocab half (rows), the halves' exact bytes
+                let (rb, sb) = ((D * half) as usize, (D / 32 * 2 * half) as usize);
+                if let Some((codes, sc, shape)) = pk.tensor_w8("lm_head.weight", None, true)? {
+                    ensure!(shape[0] == VPAD, "lm_head: {} rows", shape[0]);
+                    halves.push((codes[..rb].to_vec(), Some(sc[..sb].to_vec()), half));
+                    halves.push((codes[rb..].to_vec(), Some(sc[sb..].to_vec()), VPAD - half));
                 } else {
-                    let (b, es, shape) = pk.tensor("lm_head.weight", Some(r))?;
-                    ensure!(es == 2, "lm_head rank {r}: es {es}");
-                    halves.push((b, None, shape[0]));
+                    let (b, es, shape) = pk.tensor("lm_head.weight", None)?;
+                    ensure!(
+                        es == 2 && shape[0] == VPAD,
+                        "lm_head: es {es} rows {}",
+                        shape[0]
+                    );
+                    halves.push((b[..2 * rb].to_vec(), None, half));
+                    halves.push((b[2 * rb..].to_vec(), None, VPAD - half));
+                }
+            } else {
+                for r in 0..2u32 {
+                    if let Some((codes, sc, shape)) =
+                        pk.tensor_w8("lm_head.weight", Some(r), true)?
+                    {
+                        halves.push((codes, Some(sc), shape[0]));
+                    } else {
+                        let (b, es, shape) = pk.tensor("lm_head.weight", Some(r))?;
+                        ensure!(es == 2, "lm_head rank {r}: es {es}");
+                        halves.push((b, None, shape[0]));
+                    }
                 }
             }
             let w8 = halves[0].1.is_some();

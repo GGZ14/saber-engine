@@ -22,7 +22,10 @@
 #                                     #   FN_EXPERTS_FMT=mxfp4 tools/serve_flashnext.sh) + the same 83-shard
 #                                     #   checkpoint subset: 213.7 GB in all
 #   tools/fetch_packs.sh inkling      # 20.7 GB: Inkling 2 Mini (Launch80/Inkling-2-Mini-NVFP4-SABER), self-contained:
-#                                     #   experts, 8-bit trunk, the bundled drafter and the base/ dense subset; no checkpoint
+#                                     #   experts, 8-bit trunk, the bundled drafter and the base/ dense subset; no checkpoint.
+#                                     #   ONE download serves one card AND two: its tp1/ folder (286 KB) is the one-card
+#                                     #   (TP=1) view of the same files; tools/serve_inkling.sh picks by GPU count
+#   tools/fetch_packs.sh inkling-tp1  # the same download (an alias: the one-card layout shares every byte)
 #   tools/fetch_packs.sh all          # 27b-macaq-w4a8 (TP=2) + flashnext
 #
 # Packs land in $SABER_PACKS (default $SABER_NVME/saber-packs = /mnt/nvme/saber-packs), the directory the
@@ -59,7 +62,8 @@ HF=$(command -v hf || command -v huggingface-cli || true)
 [ -n "$HF" ] || { echo "needs the Hugging Face CLI: pip install -U 'huggingface_hub[cli]'" >&2; exit 1; }
 
 want=${1:-}
-case "$want" in 27b-macaq-w4a8 | 27b-macaq-w4a8-tp1 | 27b-macaq | 27b-macaq-tp1 | 27b | 27b-tp1 | 27b-quark | 27b-quark-tp1 | flashnext | flashnext-macaq | flashnext-mxfp4 | inkling | all) ;; *) echo "usage: $0 27b-macaq-w4a8|27b-macaq-w4a8-tp1|27b-macaq|27b-macaq-tp1|27b|27b-tp1|27b-quark|27b-quark-tp1|flashnext|flashnext-mxfp4|inkling|all  (27b-macaq-w4a8 = the default 27B, flashnext = the MACaQ Flash-Next)" >&2; exit 2 ;; esac
+case "$want" in 27b-macaq-w4a8 | 27b-macaq-w4a8-tp1 | 27b-macaq | 27b-macaq-tp1 | 27b | 27b-tp1 | 27b-quark | 27b-quark-tp1 | flashnext | flashnext-macaq | flashnext-mxfp4 | inkling | inkling-tp1 | all) ;; *) echo "usage: $0 27b-macaq-w4a8|27b-macaq-w4a8-tp1|27b-macaq|27b-macaq-tp1|27b|27b-tp1|27b-quark|27b-quark-tp1|flashnext|flashnext-mxfp4|inkling|inkling-tp1|all  (27b-macaq-w4a8 = the default 27B, flashnext = the MACaQ Flash-Next)" >&2; exit 2 ;; esac
+[ "$want" = inkling-tp1 ] && want=inkling   # one repo, both layouts
 [ "$want" = flashnext-macaq ] && want=flashnext
 
 # A pack the engine would refuse fails here, by name, instead of mid-boot: every rank file
@@ -316,11 +320,12 @@ if [ "$want" = inkling ]; then
   for f in manifest.json base/dense.safetensors base/model.safetensors.index.json base/config.json base/tokenizer.json \
            base/chat_template.jinja draft/manifest.json draft/vocab_rank.u32 trunk8/manifest.json \
            rank0/experts.xtier rank0/experts_mx8.xtier rank1/experts.xtier rank1/experts_mx8.xtier \
-           rank0/dense.json rank1/dense.json shared/dense.json trunk8/rank0/trunk8.bin trunk8/rank1/trunk8.bin; do
+           rank0/dense.json rank1/dense.json shared/dense.json trunk8/rank0/trunk8.bin trunk8/rank1/trunk8.bin \
+           tp1/manifest.json tp1/shared/dense.json tp1/trunk8.json; do
     [ -s "$P/$f" ] || { echo "missing $P/$f" >&2; miss=1; }
   done
   [ "$miss" = 0 ] || { echo "pack incomplete under $P (re-run to resume)" >&2; exit 1; }
   echo "== on disk: $(du -sb "$P" | awk '{printf "%.1f", $1 / 1e9}') GB"
   echo "   verify (optional, ~1 min): (cd $P && sha256sum -c --quiet SHA256SUMS)"
-  echo "Inkling 2 Mini ready: SABER_NVME=$NVME tools/serve_inkling.sh"
+  echo "Inkling 2 Mini ready (one card or two: the launcher picks by GPU count): SABER_NVME=$NVME tools/serve_inkling.sh"
 fi
