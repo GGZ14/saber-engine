@@ -1210,9 +1210,15 @@ async fn chat_blocking(
         });
     }
     state.metrics.record_generation_tokens(completion_tokens);
+    let timings = if n == 1 {
+        track.timings(prompt_tokens, completion_tokens)
+    } else {
+        None
+    };
     track.finish(completion_tokens, first_finish, 200);
 
     Ok(Json(ChatCompletionResponse {
+        timings,
         id,
         object: "chat.completion",
         created,
@@ -1279,6 +1285,7 @@ fn chat_stream(
         // The opening chunk carries the role and an empty content, as prod does. Its
         // empty content is why a BetterBench-style client does not count it.
         let opening = ChatCompletionChunk {
+            timings: None,
             id: id.clone(),
             object: "chat.completion.chunk",
             created,
@@ -1349,7 +1356,13 @@ fn chat_stream(
                 reason.as_str().to_owned()
             });
             // One chunk per StepEvent — the invariant in this module's docs.
+            let response_timings = if n == 1 && step.finished.is_some() && event.error.is_none() {
+                track.timings(prompt_tokens, runners[index].completion_tokens)
+            } else {
+                None
+            };
             let chunk = ChatCompletionChunk {
+                timings: response_timings,
                 id: id.clone(),
                 object: "chat.completion.chunk",
                 created,
@@ -1404,6 +1417,7 @@ fn chat_stream(
             );
             state.metrics.record_finish(FinishReason::Abort);
             let chunk = ChatCompletionChunk {
+                timings: None,
                 id: id.clone(),
                 object: "chat.completion.chunk",
                 created,
@@ -1435,6 +1449,7 @@ fn chat_stream(
         );
         if include_usage {
             let usage_chunk = ChatCompletionChunk {
+                timings: None,
                 id: id.clone(),
                 object: "chat.completion.chunk",
                 created,
@@ -1757,9 +1772,15 @@ async fn completions(
     }
     state.metrics.record_prompt_tokens(prompt_ids.len() as u64);
     state.metrics.record_generation_tokens(completion_tokens);
+    let timings = if n == 1 {
+        track.timings(prompt_ids.len(), completion_tokens)
+    } else {
+        None
+    };
     track.finish(completion_tokens, first_finish, 200);
 
     Ok(Json(CompletionResponse {
+        timings,
         id: ids::completion_id(),
         object: "text_completion",
         created: now_secs(),
@@ -1838,6 +1859,7 @@ fn completion_stream(
         let mut produced = vec![0usize; n];
         let chunk_of =
             |choice: CompletionStreamChoice, fingerprint: Option<String>| CompletionStreamChunk {
+                timings: None,
                 id: id.clone(),
                 object: "text_completion",
                 created,
@@ -1909,7 +1931,12 @@ fn completion_stream(
             });
             let fingerprint = (!opts.include_usage && finish_reason.is_some())
                 .then(|| state.system_fingerprint.clone());
-            let chunk = chunk_of(
+            let response_timings = if n == 1 && step.finished.is_some() && event.error.is_none() {
+                track.timings(prompt_tokens, runners[index].completion_tokens)
+            } else {
+                None
+            };
+            let mut chunk = chunk_of(
                 CompletionStreamChoice {
                     index: index as u32,
                     text,
@@ -1921,6 +1948,7 @@ fn completion_stream(
                 },
                 fingerprint,
             );
+            chunk.timings = response_timings;
             if send_chunk(&tx, &chunk).await.is_err() {
                 abort_all(&state, &request_ids);
                 return;
@@ -1976,6 +2004,7 @@ fn completion_stream(
         );
         if opts.include_usage {
             let usage_chunk = CompletionStreamChunk {
+                timings: None,
                 id: id.clone(),
                 object: "text_completion",
                 created,

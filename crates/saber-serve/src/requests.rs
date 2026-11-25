@@ -311,6 +311,40 @@ impl RequestTracker {
         self.last = Some(now);
     }
 
+    /// llama.cpp-style `timings` for the reply: wall-clock prefill of the uncached prompt tokens
+    /// (arrival to first token, scheduling and cache reloads included) and effective decode rate. `None` before any token.
+    #[must_use]
+    pub fn timings(
+        &self,
+        prompt_tokens: usize,
+        generated: u64,
+    ) -> Option<crate::protocol::ResponseTimings> {
+        let first = self.first?;
+        let prompt_ms = first.saturating_duration_since(self.start).as_secs_f64() * 1000.0;
+        let predicted_ms = self.last?.saturating_duration_since(first).as_secs_f64() * 1000.0;
+        // Like llama.cpp, `prompt_n` counts only freshly evaluated tokens so the prefill rate
+        // is not inflated by a cache-reused prefix; the reused part is reported as `cache_n`.
+        let cache_n = self.cached.unwrap_or(0).min(prompt_tokens as u64);
+        let prompt_n = prompt_tokens as u64 - cache_n;
+        Some(crate::protocol::ResponseTimings {
+            prompt_n,
+            cache_n,
+            predicted_n: generated,
+            prompt_ms,
+            predicted_ms,
+            prompt_per_second: if prompt_ms > 0.0 && prompt_n > 0 {
+                prompt_n as f64 * 1000.0 / prompt_ms
+            } else {
+                -1.0
+            },
+            predicted_per_second: if predicted_ms > 0.0 && generated > self.first_tokens {
+                (generated - self.first_tokens) as f64 * 1000.0 / predicted_ms
+            } else {
+                -1.0
+            },
+        })
+    }
+
     /// The request ended and its reply was assembled / its stream closed.
     pub fn finish(&mut self, completion_tokens: u64, reason: Option<FinishReason>, status: u16) {
         self.end = Some((completion_tokens, reason, status));
