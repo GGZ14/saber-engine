@@ -555,9 +555,47 @@ impl ChoiceRunner {
             self.prompt_logprobs =
                 Some(encode_prompt_logprobs(prompt_logprobs, self.codec.as_ref()));
         }
-        let mut tokens = event.new_tokens.clone();
-        let mut finished = event.finished;
+        // THE STOP-STRING LAW IS PER TOKEN (INK50). A multi-token step (a speculative round's
+        // commit) is folded as that many one-token steps whenever the request carries stop
+        // strings: the first token whose text completes a stop string ends the choice, so the
+        // reported ids, the usage and the logprobs end at that token whatever the round edge was
+        // -- exactly what a one-token-a-step (SPEC 0) engine reports. Taking every id of the step
+        // reported the ids PAST the stop when the stop landed mid-round (INK20's open artifact,
+        // INK48's `pp04`). The text is the same either way: the incremental detokenizer emits the
+        // same string fed per token or per step.
+        if !self.stop.is_empty() && event.new_tokens.len() > 1 {
+            let n = event.new_tokens.len();
+            let mut out = StepDelta::default();
+            for i in 0..n {
+                let last = i + 1 == n;
+                let step = self.on_tokens(
+                    vec![event.new_tokens[i]],
+                    event.logprobs.as_deref().and_then(|lp| lp.get(i..=i)),
+                    if last { event.finished } else { None },
+                );
+                out.text.push_str(&step.text);
+                out.logprobs.extend(step.logprobs);
+                out.ids.extend(step.ids);
+                out.finished = step.finished;
+                if self.finished.is_some() {
+                    break;
+                }
+            }
+            return out;
+        }
+        self.on_tokens(
+            event.new_tokens.clone(),
+            event.logprobs.as_deref(),
+            event.finished,
+        )
+    }
 
+    fn on_tokens(
+        &mut self,
+        mut tokens: Vec<TokenId>,
+        event_logprobs: Option<&[SampledLogprobs]>,
+        mut finished: Option<FinishReason>,
+    ) -> StepDelta {
         // Budget: the engine is authoritative, but a request's max_tokens is a
         // promise to the client, so an overrun is clamped rather than forwarded.
         let budget = self
@@ -568,7 +606,7 @@ impl ChoiceRunner {
             self.budget_overruns += 1;
             finished = Some(FinishReason::Length);
         }
-        let logprobs = self.take_logprobs(event, tokens.len());
+        let logprobs = self.take_logprobs(event_logprobs, tokens.len());
         self.completion_tokens += tokens.len() as u64;
         if finished.is_none() && self.completion_tokens as usize >= self.max_tokens {
             finished = Some(FinishReason::Length);
@@ -625,11 +663,15 @@ impl ChoiceRunner {
         }
     }
 
-    fn take_logprobs(&mut self, event: &StepEvent, kept: usize) -> Vec<LogprobEntry> {
+    fn take_logprobs(
+        &mut self,
+        logprobs: Option<&[SampledLogprobs]>,
+        kept: usize,
+    ) -> Vec<LogprobEntry> {
         if !self.want_logprobs {
             return Vec::new();
         }
-        let Some(logprobs) = &event.logprobs else {
+        let Some(logprobs) = logprobs else {
             return Vec::new();
         };
         logprobs

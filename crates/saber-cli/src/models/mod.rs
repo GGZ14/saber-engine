@@ -1107,7 +1107,8 @@ decode_widths = "1"
     #[test]
     fn short_handles() {
         let r = Registry::load(None).unwrap();
-        assert_eq!(short(r.resolve("default").unwrap()), "w4a8");
+        assert_eq!(short(r.resolve("default").unwrap()), "nari3");
+        assert_eq!(short(r.resolve("macaq-w4a8").unwrap()), "w4a8");
         assert_eq!(short(r.resolve("macaq").unwrap()), "mxfp4");
     }
 

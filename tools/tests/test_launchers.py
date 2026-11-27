@@ -56,27 +56,36 @@ class ServePrintTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         return flags(r.stdout)
 
-    def test_the_default_is_the_w4a8_pack_and_drafter(self):
+    def test_the_default_is_the_nari3_w4a8_pack_and_drafter(self):
         f = self.boot()
-        self.assertEqual(f["--pack"], "/packs/qwen38-27b-macaq-w4a8")
+        self.assertEqual(f["--pack"], "/packs/qwen38-27b-macaq-w4a8-nari3")
         self.assertEqual(f["--engine-draft-pack"], "/packs/qwen38-dflash2-drafter-w4a8")
         self.assertEqual(f["--served-model-name"], "Qwen3.8-27B-MACaQ-W4A8-SABER")
         self.assertEqual(f["--engine-decode-widths"], "1,5,8")
         self.assertEqual((f["--engine-tp"], f["--engine-max-ctx"]), ("2", "262144"))
         self.assertEqual(f["--tokenizer"], "/work/.cache/quark27b.tokenizer.json")
-        # WEIGHTS / DRAFTER in the environment name the same boot
-        self.assertEqual(self.boot(WEIGHTS="macaq-w4a8", DRAFTER="w4a8"), f)
+        # WEIGHTS / DRAFTER in the environment (and the short spelling) name the same boot
+        self.assertEqual(self.boot(WEIGHTS="macaq-w4a8-nari3", DRAFTER="w4a8"), f)
+        self.assertEqual(self.boot("--weights", "nari3"), f)
+
+    def test_the_pre_nari3_w4a8_pack_is_the_rollback(self):
+        for tp, sfx in (("2", ""), ("1", "-tp1")):
+            f = self.boot("--weights", "macaq-w4a8", "--tp", tp)
+            self.assertEqual(f["--pack"], f"/packs/qwen38-27b-macaq-w4a8{sfx}")
+            self.assertEqual(f["--engine-draft-pack"], f"/packs/qwen38-dflash2-drafter-w4a8{sfx}")
+            self.assertEqual(f["--served-model-name"], "Qwen3.8-27B-MACaQ-W4A8-SABER")
+            self.assertEqual(f["--engine-decode-widths"], "1,5,8")
 
     def test_one_card(self):
         f = self.boot("--tp", "1")
-        self.assertEqual(f["--pack"], "/packs/qwen38-27b-macaq-w4a8-tp1")
+        self.assertEqual(f["--pack"], "/packs/qwen38-27b-macaq-w4a8-nari3-tp1")
         self.assertEqual(f["--engine-draft-pack"], "/packs/qwen38-dflash2-drafter-w4a8-tp1")
         self.assertEqual((f["--engine-tp"], f["--engine-max-ctx"], f["--engine-max-seqs"]), ("1", "131072", "1"))
 
     def test_the_fp8_drafter_beside_the_w4a8_target(self):
         for tp, sfx in (("2", ""), ("1", "-tp1")):
             f = self.boot("--tp", tp, "--drafter", "fp8")
-            self.assertEqual(f["--pack"], f"/packs/qwen38-27b-macaq-w4a8{sfx}")
+            self.assertEqual(f["--pack"], f"/packs/qwen38-27b-macaq-w4a8-nari3{sfx}")
             self.assertEqual(f["--engine-draft-pack"], f"/packs/qwen38-dflash2-drafter-fp8{sfx}")
             self.assertEqual(f["--served-model-name"], "Qwen3.8-27B-MACaQ-W4A8-SABER")
 
@@ -110,7 +119,7 @@ class ServePrintTest(unittest.TestCase):
             (["--weights", "macaq", "--drafter", "w4a8"], "paired with --weights macaq-w4a8"),
             (["--weights", "nvfp4", "--drafter", "fp8"], "no drafter choice"),
             (["--drafter", "int4"], "w4a8 (the default) or fp8"),
-            (["--weights", "bogus"], "macaq-w4a8 (the default)"),
+            (["--weights", "bogus"], "macaq-w4a8-nari3 (the default"),
             (["--tp", "3"], "TP=2 (two cards) or TP=1"),
         ):
             r = serve(*args)
@@ -142,7 +151,7 @@ done
 
 
 class FetchTest(unittest.TestCase):
-    """`tools/fetch_packs.sh 27b-macaq-w4a8[-tp1]` with a fake `hf` (no network)."""
+    """`tools/fetch_packs.sh 27b-macaq-w4a8[-nari3][-tp1]` with a fake `hf` (no network)."""
 
     def run_fetch(self, tmp, target, **env):
         bin_dir = os.path.join(tmp, "bin")
@@ -167,39 +176,47 @@ class FetchTest(unittest.TestCase):
 
     def test_default_tp2(self):
         with tempfile.TemporaryDirectory() as tmp:
-            r, log, packs, repo = self.run_fetch(tmp, "27b-macaq-w4a8")
+            r, log, packs, repo = self.run_fetch(tmp, "27b-macaq-w4a8-nari3")
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("ready: tools/serve_27b.sh\n", r.stdout)
-            self.assertEqual(sorted(os.listdir(packs)), ["qwen38-27b-macaq-w4a8", "qwen38-dflash2-drafter-w4a8"])
-            for n in ("qwen38-27b-macaq-w4a8", "qwen38-dflash2-drafter-w4a8"):
+            self.assertEqual(sorted(os.listdir(packs)), ["qwen38-27b-macaq-w4a8-nari3", "qwen38-dflash2-drafter-w4a8"])
+            for n in ("qwen38-27b-macaq-w4a8-nari3", "qwen38-dflash2-drafter-w4a8"):
                 self.assertEqual(sorted(os.listdir(os.path.join(packs, n))), ["manifest.json", "rank0.pack", "rank1.pack"])
             self.assertTrue(read(os.path.join(packs, "qwen38-dflash2-drafter-w4a8", "rank0.pack"))
                             .endswith("Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER"))
-            self.assertEqual(log[0].split()[1], "Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER")
+            self.assertEqual(log[0].split()[1], "Launch80/Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER")
             self.assertIn("--include tp2/*", log[0])
             self.assertTrue(os.path.isfile(os.path.join(repo, ".cache", "quark27b.tokenizer.json")))
             self.assertTrue(os.path.isfile(os.path.join(repo, ".cache", "template_corpus.jinja")))
             # a second run keeps what is there and downloads only the tokenizer again
-            r, log2, _, _ = self.run_fetch(tmp, "27b-macaq-w4a8")
+            r, log2, _, _ = self.run_fetch(tmp, "27b-macaq-w4a8-nari3")
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("already there", r.stdout)
             self.assertEqual(len(log2) - len(log), 1)
+
+    def test_the_pre_nari3_rollback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r, log, packs, _ = self.run_fetch(tmp, "27b-macaq-w4a8")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("ready: tools/serve_27b.sh --weights macaq-w4a8\n", r.stdout)
+            self.assertEqual(sorted(os.listdir(packs)), ["qwen38-27b-macaq-w4a8", "qwen38-dflash2-drafter-w4a8"])
+            self.assertEqual(log[0].split()[1], "Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER")
 
     def test_all_fetches_the_default_27b(self):
         with tempfile.TemporaryDirectory() as tmp:
             r, log, packs, _ = self.run_fetch(tmp, "all")
             # the Flash-Next half fails on the fake's empty repo; the 27B half ran first
             self.assertNotEqual(r.returncode, 0)
-            self.assertIn("27B MACaQ W4A8 packs ready", r.stdout)
+            self.assertIn("27B MACaQ W4A8 (macaq-w4a8-nari3) packs ready", r.stdout)
             self.assertEqual([l.split()[1] for l in log[:2]],
-                             ["Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER", "Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER"])
+                             ["Launch80/Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER", "Launch80/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER"])
 
     def test_tp1_with_the_fp8_drafter(self):
         with tempfile.TemporaryDirectory() as tmp:
-            r, log, packs, _ = self.run_fetch(tmp, "27b-macaq-w4a8-tp1", DRAFTER="fp8")
+            r, log, packs, _ = self.run_fetch(tmp, "27b-macaq-w4a8-nari3-tp1", DRAFTER="fp8")
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("ready: tools/serve_27b.sh --tp 1 --drafter fp8", r.stdout)
-            self.assertEqual(sorted(os.listdir(packs)), ["qwen38-27b-macaq-w4a8-tp1", "qwen38-dflash2-drafter-fp8-tp1"])
+            self.assertEqual(sorted(os.listdir(packs)), ["qwen38-27b-macaq-w4a8-nari3-tp1", "qwen38-dflash2-drafter-fp8-tp1"])
             self.assertEqual(log[1].split()[1], "Launch80/Qwen3.8-27B-DFlash2-Drafter-FP8-SABER")
             self.assertIn("--include tp1/*", log[1])
 
@@ -217,7 +234,7 @@ class FetchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             r, _, _, _ = self.run_fetch(tmp, "bogus")
             self.assertEqual(r.returncode, 2)
-            self.assertIn("27b-macaq-w4a8 = the default 27B", r.stderr)
+            self.assertIn("27b-macaq-w4a8-nari3 = the default 27B", r.stderr)
 
 
 if __name__ == "__main__":

@@ -1066,7 +1066,7 @@ mod tests {
         );
         // the 27B: container paths for the packs, the tokenizer files into the paths
         let m27 = c.model("27b").unwrap();
-        for n in ["qwen38-27b-macaq-w4a8", "qwen38-dflash2-drafter-w4a8"] {
+        for n in ["qwen38-27b-macaq-w4a8-nari3", "qwen38-dflash2-drafter-w4a8"] {
             std::fs::create_dir_all(roots.packs.join(n)).unwrap();
         }
         std::fs::create_dir_all(&roots.repo_cache).unwrap();
@@ -1207,7 +1207,7 @@ mod tests {
         assert_eq!(m27.name, QWEN27B_MODEL);
         assert_eq!(
             (m27.fetch.as_str(), one.fetch.as_str()),
-            ("27b-macaq-w4a8", "27b-macaq-w4a8-tp1")
+            ("27b-macaq-w4a8-nari3", "27b-macaq-w4a8-nari3-tp1")
         );
         for (m, d) in [(m27, "tp2"), (&one, "tp1")] {
             for x in &m.components[..2] {
@@ -1266,7 +1266,7 @@ mod tests {
         assert_eq!(
             packs(&out),
             (
-                Some("/packs/qwen38-27b-macaq-w4a8-tp1".into()),
+                Some("/packs/qwen38-27b-macaq-w4a8-nari3-tp1".into()),
                 Some("/packs/qwen38-dflash2-drafter-w4a8-tp1".into())
             )
         );
@@ -1297,7 +1297,7 @@ mod tests {
         stock.engine.preset = Preset::Qwen27b;
         stock.engine.flags.insert(
             "--pack".into(),
-            FlagValue::Str("/packs/qwen38-27b-macaq-w4a8".into()),
+            FlagValue::Str("/packs/qwen38-27b-macaq-w4a8-nari3".into()),
         );
         stock.engine.flags.insert(
             "--engine-draft-pack".into(),

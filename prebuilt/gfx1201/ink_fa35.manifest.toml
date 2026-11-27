@@ -2,11 +2,11 @@ schema_version = 1
 plugin = "ink_fa35"
 arch = "gfx1201"
 source = "crates/saber-kernels/hip/ink_fa35.hip"
-source_sha256 = "496a03d78a5f6d8996e1edf79a9d93f5ff6a918429685883b19f98a3549c998d"
+source_sha256 = "6f446751abf6a08e685fef72f7129f201da995b84b841159767d4dc9eeb795dc"
 flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
-build_hash = "0c4d3474b0a0c9455240376de57f749a0586a19c168aa078f6142579ff6d2fb6"
+build_hash = "9c6883ae35321f5300675ebe1013a977095d860617e765d8c5f1b54e2373640a"
 hsaco = "ink_fa35.hsaco"
-hsaco_sha256 = "091d677583ead95107af50f67faca30c14ca1ab5f3ff98b03213b119fbb6fd14"
+hsaco_sha256 = "8833543311695b207cf1976c1c35a164d6e435a7cbfbf374640ea65c31b0be6a"
 
 [[kernel]]
 name = "ink35_gemm_bws_s6"
@@ -350,9 +350,9 @@ symbol = "ink_fa35_wm32.kd"
 kernarg_segment_size = 136
 kernarg_segment_align = 8
 group_segment_fixed_size = 25600
-private_segment_fixed_size = 32
-vgpr_count = 256
-sgpr_count = 39
+private_segment_fixed_size = 0
+vgpr_count = 239
+sgpr_count = 48
 wavefront_size = 32
 max_flat_workgroup_size = 64
 

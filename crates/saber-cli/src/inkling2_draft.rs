@@ -10,6 +10,9 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+#[path = "inkling2_df2.rs"]
+pub(super) mod df2;
+
 const H: u64 = 24;
 const KV: u64 = 8;
 const HD: u64 = 128;
@@ -50,6 +53,10 @@ pub struct DraftOpt {
     pub np_max: u64,
     /// the block layers' q / k / v / o / gate / up / down in 8 bits (int8 per-32 RTN at load)
     pub w8: bool,
+    /// INK50 (`--ink-draft-layers iu8`, DFlash2 only): the 8-bit layer / fc projections as W8A8
+    /// on the matrix cores (`ink_act_q8_b32_v2` + `ink_df2_i8_w8`; the same 8-bit records, int8
+    /// activations a 32-k block) at every M (false = the W8A32 GEMVs / GEMMs, the w8 form)
+    pub iu8: bool,
     /// INK20 (`--ink-mtp-batch`): context slots (one a served sequence; 0 / 1 = one, the
     /// INK13 owner form) and the batched pass's most sequences
     pub slots: u64,
@@ -68,6 +75,12 @@ pub struct DraftOpt {
     /// `ink_dr3_fold` / `ink_dr3_argmax_map` + the exp sum; false = the batched kernels, the
     /// control); needs the pruned vocabulary
     pub mconf: bool,
+    /// INK49 (`--ink-p49 ks|kd`): the drafter's attention as key segments + a merge
+    /// (`ink_ks49_dr_*`; `dr` false = `ink_dr_attn` / `ink_dr3_attn`, the control)
+    pub ks: super::P49,
+    /// INK48 (`--ink-drafter dflash2`): the public DFlash2 drafter's checkpoint dir (None = the
+    /// pack's DSpark drafter, the default)
+    pub df2: Option<std::path::PathBuf>,
 }
 
 /// INK21: `ink_dr4_mm_*`'s grid -- (K slices, column workgroups): ~256 workgroups, the slice
@@ -101,8 +114,9 @@ impl DraftOpt {
 
     pub fn of(vocab: u64, gemv: &str, layers: &str) -> anyhow::Result<Self> {
         ensure!(
-            matches!(layers, "w8" | "bf16"),
-            "--ink-draft-layers {layers:?}: w8 | bf16 (the control)"
+            matches!(layers, "w8" | "bf16" | "iu8"),
+            "--ink-draft-layers {layers:?}: w8 | bf16 (the control) | iu8 (INK50: the DFlash2 \
+             drafter's W8A8 matrix-core form)"
         );
         ensure!(
             matches!(gemv, "base" | "sk" | "sk1"),
@@ -116,12 +130,15 @@ impl DraftOpt {
             vocab,
             sk: gemv != "base",
             np_max: if gemv == "sk1" { 1 } else { 4 },
-            w8: layers == "w8",
+            w8: layers == "w8" || layers == "iu8",
+            iu8: layers == "iu8",
             slots: 1,
             wmma: false,
             pfmm: false,
             conf: false,
             mconf: false,
+            ks: super::P49_OFF,
+            df2: None,
         })
     }
 }
@@ -264,6 +281,11 @@ pub struct Drafter {
     skp: u64,
     skp_n: u64,
     skc: u64,
+    /// INK49: the split attention's partials (`ks_rows` rows x H x `ks_smax` segments, 0 = off)
+    ksp: u64,
+    ks_smax: u64,
+    /// INK48: the DFlash2 drafter (`opt.df2`; None = DSpark)
+    df2: Option<Box<df2::Df2>>,
 }
 
 fn bf16s(b: &[u8]) -> Vec<f32> {
@@ -273,6 +295,36 @@ fn bf16s(b: &[u8]) -> Vec<f32> {
 }
 
 impl Drafter {
+    /// INK49: `ink_ks49_dr_part` (the parent's arguments + the partials and the split law) over
+    /// (rows, H, segments), then `ink_ks49_dr_comb`; S = 1 below the threshold = the parent's body.
+    fn ks_attn(
+        &self,
+        c: &mut Card<'_, '_>,
+        args: &[A],
+        rows: u64,
+        ppos: u64,
+        window: i32,
+        o: u64,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            self.ksp != 0 && rows <= MB.max(self.nslots) * BLOCK,
+            "INK49: the drafter's split attention without its partials ({rows} rows)"
+        );
+        let ks = &self.opt.ks;
+        let law = [
+            A::P(self.ksp),
+            A::I(i32::try_from(self.ks_smax)?),
+            A::I(i32::try_from(ks.thresh.min(i32::MAX as u64))?),
+            A::I(i32::try_from(super::P49_DR_SEG)?),
+        ];
+        let mut a = args.to_vec();
+        a.extend(law.iter().cloned());
+        c.launch("ink_ks49_dr_part", [rows, H, self.ks_smax], 256, &a)?;
+        let mut a = vec![A::P(ppos), A::I(window), A::P(o), A::I((H * HD) as i32)];
+        a.extend(law.iter().cloned());
+        c.launch("ink_ks49_dr_comb", [rows, H, 1], 128, &a)
+    }
+
     #[allow(clippy::too_many_lines)]
     pub fn load(
         c: &mut Card<'_, '_>,
@@ -283,6 +335,14 @@ impl Drafter {
         tcap: u64,
         opt: &DraftOpt,
     ) -> anyhow::Result<Self> {
+        if let Some(p) = opt.df2.clone() {
+            return Self::load_df2(c, pk, dir, &p, head0, cap, tcap, opt);
+        }
+        ensure!(
+            !opt.iu8,
+            "--ink-draft-layers iu8 is the DFlash2 drafter's form (--ink-drafter dflash2); the \
+             DSpark drafter has none"
+        );
         let man: Value = serde_json::from_str(
             &std::fs::read_to_string(dir.join("manifest.json")).with_context(|| {
                 format!(
@@ -597,6 +657,13 @@ impl Drafter {
         let taps = c.alloc_zero(4 * tcap * D * 4)?;
         // INK13: x0 [8][D] f32 ; ppos (16 B) ; ptoks (64 B) contiguous
         let inb = c.alloc_zero(BLOCK * D * 4 + 16 + 64)?;
+        // INK49: one partials plane for the widest pass (the batched pass's MB blocks of 8 rows)
+        let ks_smax = super::ks49_dr_smax(&opt.ks, cap);
+        let ksp = if opt.ks.dr {
+            c.alloc_zero(MB.max(nslots) * BLOCK * H * ks_smax * super::P49_LD * 4)?
+        } else {
+            0
+        };
         Ok(Self {
             l,
             norm,
@@ -651,6 +718,9 @@ impl Drafter {
             skp,
             skp_n,
             skc,
+            ksp,
+            ks_smax,
+            df2: None,
         })
     }
 
@@ -879,6 +949,9 @@ impl Drafter {
             self.atab != 0 && (1..=AR).contains(&b) && b <= self.tcap,
             "the batched append on a one-slot drafter / {b} rows"
         );
+        if self.df2.is_some() {
+            return self.df2_append_batch(c, b);
+        }
         let plane = (self.tcap * D) as i64;
         let (tpos, tslot, tfs) = (self.atab, self.atab + AR * 4, self.atab + 2 * AR * 4);
         let scatter = |c: &mut Card<'_, '_>,
@@ -1069,6 +1142,10 @@ impl Drafter {
 
     /// INK22 (`check`): a slot's appended context row at `pos` (3 layers' K and V) + its f_rnn.
     pub fn ctx_rows(&self, c: &mut Card<'_, '_>, slot: usize, pos: u64) -> anyhow::Result<Vec<u8>> {
+        ensure!(
+            self.df2.is_none(),
+            "ctx_rows: the DSpark drafter's check only"
+        );
         let mut o = Vec::new();
         let off = slot as u64 * self.cstride + pos * KV * HD * 4;
         for r in 0..3 {
@@ -1097,6 +1174,11 @@ impl Drafter {
             self.nctx
         );
         ensure!(row0 + t <= self.tcap, "draft append rows {row0}+{t}");
+        if self.df2.is_some() {
+            self.df2_append(c, t, pos0, row0, ppos)?;
+            self.nctx = pos0 + t;
+            return Ok(());
+        }
         let plane = (self.tcap * D) as i64;
         for r in 0..3 {
             let a = self.alpha[r];
@@ -1325,7 +1407,7 @@ impl Drafter {
         k: u64,
     ) -> anyhow::Result<(Vec<u32>, Vec<f32>)> {
         ensure!(
-            self.opt.conf && self.sub.is_some(),
+            self.opt.conf && (self.sub.is_some() || self.df2.is_some()),
             "draft confidence needs --ink-mtp-gate + the pruned vocabulary"
         );
         let tb = c.read(self.ptoks, 64)?;
@@ -1361,7 +1443,7 @@ impl Drafter {
             "a {b}-sequence k {k} round"
         );
         ensure!(
-            self.sub.is_some(),
+            self.sub.is_some() || self.df2.is_some(),
             "the batched drafter needs the pruned vocabulary"
         );
         let toks: Vec<u32> = rows.iter().map(|r| r.1).collect();
@@ -1478,6 +1560,9 @@ impl Drafter {
     /// pruned head over every row, then the Markov chain k steps a sequence.
     #[allow(clippy::too_many_lines)]
     pub(super) fn body_multi(&self, c: &mut Card<'_, '_>, nb: u64, k: u64) -> anyhow::Result<()> {
+        if self.df2.is_some() {
+            return self.df2_body(c, nb, k);
+        }
         let s = self.sub.as_ref().context("sub")?;
         let x0 = self.minb;
         let ppos = x0 + MB * BLOCK * D * 4;
@@ -1535,27 +1620,28 @@ impl Drafter {
             }
             let o = c.z4(Reg::Visit, m * H * HD, "dr.o")?;
             let window = if li == 1 { 0 } else { 1024 };
-            c.launch(
-                "ink_dr3_attn",
-                [m, H, 1],
-                256,
-                &[
-                    A::P(q),
-                    A::I((H * HD) as i32),
-                    A::P(self.kc[li]),
-                    A::P(self.vc[li]),
-                    A::L(i64::try_from(self.cstride / 4)?),
-                    A::P(slots),
-                    A::P(kk),
-                    A::P(vv),
-                    A::I((KV * HD) as i32),
-                    A::P(ppos),
-                    A::I(window),
-                    A::P(o),
-                    A::I((H * HD) as i32),
-                    A::F((HD as f32).powf(-0.5)),
-                ],
-            )?;
+            let args = [
+                A::P(q),
+                A::I((H * HD) as i32),
+                A::P(self.kc[li]),
+                A::P(self.vc[li]),
+                A::L(i64::try_from(self.cstride / 4)?),
+                A::P(slots),
+                A::P(kk),
+                A::P(vv),
+                A::I((KV * HD) as i32),
+                A::P(ppos),
+                A::I(window),
+                A::P(o),
+                A::I((H * HD) as i32),
+                A::F((HD as f32).powf(-0.5)),
+            ];
+            if self.opt.ks.dr && li == 1 {
+                // INK49: the global layer's attention as key segments + the merge
+                self.ks_attn(c, &args, m, ppos, window, o)?;
+            } else {
+                c.launch("ink_dr3_attn", [m, H, 1], 256, &args)?;
+            }
             gm(self, c, o, H * HD, &lw.o, hres, D, true)?;
             let bn = c.rmsnorm(Reg::Visit, hres, m, D, lw.ln2)?;
             let g = c.z4(Reg::Visit, m * FF, "dr.g")?;
@@ -1700,6 +1786,11 @@ impl Drafter {
     /// full logits rows land at the returned address (the oracle gate).
     #[allow(clippy::too_many_lines)]
     pub(super) fn body(&self, c: &mut Card<'_, '_>, k: u64, keep: bool) -> anyhow::Result<u64> {
+        if self.df2.is_some() {
+            ensure!(!keep, "the DFlash2 drafter keeps no oracle rows");
+            self.df2_body(c, 0, k)?;
+            return Ok(0);
+        }
         ensure!(
             !keep || self.sub.is_none(),
             "the oracle rows need the full head (--ink-draft-vocab 0)"
@@ -1750,15 +1841,15 @@ impl Drafter {
             )?;
             let o = c.z4(Reg::Visit, b * H * HD, "dr.o")?;
             let window = if li == 1 { 0 } else { 1024 };
-            c.launch(
-                "ink_dr_attn",
-                [b, H, 1],
-                256,
-                &[
+            if self.opt.ks.dr && li == 1 {
+                // INK49: the one-sequence form (slots null, the slot's own planes)
+                let args = [
                     A::P(q),
                     A::I((H * HD) as i32),
                     A::P(self.kc_of(li)),
                     A::P(self.vc_of(li)),
+                    A::L(0),
+                    A::P(0),
                     A::P(kk),
                     A::P(vv),
                     A::I((KV * HD) as i32),
@@ -1767,8 +1858,29 @@ impl Drafter {
                     A::P(o),
                     A::I((H * HD) as i32),
                     A::F((HD as f32).powf(-0.5)),
-                ],
-            )?;
+                ];
+                self.ks_attn(c, &args, b, self.ppos, window, o)?;
+            } else {
+                c.launch(
+                    "ink_dr_attn",
+                    [b, H, 1],
+                    256,
+                    &[
+                        A::P(q),
+                        A::I((H * HD) as i32),
+                        A::P(self.kc_of(li)),
+                        A::P(self.vc_of(li)),
+                        A::P(kk),
+                        A::P(vv),
+                        A::I((KV * HD) as i32),
+                        A::P(self.ppos),
+                        A::I(window),
+                        A::P(o),
+                        A::I((H * HD) as i32),
+                        A::F((HD as f32).powf(-0.5)),
+                    ],
+                )?;
+            }
             self.mm(c, o, b, H * HD, &lw.o, hres, D, true)?;
             let bn = c.rmsnorm(Reg::Visit, hres, b, D, lw.ln2)?;
             let g = c.z4(Reg::Visit, b * FF, "dr.g")?;

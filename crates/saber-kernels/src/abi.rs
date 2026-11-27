@@ -3922,6 +3922,57 @@ pub const SIG_INK_PUSH5: &[SigArg] = &[
     a("peer_link", Buffer),
 ];
 
+/// INK55: `ink_xw55_{f32,c32,b16,c16}` (`hip/ink_xw55.hip`): the prefill reduce as a staged push
+/// on one wire form (two-slot windows of `slot_dw` dwords, `np` stages, link words 32..48).
+pub const SIG_INK55_XW: &[SigArg] = &[
+    a("own", Buffer),
+    a("mywin", Buffer),
+    a("peerwin", Buffer),
+    a("slot_dw", I64),
+    a("out", Buffer),
+    a("rows", I32),
+    a("cols", I32),
+    a("np", I32),
+    a("link", Buffer),
+    a("peer_link", Buffer),
+];
+
+/// INK55 task C: `ink_fa55_ks128` (`hip/ink_fa55.hip`): wm128's arguments + the segment partials.
+pub const SIG_INK55_KS: &[SigArg] = &[
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("k_pool", Buffer),
+    a("v_pool", Buffer),
+    a("table", Buffer),
+    a("table_ld", I32),
+    a("row_seq", Buffer),
+    a("row_pos", Buffer),
+    a("rp", Buffer),
+    a("ld_rp", I32),
+    a("p", Buffer),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("t", I32),
+    a("h", I32),
+    a("kv", I32),
+    a("extent", I32),
+    a("window", I32),
+    a("part", Buffer),
+    a("nseg", I32),
+];
+/// INK55 task C: `ink_fa55_comb` (`hip/ink_fa55.hip`): the key segments' merge + the sink.
+pub const SIG_INK55_COMB: &[SigArg] = &[
+    a("part", Buffer),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("h", I32),
+    a("nseg", I32),
+];
+
 /// INK9: `ink_msg_z` (`hip/ink_fast.hip`): the message gate's z rows.
 pub const SIG_INK_MSG_Z: &[SigArg] = &[
     a("h", Buffer),
@@ -4043,6 +4094,138 @@ pub const SIG_INK_ATTN_V1: &[SigArg] = &[
     a("kv", I32),
     a("extent", I32),
     a("window", I32),
+];
+
+/// INK49 `ink_ks49_part` (`hip/ink_ks49.hip`): v1's arguments + the partials and the split law
+/// (segment cap = the grid's z, the S = 1 threshold, the minimum segment).
+pub const SIG_INK49_PART: &[SigArg] = &[
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("k_pool", Buffer),
+    a("v_pool", Buffer),
+    a("table", Buffer),
+    a("table_ld", I32),
+    a("row_seq", Buffer),
+    a("row_pos", Buffer),
+    a("rp", Buffer),
+    a("ld_rp", I32),
+    a("p", Buffer),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("h", I32),
+    a("kv", I32),
+    a("extent", I32),
+    a("window", I32),
+    a("part", Buffer),
+    a("smax", I32),
+    a("thresh", I32),
+    a("segmin", I32),
+];
+/// INK54 `ink_ks54_short`: `ink_ks49_part`'s arguments + the row-shared kernel's group rows R.
+pub const SIG_INK54_SHORT: &[SigArg] = &[
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("k_pool", Buffer),
+    a("v_pool", Buffer),
+    a("table", Buffer),
+    a("table_ld", I32),
+    a("row_seq", Buffer),
+    a("row_pos", Buffer),
+    a("rp", Buffer),
+    a("ld_rp", I32),
+    a("p", Buffer),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("h", I32),
+    a("kv", I32),
+    a("extent", I32),
+    a("window", I32),
+    a("part", Buffer),
+    a("smax", I32),
+    a("thresh", I32),
+    a("segmin", I32),
+    a("r", I32),
+];
+/// INK54 `ink_ks54_rv1` / `_rv3` / `_rv1r4`: `ink_ks49_part`'s arguments + the launch's row count
+/// (grid x = the groups).
+pub const SIG_INK54_RV: &[SigArg] = &[
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("k_pool", Buffer),
+    a("v_pool", Buffer),
+    a("table", Buffer),
+    a("table_ld", I32),
+    a("row_seq", Buffer),
+    a("row_pos", Buffer),
+    a("rp", Buffer),
+    a("ld_rp", I32),
+    a("p", Buffer),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("h", I32),
+    a("kv", I32),
+    a("extent", I32),
+    a("window", I32),
+    a("part", Buffer),
+    a("smax", I32),
+    a("thresh", I32),
+    a("segmin", I32),
+    a("rows", I32),
+];
+/// INK54 `ink_wake54`: the peer's scratch word (one system-scope store).
+pub const SIG_INK54_WAKE: &[SigArg] = &[a("peer_word", Buffer)];
+/// INK49 `ink_ks49_comb`: the segments' merge + the sink.
+pub const SIG_INK49_COMB: &[SigArg] = &[
+    a("row_pos", Buffer),
+    a("sink", Buffer),
+    a("ld_sink", I32),
+    a("o", Buffer),
+    a("ld_o", I32),
+    a("h", I32),
+    a("window", I32),
+    a("part", Buffer),
+    a("smax", I32),
+    a("thresh", I32),
+    a("segmin", I32),
+];
+/// INK49 `ink_ks49_dr_part`: `ink_dr3_attn`'s arguments (`slots` null = the one-sequence form) +
+/// the partials and the split law.
+pub const SIG_INK49_DR_PART: &[SigArg] = &[
+    a("q", Buffer),
+    a("ldq", I32),
+    a("kc0", Buffer),
+    a("vc0", Buffer),
+    a("cstride", I64),
+    a("slots", Buffer),
+    a("bk", Buffer),
+    a("bv", Buffer),
+    a("ldb", I32),
+    a("ppos", Buffer),
+    a("window", I32),
+    a("o", Buffer),
+    a("ldo", I32),
+    a("scale", F32),
+    a("part", Buffer),
+    a("smax", I32),
+    a("thresh", I32),
+    a("segmin", I32),
+];
+/// INK49 `ink_ks49_dr_comb`: the drafter segments' merge.
+pub const SIG_INK49_DR_COMB: &[SigArg] = &[
+    a("ppos", Buffer),
+    a("window", I32),
+    a("o", Buffer),
+    a("ldo", I32),
+    a("part", Buffer),
+    a("smax", I32),
+    a("thresh", I32),
+    a("segmin", I32),
 ];
 
 /// INK27: `ink_fa_rt{8,16}` (`hip/ink_fa.hip`): v1's arguments + the row count T (after `ld_o`).
@@ -4650,6 +4833,91 @@ pub const SIG_INK_DR5_SCATTER: &[SigArg] = &[
     a("slots", Buffer),
     a("pos", Buffer),
 ];
+/// INK48: the DFlash2 drafter's glue (`hip/ink_df2.hip`).
+pub const SIG_INK_DF2_CAT4: &[SigArg] = &[
+    a("taps", Buffer),
+    a("plane", I64),
+    a("row0", I32),
+    a("out", Buffer),
+];
+pub const SIG_INK_DF2_RMS: &[SigArg] = &[
+    a("x", Buffer),
+    a("ldx", I32),
+    a("gain", Buffer),
+    a("out", Buffer),
+    a("ldo", I32),
+    a("eps", F32),
+];
+pub const SIG_INK_DF2_HNR: &[SigArg] = &[
+    a("x", Buffer),
+    a("ld", I32),
+    a("gain", Buffer),
+    a("ppos", Buffer),
+    a("div", I32),
+    a("add", I32),
+    a("theta", F32),
+    a("eps", F32),
+];
+pub const SIG_INK_DF2_RING: &[SigArg] = &[
+    a("src", Buffer),
+    a("ld", I32),
+    a("ring", Buffer),
+    a("sstride", I64),
+    a("n", I32),
+    a("ppos", Buffer),
+    a("div", I32),
+    a("add", I32),
+    a("slots", Buffer),
+];
+pub const SIG_INK_DF2_CONV: &[SigArg] = &[
+    a("x", Buffer),
+    a("ldx", I32),
+    a("cf", Buffer),
+    a("base", Buffer),
+    a("side", I32),
+    a("out", Buffer),
+    a("ldo", I32),
+    a("acc", I32),
+];
+pub const SIG_INK_DF2_ATTN: &[SigArg] = &[
+    a("q", Buffer),
+    a("ldq", I32),
+    a("kr", Buffer),
+    a("vr", Buffer),
+    a("sstride", I64),
+    a("bk", Buffer),
+    a("bv", Buffer),
+    a("ldb", I32),
+    a("ppos", Buffer),
+    a("slots", Buffer),
+    a("o", Buffer),
+    a("ldo", I32),
+    a("scale", F32),
+];
+pub const SIG_INK_DF2_ROWS: &[SigArg] = &[a("src", Buffer), a("dst", Buffer), a("k", I32)];
+pub const SIG_INK_DF2_TOP16: &[SigArg] = &[
+    a("lg", Buffer),
+    a("ld", I32),
+    a("n", I32),
+    a("map", Buffer),
+    a("cand", Buffer),
+    a("unary", Buffer),
+];
+pub const SIG_INK_DF2_F2BF: &[SigArg] = &[a("src", Buffer), a("dst", Buffer), a("n", I32)];
+pub const SIG_INK_DF2_PICK: &[SigArg] = &[
+    a("src", Buffer),
+    a("stride", I32),
+    a("dst", Buffer),
+    a("n", I32),
+];
+pub const SIG_INK_DF2_WALK: &[SigArg] = &[
+    a("scores", Buffer),
+    a("cand", Buffer),
+    a("k", I32),
+    a("cap", F32),
+    a("ptoks", Buffer),
+    a("pstride", I32),
+];
 /// INK20: the multi-sequence verify glue (`hip/ink_mv.hip`): the segmented sconv, the history
 /// entry and the rollback of B sequences x W chained rows at once.
 pub const SIG_INK_MV_SCONV: &[SigArg] = &[
@@ -4824,7 +5092,10 @@ fn ink_signature(kernel: &str) -> Option<&'static [SigArg]> {
         k if k.starts_with("ink_gemm_cl_f32_w8_r") => SIG_INK_W8_GEMM,
         k if k.starts_with("ink_gemm_cl_f32_bf16_r") => SIG_INK_GEMM,
         "ink_p2p_push_v5" => SIG_INK_PUSH5,
+        "ink_xw55_f32" | "ink_xw55_c32" | "ink_xw55_b16" | "ink_xw55_c16" => SIG_INK55_XW,
         "ink_gemm_i8_w8" => SIG_INK_I8_GEMM,
+        // INK50: the iu8 drafter form's split-wave twin (`hip/ink_df2.hip`), the same arguments
+        "ink_df2_i8_w8" => SIG_INK_I8_GEMM,
         "ink_act_q8_b32" | "ink_act_q8_b32_v2" => SIG_INK_ACT_Q8,
         "ink_gemv_gate_f32_w8" => SIG_INK_W8_GATE,
         "ink_gemv_gate_push_w8" | "ink_gemv_gate_push_n16_w8" => SIG_INK_W8_GATE_PUSH,
@@ -4850,6 +5121,13 @@ fn ink_signature(kernel: &str) -> Option<&'static [SigArg]> {
         "ink_dr_mixnorm" => SIG_INK_DR_MIXNORM,
         "ink_dr_hnr" => SIG_INK_DR_HNR,
         "ink_dr_attn" => SIG_INK_DR_ATTN,
+        "ink_ks49_part" => SIG_INK49_PART,
+        "ink_ks54_rv1" | "ink_ks54_rv3" | "ink_ks54_rv1r4" => SIG_INK54_RV,
+        "ink_ks49_comb" => SIG_INK49_COMB,
+        "ink_wake54" => SIG_INK54_WAKE,
+        "ink_ks54_short" => SIG_INK54_SHORT,
+        "ink_ks49_dr_part" => SIG_INK49_DR_PART,
+        "ink_ks49_dr_comb" => SIG_INK49_DR_COMB,
         "ink_dr_silu_mul" => SIG_INK_DR_SILU_MUL,
         "ink_dr_gru" => SIG_INK_DR_GRU,
         "ink_dr_fold" | "ink_dr_fold_rows" => SIG_INK_DR_FOLD,
@@ -4863,6 +5141,17 @@ fn ink_signature(kernel: &str) -> Option<&'static [SigArg]> {
         "ink_dr4_ksum" => SIG_INK_DR4_KSUM,
         "ink_dr5_scatter" => SIG_INK_DR5_SCATTER,
         "ink_dr6_fold_p" => SIG_INK_DR6_FOLD_P,
+        "ink_df2_cat4" => SIG_INK_DF2_CAT4,
+        "ink_df2_rms" => SIG_INK_DF2_RMS,
+        "ink_df2_hnr" => SIG_INK_DF2_HNR,
+        "ink_df2_ring" => SIG_INK_DF2_RING,
+        "ink_df2_conv" => SIG_INK_DF2_CONV,
+        "ink_df2_attn" => SIG_INK_DF2_ATTN,
+        "ink_df2_rows" => SIG_INK_DF2_ROWS,
+        "ink_df2_top16" => SIG_INK_DF2_TOP16,
+        "ink_df2_f2bf" => SIG_INK_DF2_F2BF,
+        "ink_df2_pick" => SIG_INK_DF2_PICK,
+        "ink_df2_walk" => SIG_INK_DF2_WALK,
         "ink_dr6_argmax_map_p" => SIG_INK_DR6_ARGMAX_MAP_P,
         "ink_dr3_hnr" => SIG_INK_DR3_HNR,
         "ink_dr3_attn" => SIG_INK_DR3_ATTN,
@@ -4899,6 +5188,8 @@ fn ink_signature(kernel: &str) -> Option<&'static [SigArg]> {
         "ink_attn_bias_sink_v1" => SIG_INK_ATTN_V1,
         "ink_fa_rt8" | "ink_fa_rt16" | "ink_fa_rt8t" | "ink_fa35_wm" | "ink_fa35_wm32"
         | "ink_fa35_wm128" => SIG_INK_FA_RT,
+        "ink_fa55_ks128" => SIG_INK55_KS,
+        "ink_fa55_comb" => SIG_INK55_COMB,
         "ink_sconv_rows" => SIG_INK_SCONV_ROWS,
         "ink_mx8_w8a8_g1" | "ink_mx8_w8a8_g0" => SIG_INK_MX8_W8A8,
         "ink_mx8_a16_ref_g1" | "ink_mx8_a16_ref_g0" => SIG_INK_MX8_A16,

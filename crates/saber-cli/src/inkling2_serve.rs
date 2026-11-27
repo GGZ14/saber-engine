@@ -48,6 +48,61 @@ use crate::inkling2::InkFlags;
 /// The prompt chunk a prefill pass takes (rows; the pass / visit arenas hold it at the defaults).
 pub const SERVE_CHUNK: u32 = 1024;
 
+/// INK54: `--ink-p54` -> the decode-only steps after a chunk that ran beside decoders (`il<N>`;
+/// 0 = the control). The exec plane reads the same flag's `wk` / `wke`.
+pub fn p54_yield(v: &str) -> anyhow::Result<u32> {
+    Ok(super::ink54_bits(v)?.yield_steps)
+}
+
+/// INK43: `--ink-p43` -> the served prefill chunk (rows): `ch<N>` (1,024..4,096, a multiple of
+/// 64), else [`SERVE_CHUNK`] (the control).
+#[cfg(test)]
+pub fn p43_chunk(v: &str) -> anyhow::Result<u32> {
+    Ok(p43_opts(v)?.0)
+}
+
+/// INK43: `--ink-p43` -> (the served prefill chunk, `am`): `am` = a one-slot drafter's prefill
+/// append on the matrix cores (INK22's `pfmm`, <= 64 rows a GEMM, instead of 8-row GEMVs: the
+/// drafter's context rows move, the target's never).
+pub fn p43_opts(v: &str) -> anyhow::Result<(u32, bool)> {
+    let (mut ch, mut am) = (SERVE_CHUNK, false);
+    for it in v
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && *x != "none")
+    {
+        if it == "am" {
+            am = true;
+            continue;
+        }
+        match it.strip_prefix("ch").and_then(|n| n.parse::<u32>().ok()) {
+            Some(n) if (1024..=4096).contains(&n) && n % 64 == 0 => ch = n,
+            _ => {
+                anyhow::bail!("--ink-p43 item {it:?}: ch<N> (N 1024..4096, a multiple of 64) | am")
+            }
+        }
+    }
+    Ok((ch, am))
+}
+
+/// INK43: the levers a plane runs: the two-card plane `--ink-p43` as given; the one-card plane
+/// (INK41, gated before INK43) stands the DEFAULT down to the control (an explicit value is kept).
+pub fn p43_plane(v: &str, two_card: bool) -> anyhow::Result<(u32, bool)> {
+    if !two_card && v == crate::inkling2::DEFAULT_INK43 {
+        return Ok((SERVE_CHUNK, false));
+    }
+    p43_opts(v)
+}
+
+/// INK43: the local KV ring for a `chunk`-row served prefill: at least the 1,024-row window + the
+/// chunk (pages), `0` (full per-visit pools) kept.
+pub fn p43_ring(ring: u64, chunk: u32) -> u64 {
+    if ring == 0 {
+        return 0;
+    }
+    ring.max((super::EXT + u64::from(chunk)).div_ceil(super::PAGE) * super::PAGE)
+}
+
 /// One command of the pair: rank 0 sends it, both ranks apply it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Cmd {
@@ -317,6 +372,7 @@ pub fn scheduler_config(max_ctx: u32, seqs: u32, mtp: u32) -> anyhow::Result<Sch
 /// `Some(bk)` carries that K (it was `mtp` until INK33 -- identical at the default table, where
 /// every K is `--ink-mtp`'s 2; a deeper `--ink-mtp` for one live sequence no longer widens the
 /// batched steps' reservation).
+#[cfg(test)]
 pub fn scheduler_config_b(
     max_ctx: u32,
     seqs: u32,
@@ -325,6 +381,18 @@ pub fn scheduler_config_b(
     // INK32 (`--ink-ngram on`): the width at ONE live sequence (a copy round verifies up to
     // `--ink-ngram-depth` drafts); = `mtp` without the arm
     w1: u32,
+) -> anyhow::Result<SchedulerConfig> {
+    scheduler_config_ch(max_ctx, seqs, mtp, batch, w1, SERVE_CHUNK)
+}
+
+/// INK43: [`scheduler_config_b`] with the served prefill chunk `chunk` (`--ink-p43 ch<N>`).
+pub fn scheduler_config_ch(
+    max_ctx: u32,
+    seqs: u32,
+    mtp: u32,
+    batch: Option<u32>,
+    w1: u32,
+    chunk: u32,
 ) -> anyhow::Result<SchedulerConfig> {
     // 48 visits x (K + V) x 4 KV heads x 128 x bf16 a rank
     let kv = KvGeometry {
@@ -345,7 +413,7 @@ pub fn scheduler_config_b(
     if mtp > 0 && w1 > mtp {
         buckets.extend((1..=seqs).map(|b| Bucket::decode(b, w1, max_ctx, true)));
     }
-    buckets.push(Bucket::prefill(SERVE_CHUNK, max_ctx, true));
+    buckets.push(Bucket::prefill(chunk, max_ctx, true));
     let kv_tokens = u64::from(seqs) * u64::from(max_ctx);
     let mk = |gdn: u64| {
         SchedulerConfig::for_mock(
@@ -379,7 +447,7 @@ struct Started {
     join: std::thread::JoinHandle<anyhow::Result<()>>,
 }
 
-fn start(f: &InkFlags, ckpt: &std::path::Path, port: u16) -> anyhow::Result<Started> {
+fn start(f: &InkFlags, ckpt: &std::path::Path, port: u16, chunk: u32) -> anyhow::Result<Started> {
     use anyhow::Context;
     let tokenizer = Arc::new(
         saber_model::Tokenizer::from_file(ckpt.join("tokenizer.json"))
@@ -419,7 +487,16 @@ fn start(f: &InkFlags, ckpt: &std::path::Path, port: u16) -> anyhow::Result<Star
         Some(o) if mtp > 0 => u32::try_from(o.depth)?,
         _ => u32::try_from(mtp)?,
     };
-    let config = scheduler_config_b(ctx, f.ink_serve_seqs, u32::try_from(mtp)?, batch, w1)?;
+    let mut config =
+        scheduler_config_ch(ctx, f.ink_serve_seqs, u32::try_from(mtp)?, batch, w1, chunk)?;
+    let yield_steps = p54_yield(&f.ink54)?;
+    if yield_steps > 0 {
+        config.prefill = config.prefill.clone().with_yield_steps(yield_steps);
+        println!(
+            "INK54 boot: --ink-p54 {:?}: {yield_steps} decode-only steps after a chunk beside decoders",
+            f.ink54
+        );
+    }
     let model = ModelInfo {
         served_model_name: f.ink_served_name.clone(),
         aliases: Vec::new(),
@@ -447,9 +524,10 @@ fn start(f: &InkFlags, ckpt: &std::path::Path, port: u16) -> anyhow::Result<Star
     println!(
         "inkserve: template {} (the checkpoint's, generation markers stripped; reasoning_effort \
          none..max, default 0.9), eos {eos:?}, default sampling {sampling:?}, no tool / reasoning \
-         parser, {} sequence(s) x {ctx} tokens, prefill chunk {SERVE_CHUNK}, decode {}, drafter {}",
+         parser, {} sequence(s) x {ctx} tokens, prefill chunk {chunk} (INK43 `--ink-p43 {}`), decode {}, drafter {}",
         tpath.display(),
         f.ink_serve_seqs,
+        f.ink43,
         if f.ink_serve_graph {
             "one captured graph a bucket (1 / 2 / 4 / 8 rows)"
         } else {
@@ -551,6 +629,10 @@ struct Eng<'a, 'f, 'h, 'm> {
     pc_verify: bool,
     /// INK27: `--ink-prefix-cache-sync` (a two-rank barrier after every node copy)
     pc_sync: bool,
+    /// INK43: `--ink-p43-trace` -- every prefill phase drained by a stream sync and timed (ms):
+    /// the forward, the seam / last-row read, the drafter append of the LAST applied chunk
+    p43_tr: bool,
+    p43_t: [f64; 3],
 }
 
 /// INK11: what a decode step hands the sampler (rank 0).
@@ -591,6 +673,9 @@ impl Eng<'_, '_, '_, '_> {
                     let d = self.dr.as_ref().context("dr")?;
                     self.c.tapdev = Some((d.taps, d.tcap * D * 4));
                 }
+                // INK43 trace: the phases' host clock, each drained (a diagnostic)
+                let t43 = std::time::Instant::now();
+                let mut t43f = t43;
                 // INK16: `--ink-first-token seam` -- the chunk's last row through the device seam
                 // (rank 0; rank 1 synchronises), the dense row only when the seam refuses
                 let (dense, seam) = if self.first_seam {
@@ -604,6 +689,10 @@ impl Eng<'_, '_, '_, '_> {
                     );
                     self.c.tapdev = None;
                     let (lg, ld) = r?;
+                    if self.p43_tr {
+                        self.c.hip.sync_stream(&self.c.stream)?;
+                        t43f = std::time::Instant::now();
+                    }
                     if self.rank == 0 {
                         let v = temps.first().copied().unwrap_or(1.0);
                         let mut tb = Vec::with_capacity(32);
@@ -624,14 +713,23 @@ impl Eng<'_, '_, '_, '_> {
                         ids.len() as u64 - 1,
                     );
                     self.c.tapdev = None;
+                    t43f = std::time::Instant::now();
                     (r?, Vec::new())
                 };
+                let t43o = std::time::Instant::now();
                 if tap {
                     let d = self.dr.as_mut().context("dr")?;
                     if pos0 == 0 {
                         d.reset_ctx();
                     }
                     d.append(self.c, ids.len() as u64, pos0)?;
+                }
+                if self.p43_tr {
+                    self.c.hip.sync_stream(&self.c.stream)?;
+                    let ms =
+                        |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1e3;
+                    let t43a = std::time::Instant::now();
+                    self.p43_t = [ms(t43, t43f), ms(t43f, t43o), ms(t43o, t43a)];
                 }
                 Ok(DecOut { dense, seam })
             }
@@ -1060,7 +1158,16 @@ pub(super) fn rank_serve(
     );
     let n = f.ink_serve_seqs as usize;
     ensure!((1..=8).contains(&n), "--ink-serve-seqs 1..8");
-    let cache = Cache::new(c, w, &fw.sched, f.ink_serve_ctx, f.ink_local_ring, n as u64)?;
+    // INK43: `--ink-p43 ch<N>` -- the served chunk; the local ring holds the window + the chunk
+    let (chunk, p43_am) = p43_plane(&f.ink43, peer.is_some())?;
+    if peer.is_none() && f.ink43 == crate::inkling2::DEFAULT_INK43 && !f.ink43.is_empty() {
+        println!(
+            "inkserve: INK43 `--ink-p43 {}` STANDS DOWN on the one-card plane (gated on two cards)",
+            f.ink43
+        );
+    }
+    let ring = p43_ring(f.ink_local_ring, chunk);
+    let cache = Cache::new(c, w, &fw.sched, f.ink_serve_ctx, ring, n as u64)?;
     let emb_in = c.alloc_zero(8 * D * 4)?;
     let (free, total) = c.hip.mem_info()?;
     println!(
@@ -1102,6 +1209,8 @@ pub(super) fn rank_serve(
         pc: None,
         pc_verify: f.ink_prefix_cache_verify,
         pc_sync: f.ink_prefix_cache_sync,
+        p43_tr: f.ink_p43_trace,
+        p43_t: [0.0; 3],
     };
     // INK13: the drafter (`--ink-mtp K`): rank 0 holds its weights + one owner sequence's
     // context; both ranks hold the verify history buffer (192 convs x [3 + 8 rows] a verify)
@@ -1180,6 +1289,12 @@ pub(super) fn rank_serve(
             crate::inkling2::DEFAULT_INK37,
             crate::inkling2::DEFAULT_INK40,
             crate::inkling2::CONS40_CONTROL
+        );
+        println!(
+            "inkserve: INK43 served prefill `{}` (default `{}`); control: `{}`",
+            f.ink43,
+            crate::inkling2::DEFAULT_INK43,
+            crate::inkling2::INK43_CONTROL
         );
         println!(
             "inkserve: INK39 multi-verify levers `{}`; control: `{}`",
@@ -1267,20 +1382,29 @@ pub(super) fn rank_serve(
                 draft_dir,
                 &w.head[0],
                 f.ink_serve_ctx,
-                u64::from(SERVE_CHUNK),
+                u64::from(chunk),
                 &{
                     let mut o = super::draft::DraftOpt::of(
                         f.draft_vocab(),
                         &f.ink_draft_gemv,
-                        &f.ink_draft_layers,
+                        f.draft_layers(),
                     )?
                     .with_mm(&f.ink_draft_mm)?;
                     if batch {
                         o.slots = n as u64;
                         o.pfmm = pfmm;
+                    } else if p43_am {
+                        // INK43 `am`: the one-slot drafter's prefill append on the matrix cores
+                        ensure!(
+                            f.ink_draft_mm == "wmma",
+                            "--ink-p43 am needs --ink-draft-mm wmma"
+                        );
+                        o.pfmm = true;
                     }
                     o.conf = gate.is_some();
                     o.mconf = bgate.is_some();
+                    o.ks = super::ink49_bits(&f.ink49)?;
+                    o.df2 = f.dflash2()?;
                     o
                 },
             )?);
@@ -1366,7 +1490,7 @@ pub(super) fn rank_serve(
     }
     let port = f.ink_serve.context("--ink-serve")?;
     let ckpt = pk.ckpt.clone();
-    let st = start(f, &ckpt, port)?;
+    let st = start(f, &ckpt, port, chunk)?;
     let sampler = Sampler::new();
     let mut slot_of: BTreeMap<SeqId, (u32, u64)> = BTreeMap::new();
     let mut free_slots: Vec<u32> = (0..n as u32).rev().collect();
@@ -1400,6 +1524,12 @@ pub(super) fn rank_serve(
     // INK16: a prefill chunk's host-clock phases (rows, the chunk's apply = embed + forward +
     // drafter tap / append + the last row's read, the first token's host sample)
     let mut p_time: Vec<[f64; 3]> = Vec::new();
+    // INK43 (`--ink-p43-trace`): every prompt's prefill timeline (admit, its chunks), the last
+    // reply's instant (the host gap before the next step)
+    let p43_on = f.ink_p43_trace;
+    let mut p43_req: BTreeMap<SeqId, (std::time::Instant, String)> = BTreeMap::new();
+    let mut p43_reply: Option<std::time::Instant> = None;
+    let mut p43_out: Vec<String> = Vec::new();
     // INK22: the server-clock TTFT decomposition (admit -> first chunk -> last chunk's reply ->
     // the 3rd output's reply: the first visible text) and every step's host clock by kind
     #[allow(clippy::type_complexity)]
@@ -1485,6 +1615,9 @@ pub(super) fn rank_serve(
                 };
                 slot_of.insert(seq, (s, 0));
                 seq_n.insert(seq, (std::time::Instant::now(), 0, None, None));
+                if p43_on {
+                    p43_req.insert(seq, (std::time::Instant::now(), String::new()));
+                }
             }
             Job::Prompt(seq, ids) => {
                 if tr_on {
@@ -1512,6 +1645,7 @@ pub(super) fn rank_serve(
                 }
             }
             Job::Release(seq) => {
+                p43_req.remove(&seq);
                 if let Some(t) = trace.remove(&seq) {
                     println!("INK26 trace {seq}: {t}");
                 }
@@ -1700,6 +1834,22 @@ pub(super) fn rank_serve(
                                 sl.seq
                             );
                             let tp1 = std::time::Instant::now();
+                            if let Some((a, t)) = p43_req.get_mut(&sl.seq) {
+                                let ms = |x: std::time::Instant, y: std::time::Instant| {
+                                    (y.max(x) - x).as_secs_f64() * 1e3
+                                };
+                                let gap = p43_reply.map_or(f64::NAN, |r| ms(r, ts0));
+                                t.push_str(&format!(
+                                    " | pos {pos} rows {} t0 {:.2} gap {gap:.2} pre {:.2} fwd {:.2} out {:.2} app {:.2} chunk {:.2}",
+                                    end - lo,
+                                    ms(*a, ts0),
+                                    ms(ts0, tp0),
+                                    eng.p43_t[0],
+                                    eng.p43_t[1],
+                                    eng.p43_t[2],
+                                    ms(tp0, tp1)
+                                ));
+                            }
                             let tapped = eng.tap;
                             eng.tap = false;
                             let row = row?;
@@ -1734,6 +1884,14 @@ pub(super) fn rank_serve(
                                 emitted.push((sl.seq, 1));
                                 pf_last.push(sl.seq);
                                 ts = tp1.elapsed().as_secs_f64() * 1e3;
+                                if let Some((a, t)) = p43_req.remove(&sl.seq) {
+                                    p43_out.push(format!(
+                                        "INK43 req {} prompt {} admit->sampled {:.2} sample {ts:.2}{t}",
+                                        sl.seq,
+                                        end,
+                                        a.elapsed().as_secs_f64() * 1e3
+                                    ));
+                                }
                             }
                             p_time.push([(end - lo) as f64, (tp1 - tp0).as_secs_f64() * 1e3, ts]);
                         }
@@ -2374,7 +2532,16 @@ pub(super) fn rank_serve(
                         }
                     }
                 }
+                let tr0 = std::time::Instant::now();
                 let _ = reply.send(StepResult::new(out));
+                if p43_on {
+                    let now = std::time::Instant::now();
+                    for l in p43_out.drain(..) {
+                        // `reply` = the step's end -> the reply handed to the scheduler (ms)
+                        println!("{l} | reply {:.3}", (now - tr0).as_secs_f64() * 1e3);
+                    }
+                    p43_reply = Some(now);
+                }
             }
         }
     })();
@@ -2597,6 +2764,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ink54_the_interleave_arm_parses_and_sets_the_yield() {
+        assert_eq!(p54_yield(crate::inkling2::DEFAULT_INK54).unwrap(), 0);
+        assert_eq!(p54_yield("il8").unwrap(), 8);
+        assert!(p54_yield("il0").is_err());
+        assert!(p54_yield("il").is_err());
+        assert!(p54_yield("x").is_err());
+        assert_eq!(p54_yield("wk,il4").unwrap(), 4);
+        let c = scheduler_config_ch(40960, 8, 7, Some(2), 7, 2048).unwrap();
+        assert_eq!(c.prefill.yield_steps, 0);
+        assert_eq!(c.prefill.clone().with_yield_steps(8).yield_steps, 8);
+    }
+
+    #[test]
+    fn ink43_the_chunk_lever_parses_and_the_ring_holds_the_window_plus_the_chunk() {
+        assert_eq!(
+            p43_opts(crate::inkling2::DEFAULT_INK43).unwrap(),
+            (2048, true)
+        );
+        assert_eq!(
+            crate::inkling2::INK43_CONTROL
+                .strip_prefix("--ink-p43 ")
+                .map(|v| p43_opts(v).unwrap()),
+            Some((SERVE_CHUNK, false))
+        );
+        assert_eq!(p43_chunk("none").unwrap(), SERVE_CHUNK);
+        assert_eq!(p43_chunk("ch2048").unwrap(), 2048);
+        assert_eq!(p43_chunk("ch1536").unwrap(), 1536);
+        assert!(p43_chunk("ch1000").is_err());
+        assert!(p43_chunk("ch8192").is_err());
+        assert!(p43_chunk("hg").is_err());
+        assert_eq!(p43_opts("am").unwrap(), (SERVE_CHUNK, true));
+        assert_eq!(p43_opts("ch2048,am").unwrap(), (2048, true));
+        assert_eq!(p43_opts("").unwrap(), (SERVE_CHUNK, false));
+        let d = crate::inkling2::DEFAULT_INK43;
+        assert_eq!(p43_plane(d, true).unwrap(), (2048, true));
+        assert_eq!(p43_plane(d, false).unwrap(), (SERVE_CHUNK, false));
+        assert_eq!(p43_plane("am", false).unwrap(), (SERVE_CHUNK, true));
+        assert_eq!(p43_ring(2048, SERVE_CHUNK), 2048);
+        assert_eq!(p43_ring(2048, 2048), 3072);
+        assert_eq!(p43_ring(2048, 1536), 2560);
+        assert_eq!(p43_ring(0, 2048), 0);
+        let c = scheduler_config_ch(16896, 1, 7, None, 7, 2048).unwrap();
+        assert_eq!(c.prefill.max_chunk(), 2048);
+        assert_eq!(c.prefill.chunk_for(16728), Some((2048, 2048)));
+        assert_eq!(c.prefill.chunk_for(344), Some((344, 2048)));
+    }
+
+    #[test]
     fn ink8_the_scheduler_geometry_admits_the_served_sequences() {
         let c = scheduler_config(4096, 2, 0).unwrap();
         assert!(c.prefill.sizes.contains(&SERVE_CHUNK));
@@ -2815,12 +3030,9 @@ mod tests {
     #[test]
     fn ink18_the_drafter_defaults() {
         let f = crate::inkling2::InkFlags::default();
-        let o = super::super::draft::DraftOpt::of(
-            f.draft_vocab(),
-            &f.ink_draft_gemv,
-            &f.ink_draft_layers,
-        )
-        .unwrap();
+        let o =
+            super::super::draft::DraftOpt::of(f.draft_vocab(), &f.ink_draft_gemv, f.draft_layers())
+                .unwrap();
         assert_eq!((o.vocab, o.sk, o.w8, o.np_max), (32_768, true, true, 4));
         let c = super::super::draft::DraftOpt::of(0, "base", "bf16").unwrap();
         assert_eq!((c.vocab, c.sk, c.w8), (0, false, false));

@@ -2,9 +2,13 @@
 # Download the ready-made weight packs from Hugging Face, so a fresh clone can serve without
 # converting a checkpoint (the CPU repack of tools/pack/build_devfinal.sh).
 #
-#   tools/fetch_packs.sh 27b-macaq-w4a8      # ~28 GB: the DEFAULT 27B (MACaQ W4A8-iu8) target + the W4A8-iu8
-#                                     #   DFlash2 drafter (TP=2), and the tokenizer / chat template into .cache/;
+#   tools/fetch_packs.sh 27b-macaq-w4a8-nari3      # ~28 GB: the DEFAULT 27B (MACaQ W4A8-iu8 NARI3,
+#                                     #   Launch80/Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER) target + the W4A8-iu8 DFlash2
+#                                     #   drafter (TP=2), and the tokenizer / chat template into .cache/;
 #                                     #   DRAFTER=fp8 = the FP8 drafter instead (~29 GB)
+#   tools/fetch_packs.sh 27b-macaq-w4a8-nari3-tp1  # ~26 GB: the same for ONE card (TP=1)
+#   tools/fetch_packs.sh 27b-macaq-w4a8      # ~28 GB: the W4A8-iu8 target before the NARI3 re-calibration (the
+#                                     #   ROLLBACK: tools/serve_27b.sh --weights macaq-w4a8) + the same drafter
 #   tools/fetch_packs.sh 27b-macaq-w4a8-tp1  # ~26 GB: the same for ONE card (TP=1)
 #   tools/fetch_packs.sh 27b-macaq    # ~29 GB: the MACaQ MXFP4 target (the default before the W4A8-iu8 pack) + its
 #                                     #   paired FP8 drafter (TP=2): tools/serve_27b.sh --weights macaq
@@ -25,8 +29,10 @@
 #                                     #   experts, 8-bit trunk, the bundled drafter and the base/ dense subset; no checkpoint.
 #                                     #   ONE download serves one card AND two: its tp1/ folder (286 KB) is the one-card
 #                                     #   (TP=1) view of the same files; tools/serve_inkling.sh picks by GPU count
+#                                     #   + the 1.3 GB DFlash2 drafter pack (Launch80/Inkling-2-Mini-DFlash2-SABER) beside
+#                                     #   it: the engine finds it there and serves it as the default drafter (DSpark without it)
 #   tools/fetch_packs.sh inkling-tp1  # the same download (an alias: the one-card layout shares every byte)
-#   tools/fetch_packs.sh all          # 27b-macaq-w4a8 (TP=2) + flashnext
+#   tools/fetch_packs.sh all          # 27b-macaq-w4a8-nari3 (TP=2) + flashnext
 #
 # Packs land in $SABER_PACKS (default $SABER_NVME/saber-packs = /mnt/nvme/saber-packs), the directory the
 # launchers read.
@@ -38,7 +44,7 @@
 #   SABER_HF_OWNER  Hugging Face account that hosts the packs (default Launch80)
 #   SABER_FN_CHECKPOINT_REPO  Flash-Next's original checkpoint (default amd/Qwen3.8-Flash-Next-Quark-MXFP4)
 #   SABER_FN_CHECKPOINT_REV   its revision (default b2091c38..., the one the packs were cut from; tools/models.json)
-#   DRAFTER         27b-macaq-w4a8[-tp1] (and all) only: w4a8 (default) or fp8
+#   DRAFTER         27b-macaq-w4a8[-nari3][-tp1] (and all) only: w4a8 (default) or fp8
 #   HF_TOKEN        only needed while a repo is private
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -50,10 +56,12 @@ RFN=$OWNER/Qwen3.8-Flash-Next-SABER
 RQK=$OWNER/Qwen3.8-27B-Quark-AWQ-MXFP4-SABER
 RMQ=$OWNER/Qwen3.8-27B-MACaQ-MXFP4-SABER
 RW4=$OWNER/Qwen3.8-27B-MACaQ-W4A8-SABER
+RW4N=$OWNER/Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER
 RDW4=$OWNER/Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER
 RDF8=$OWNER/Qwen3.8-27B-DFlash2-Drafter-FP8-SABER
 RFNM=$OWNER/Qwen3.8-Flash-Next-MACaQ-SABER
 RINK=$OWNER/Inkling-2-Mini-NVFP4-SABER
+RINKD=$OWNER/Inkling-2-Mini-DFlash2-SABER
 # the checkpoint revision the Flash-Next packs were built from and verified against (their records carry sha256s)
 CKREV=${SABER_FN_CHECKPOINT_REV:-b2091c3809eb51902f46a163973362d8176f9e58}
 CKREPO=${SABER_FN_CHECKPOINT_REPO:-amd/Qwen3.8-Flash-Next-Quark-MXFP4}
@@ -62,9 +70,11 @@ HF=$(command -v hf || command -v huggingface-cli || true)
 [ -n "$HF" ] || { echo "needs the Hugging Face CLI: pip install -U 'huggingface_hub[cli]'" >&2; exit 1; }
 
 want=${1:-}
-case "$want" in 27b-macaq-w4a8 | 27b-macaq-w4a8-tp1 | 27b-macaq | 27b-macaq-tp1 | 27b | 27b-tp1 | 27b-quark | 27b-quark-tp1 | flashnext | flashnext-macaq | flashnext-mxfp4 | inkling | inkling-tp1 | all) ;; *) echo "usage: $0 27b-macaq-w4a8|27b-macaq-w4a8-tp1|27b-macaq|27b-macaq-tp1|27b|27b-tp1|27b-quark|27b-quark-tp1|flashnext|flashnext-mxfp4|inkling|inkling-tp1|all  (27b-macaq-w4a8 = the default 27B, flashnext = the MACaQ Flash-Next)" >&2; exit 2 ;; esac
+case "$want" in 27b-macaq-w4a8-nari3 | 27b-macaq-w4a8-nari3-tp1 | 27b-macaq-w4a8 | 27b-macaq-w4a8-tp1 | 27b-macaq | 27b-macaq-tp1 | 27b | 27b-tp1 | 27b-quark | 27b-quark-tp1 | flashnext | flashnext-macaq | flashnext-mxfp4 | inkling | inkling-tp1 | all) ;; *) echo "usage: $0 27b-macaq-w4a8-nari3|27b-macaq-w4a8-nari3-tp1|27b-macaq-w4a8|27b-macaq-w4a8-tp1|27b-macaq|27b-macaq-tp1|27b|27b-tp1|27b-quark|27b-quark-tp1|flashnext|flashnext-mxfp4|inkling|inkling-tp1|all  (27b-macaq-w4a8-nari3 = the default 27B, flashnext = the MACaQ Flash-Next)" >&2; exit 2 ;; esac
 [ "$want" = inkling-tp1 ] && want=inkling   # one repo, both layouts
 [ "$want" = flashnext-macaq ] && want=flashnext
+[ "$want" = all ] && want=27b-macaq-w4a8-nari3   # `all` = the default 27B (TP=2) + flashnext (below)
+ALL=0; [ "${1:-}" = all ] && ALL=1
 
 # A pack the engine would refuse fails here, by name, instead of mid-boot: every rank file
 # must start with the SBRPACK1 magic (docs/abi/PACK.md).
@@ -131,29 +141,33 @@ fetch_tp_folder() {
   mv "$stage/$d" "$dst" && rm -rf "$stage"
 }
 
-if [ "$want" = 27b-macaq-w4a8 ] || [ "$want" = 27b-macaq-w4a8-tp1 ] || [ "$want" = all ]; then
-  # The MACaQ W4A8-iu8 target (the launcher's default weights) and its drafter: tp2/ -> qwen38-27b-macaq-w4a8 and
+case "$want" in 27b-macaq-w4a8 | 27b-macaq-w4a8-tp1 | 27b-macaq-w4a8-nari3 | 27b-macaq-w4a8-nari3-tp1)
+  # The MACaQ W4A8-iu8 targets and their drafter: the NARI3 pack (the launcher's default weights, Q=macaq-w4a8-nari3)
+  # or the one before it (Q=macaq-w4a8, --weights macaq-w4a8): tp2/ -> qwen38-27b-$Q and
   # qwen38-dflash2-drafter-$DR, tp1/ -> the same names + -tp1. DRAFTER=w4a8 (default) = the W4A8-iu8 DFlash2
   # drafter, fp8 = the FP8 one (the same packs as qwen38-dflash2-drafter-quarkhead[-tp1]). Both keep the Quark
   # checkpoint's lm_head; the tokenizer is the Quark checkpoint's own, the chat template the shared one.
-  D=tp2; T=""; [ "$want" = 27b-macaq-w4a8-tp1 ] && { D=tp1; T=-tp1; }
+  D=tp2; T=""; case "$want" in *-tp1) D=tp1; T=-tp1 ;; esac
+  Q=macaq-w4a8; RT=$RW4; W=""
+  case "$want" in 27b-macaq-w4a8-nari3*) Q=macaq-w4a8-nari3; RT=$RW4N ;; *) W=" --weights macaq-w4a8" ;; esac
   DR=${DRAFTER:-w4a8}
   case "$DR" in w4a8) RD=$RDW4 ;; fp8) RD=$RDF8 ;; *) echo "DRAFTER=$DR: w4a8 or fp8" >&2; exit 2 ;; esac
-  fetch_tp_folder "$RW4" "$D" "qwen38-27b-macaq-w4a8$T"
+  fetch_tp_folder "$RT" "$D" "qwen38-27b-$Q$T"
   fetch_tp_folder "$RD" "$D" "qwen38-dflash2-drafter-$DR$T"
   mkdir -p "$REPO/.cache/macaq-w4a8-dl"
-  "$HF" download "$RW4" --local-dir "$REPO/.cache/macaq-w4a8-dl" --include 'tokenizer.json' --include 'qwen-fixed-v22.3.jinja'
+  "$HF" download "$RT" --local-dir "$REPO/.cache/macaq-w4a8-dl" --include 'tokenizer.json' --include 'qwen-fixed-v22.3.jinja'
   cp -f "$REPO/.cache/macaq-w4a8-dl/tokenizer.json" "$REPO/.cache/quark27b.tokenizer.json"
   [ -f "$REPO/.cache/template_corpus.jinja" ] || cp -f "$REPO/.cache/macaq-w4a8-dl/qwen-fixed-v22.3.jinja" "$REPO/.cache/template_corpus.jinja"
-  DF=""; [ "$DR" = fp8 ] && DF=" --drafter fp8"
+  DF="$W"; [ "$DR" = fp8 ] && DF="$DF --drafter fp8"
   if [ -n "$T" ]; then
-    check_packs "$PACKS"/qwen38-27b-macaq-w4a8-tp1/rank0.pack "$PACKS"/qwen38-dflash2-drafter-$DR-tp1/rank0.pack
-    echo "27B MACaQ W4A8 TP=1 packs ready: tools/serve_27b.sh --tp 1$DF"
+    check_packs "$PACKS"/qwen38-27b-$Q-tp1/rank0.pack "$PACKS"/qwen38-dflash2-drafter-$DR-tp1/rank0.pack
+    echo "27B MACaQ W4A8 ($Q) TP=1 packs ready: tools/serve_27b.sh --tp 1$DF"
   else
-    check_packs "$PACKS"/qwen38-27b-macaq-w4a8/rank{0,1}.pack "$PACKS"/qwen38-dflash2-drafter-$DR/rank{0,1}.pack
-    echo "27B MACaQ W4A8 packs ready: tools/serve_27b.sh$DF"
+    check_packs "$PACKS"/qwen38-27b-$Q/rank{0,1}.pack "$PACKS"/qwen38-dflash2-drafter-$DR/rank{0,1}.pack
+    echo "27B MACaQ W4A8 ($Q) packs ready: tools/serve_27b.sh$DF"
   fi
-fi
+  ;;
+esac
 
 if [ "$want" = 27b ]; then
   echo "== $R27 -> $PACKS"
@@ -277,7 +291,7 @@ PY2
   echo "   verify (optional, ~1 min a 100 GB): (cd $P && sha256sum -c --quiet SHA256SUMS)"
 }
 
-if [ "$want" = flashnext ] || [ "$want" = flashnext-macaq ] || [ "$want" = all ]; then
+if [ "$want" = flashnext ] || [ "$want" = flashnext-macaq ] || [ "$ALL" = 1 ]; then
   # The MACaQ pack (the served default since MACFN8; HF1 / HF2): repo root = the pack directory.
   P=$PACKS/qwen38-flashnext-macaq-tp2-trunk8
   fn_space "$P" 71.1
@@ -304,7 +318,8 @@ if [ "$want" = inkling ]; then
   # byte from the converted checkpoint) + the config / tokenizer / chat template; the engine reads base/ first
   # (`inkpaths:` boot line), so no checkpoint download. Serve with SABER_NVME=<root> tools/serve_inkling.sh.
   P=$PACKS/inkling-2-mini-nvfp4
-  NEED_GB=20.8
+  PD=$PACKS/inkling-2-mini-dflash2   # the DFlash2 drafter pack, the sibling the engine auto-discovers
+  NEED_GB=22.1
   mkdir -p "$P"
   have=$(du -sb "$P" 2>/dev/null | awk '{printf "%.1f", $1 / 1e9}')
   free=$(df -P -B1 "$P" | awk 'NR==2 {printf "%.1f", $4 / 1e9}')
@@ -325,7 +340,14 @@ if [ "$want" = inkling ]; then
     [ -s "$P/$f" ] || { echo "missing $P/$f" >&2; miss=1; }
   done
   [ "$miss" = 0 ] || { echo "pack incomplete under $P (re-run to resume)" >&2; exit 1; }
-  echo "== on disk: $(du -sb "$P" | awk '{printf "%.1f", $1 / 1e9}') GB"
-  echo "   verify (optional, ~1 min): (cd $P && sha256sum -c --quiet SHA256SUMS)"
+  echo "== $RINKD -> $PD (resumable; the default drafter: without it the engine serves the bundled DSpark drafter)"
+  mkdir -p "$PD"
+  "$HF" download "$RINKD" --local-dir "$PD"
+  for f in manifest.json fc.weight.w8.bin candidate_selector.successor_codebook.bin; do
+    [ -s "$PD/$f" ] || { echo "missing $PD/$f" >&2; miss=1; }
+  done
+  [ "$miss" = 0 ] || { echo "drafter pack incomplete under $PD (re-run to resume)" >&2; exit 1; }
+  echo "== on disk: $(du -sb "$P" | awk '{printf "%.1f", $1 / 1e9}') GB + drafter $(du -sb "$PD" | awk '{printf "%.1f", $1 / 1e9}') GB"
+  echo "   verify (optional, ~1 min): (cd $P && sha256sum -c --quiet SHA256SUMS) && (cd $PD && sha256sum -c --quiet SHA256SUMS)"
   echo "Inkling 2 Mini ready (one card or two: the launcher picks by GPU count): SABER_NVME=$NVME tools/serve_inkling.sh"
 fi

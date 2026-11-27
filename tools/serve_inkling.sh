@@ -15,6 +15,13 @@
 # (Hugging Face Launch80/Inkling-2-Mini-NVFP4-SABER, `tools/fetch_packs.sh inkling`): self-contained, its
 # dense records and model files in its own base/ (HF3; `inkpaths:` boot line). A pack without base/ reads
 # the checkpoint at the path its manifest records, which must then be mounted (it is, under $SABER_NVME/models).
+# INK51: the default drafter is DFlash2 (iu8 layers, depth 7, gate prod:0.4:2) when its pack sits beside the
+# model pack ($(dirname $INK_PACK)/inkling-2-mini-dflash2, fetched by `tools/fetch_packs.sh inkling`) or at
+# <pack>/dflash2; without it the bundled DSpark drafter serves (boot line `INK51 drafter:`). Rollback: pass
+# `--ink-drafter dspark`; another drafter pack: `--ink-dflash2-path DIR` (mount it yourself).
+# INK52 / INK57: split-key decode attention + the row-shared verify body (`--ink-p49 ks,rv4`) is the default
+# (long-context decode / verify; byte-equal at <= 2,048 keys; rv4 byte-equal to ks per row). Rollbacks: pass
+# `--ink-p49 ks` (INK52's per-row verify) or `--ink-p49 none` (no split).
 # OpenAI-compatible: /v1/models, /v1/chat/completions, /v1/completions; served name Inkling-2-Mini.
 # Logs: podman logs -f saber-inkling-serve. Refuses to start while another Saber server holds the cards.
 set -uo pipefail
@@ -81,6 +88,10 @@ MNT=(-v "$PACK":"$PACK":ro -v "$OUT":/out)
 # a one-card view reads its TP=2 pack's files (its manifest's `blobs`): mount that root too
 [ "$TP" = 1 ] && [ "$(basename "$PACK")" = tp1 ] && MNT+=(-v "$(dirname "$PACK")":"$(dirname "$PACK")":ro)
 for d in "$NVME/models" "$NVME/saber-packs"; do [ -d "$d" ] && MNT+=(-v "$d":"$d":ro); done
+# INK51: the DFlash2 drafter pack beside the TP=2 pack (the engine's auto-discovery path)
+PROOT=$PACK; [ "$TP" = 1 ] && [ "$(basename "$PACK")" = tp1 ] && PROOT=$(dirname "$PACK")
+DF2=$(dirname "$PROOT")/inkling-2-mini-dflash2
+[ -f "$DF2/manifest.json" ] && MNT+=(-v "$DF2":"$DF2":ro)
 $CTR rm -f "$CNAME" >/dev/null 2>&1 || true
 $CTR run -d --name "$CNAME" --security-opt label=disable --security-opt seccomp=unconfined \
   "${CTR_GPU[@]}" "${CTR_USER[@]}" --ipc=host --network=host \

@@ -9,7 +9,7 @@
 # Adding a model is adding a [[model]] block: no code change.
 
 schema = 1
-default = "Qwen3.8-27B-MACaQ-W4A8-SABER"
+default = "Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER"
 endpoint = "https://huggingface.co"
 
 # ---------------------------------------------------------------------------------------------
@@ -17,10 +17,51 @@ endpoint = "https://huggingface.co"
 # ---------------------------------------------------------------------------------------------
 
 [[model]]
-name = "Qwen3.8-27B-MACaQ-W4A8-SABER"
-aliases = ["w4a8", "default", "27b", "macaq-w4a8"]
+name = "Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER"
+aliases = ["nari3", "default", "27b", "macaq-w4a8-nari3"]
 kind = "target"
-description = "Qwen3.8-27B in Saber's W4A8 integer format (per-row int4 weights, per-token int8 activations on RDNA4's int8 matrix cores) with the W4A8 DFlash2 drafter. The fastest 27B: 262k context and 8 concurrent sequences on two cards."
+description = "The default 27B: the W4A8 pack below with its int4 codes re-calibrated on a mixed agent + general masked Hessian and its scales and norms tuned by masked KL on agent traces (NARI3). Same format, size, kernels, speed and drafter as the W4A8 pack; GSM8K tied with it (paired, 500 questions). 262k context and 8 concurrent sequences on two cards."
+repo = "Launch80/Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER"
+served_id = "Qwen3.8-27B-MACaQ-W4A8-SABER"
+drafter = "Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER"
+requires_tag = "macaq_iu8/1"
+license = "Apache-2.0 (weights derived from Qwen/Qwen3.8-27B; see the repo's LICENSE and README)"
+files = ["tokenizer.json", "qwen-fixed-v22.3.jinja"]
+tokenizer = "tokenizer.json"
+chat_template = "qwen-fixed-v22.3.jinja"
+engine_args = ["--engine-rectangular-widths"]
+default_tp = 2
+
+[model.tp.2]
+path = "tp2"
+bytes = 20543143512
+legacy_dirs = ["qwen38-27b-macaq-w4a8-nari3"]
+max_ctx = 262144
+max_seqs = 8
+prefill_rows = "96,128,192,256,320,384,512,768,1024,1536,2048"
+decode_batches = "1,2,3,4,8"
+decode_widths = "1,5,8"
+draft_block = 8
+budget_mib = 30500
+tail_args = ["--vision", "lazy"]
+
+[model.tp.1]
+path = "tp1"
+bytes = 19507176442
+legacy_dirs = ["qwen38-27b-macaq-w4a8-nari3-tp1"]
+max_ctx = 131072
+max_seqs = 1
+prefill_rows = "96,128,192,256,320,384,512,768,1024,1536,2048"
+decode_batches = "1"
+decode_widths = "1,5,8"
+draft_block = 8
+budget_mib = 30500
+
+[[model]]
+name = "Qwen3.8-27B-MACaQ-W4A8-SABER"
+aliases = ["w4a8", "macaq-w4a8"]
+kind = "target"
+description = "Qwen3.8-27B in Saber's W4A8 integer format (per-row int4 weights, per-token int8 activations on RDNA4's int8 matrix cores) with the W4A8 DFlash2 drafter: 262k context and 8 concurrent sequences on two cards. The default before the NARI3 re-calibration (the rollback)."
 repo = "Launch80/Qwen3.8-27B-MACaQ-W4A8-SABER"
 served_id = "Qwen3.8-27B-MACaQ-W4A8-SABER"
 drafter = "Qwen3.8-27B-DFlash2-Drafter-W4A8-SABER"
@@ -149,8 +190,10 @@ legacy_dirs = ["qwen38-dflash2-drafter-fp8-tp1", "qwen38-dflash2-drafter-quarkhe
 #     rollback Launch80/Qwen3.8-Flash-Next-SABER (MXFP4 experts): tools/fetch_packs.sh flashnext-mxfp4,
 #              FN_EXPERTS_FMT=mxfp4 tools/serve_flashnext.sh
 #
-#   Inkling 2 Mini (MoE), NVFP4 / MXFP8 experts, 8-bit trunk, bundled drafter -- served id Inkling-2-Mini
+#   Inkling 2 Mini (MoE), NVFP4 / MXFP8 experts, 8-bit trunk -- served id Inkling-2-Mini
 #     repo     Launch80/Inkling-2-Mini-NVFP4-SABER (self-contained, 20.73 GB; no checkpoint download)
+#              + Launch80/Inkling-2-Mini-DFlash2-SABER (the default DFlash2 drafter, 1.3 GB; without it the
+#              pack's bundled DSpark drafter serves: `--ink-drafter dspark` is the rollback)
 #     fetch    tools/fetch_packs.sh inkling          serve  tools/serve_inkling.sh   (TP=2; TP=1 on a one-GPU host, the pack's tp1/ view)
 #     access   public: the fetch needs no login
 #     license  Apache-2.0, a derivative of thinkingmachines/Inkling-2-Mini (see the repo's NOTICE)

@@ -112,6 +112,39 @@ pub const DEFAULT_INK37: &str = "moe,glue";
 /// visit takes whose producers write every byte read are not zeroed (`zp` poisons them: the control).
 /// CONS40: `fa128l,zd` IS THE DEFAULT (byte-equal, zd's poison control `zp` equal; `--ink-p40 none` = off).
 pub const DEFAULT_INK40: &str = "fa128l,zd";
+/// INK43: `--ink-p43` -- the served prefill's scheduling levers (a comma list; empty = off, the
+/// control): `ch<N>` = the served prefill chunk is N rows (1,024..4,096, a multiple of 64; the
+/// local KV ring is raised to the 1,024-row window + N, the drafter's tap planes hold N rows);
+/// `am` = a one-slot drafter's prefill append on the matrix cores (INK22's `pfmm`; drafts move).
+/// INK43: `ch2048,am` IS THE DEFAULT (served prefill +11..20 %, the target's bytes unmoved: the
+/// chunk-cut law at 2,048 rows, smoke / conc law / needle equal); `INK43_CONTROL` = the rollback.
+pub const DEFAULT_INK43: &str = "ch2048,am";
+pub const INK43_CONTROL: &str = "--ink-p43 none";
+/// INK49: `--ink-p49` -- split-key decode attention: `ks` = the target's global-layer decode /
+/// verify attention AND the drafter's attention cut into key segments + a combine
+/// (`hip/ink_ks49.hip`); `kt` / `kd` = the target / the drafter only; `t<N>` = S = 1 (byte-equal
+/// to `none`) at <= N keys (default 2,048), `w<N>` = the target's workgroup goal (default 512),
+/// `g<N>` = the minimum segment (default 512 keys).
+/// INK52: `ks` IS THE DEFAULT (the user's word 2026-11-26: "proceed with recommendations", on the
+/// combined gate with the DFlash2 iu8 default drafter; LEDGER INK52); `INK49_CONTROL`
+/// (`--ink-p49 none`) = the rollback (no split anywhere).
+/// INK57: `ks,rv4` IS THE DEFAULT (the user's word 2026-11-26: "proceed with your recommendations",
+/// on the merged-main gate; LEDGER INK57): INK54's row-shared verify body, byte-equal to `ks` per row;
+/// `INK57_CONTROL` (`--ink-p49 ks`) = the rollback to INK52's default (the per-row verify body).
+pub const DEFAULT_INK49: &str = "ks,rv4";
+pub const INK49_CONTROL: &str = "--ink-p49 none";
+pub const INK57_CONTROL: &str = "--ink-p49 ks";
+/// INK55: `--ink-p55` -- the prefill all-reduce wire (`hip/ink_xw55.hip`, default `none` = the pulled
+/// f32 exchange `ink_p2p_xchg_v4`, the control and the rollback): a STAGED PUSH of the partial in
+/// one form -- `x32` f32 raw / `c32` f32 exponent-group coded (both byte-equal to the control), `b16`
+/// bf16 raw / `c16` bf16 coded (a NUMERICS arm: each rank's partial rounded to bf16 before the add);
+/// `p<N>` = the stage count (1..8, default 1), `r<N>` = the smallest reduce it takes (rows, default 128:
+/// above every decode / verify form, so no captured graph takes it).
+pub const DEFAULT_INK55: &str = "none";
+/// INK54: `--ink-p54` -- serve-plane scheduling arms (default `none` = the control): `il<N>` = after a
+/// prefill chunk that ran while sequences decode, N decode-only steps before the next chunk
+/// (`PrefillChunking::yield_steps`; the schedule only, every row's bytes are its own).
+pub const DEFAULT_INK54: &str = "none";
 /// CONS40: the rollback to the pre-CONS40 prefill (rt8 at floor 256, every INK35..CONS40 lever off).
 pub const CONS40_CONTROL: &str =
     "--ink-prefill-attn rt8 --ink-prefill-attn-floor 256 --ink-p35 none \
@@ -153,6 +186,21 @@ pub const INK22_CONTROL: &str = "--ink-mtp-batch off --ink-draft-mm base --ink-f
 pub const INK26_CONTROL: &str = "--ink-mtp-batch off --ink-draft-mm base --ink-fuse all17 \
      --ink-batch-plain first2 --ink-batch-append each --ink-prefill-trunk f32";
 pub const DEFAULT_INK_DRAFT_LAYERS: &str = "w8";
+/// INK51: THE DEFAULT DRAFTER IS DFLASH2 WHEN ITS PACK IS PRESENT (the user's word 2026-11-25:
+/// "proceed with recommendations"; LEDGER INK51): an unset `--ink-drafter` (`auto`) resolves to
+/// `dflash2` when `--ink-dflash2-path` names a pack or one is found at
+/// [`DF2_DISCOVER`] (relative to the target pack's files), else STANDS DOWN to `dspark` by name.
+/// Under `dflash2` an unset `--ink-draft-layers` (`auto`) is `iu8` (INK50's W8A8 form; `w8` on a
+/// pack without the `iu8` section, said by name) and the default gate is `prod:0.4:2` at depth 7
+/// (INK48 / INK50); under `dspark` they stay INK34's / INK18's. `INK51_CONTROL` = the rollback.
+pub const DEFAULT_INK_DF2_LAYERS: &str = "iu8";
+pub const DEFAULT_INK_DF2_GATE: &str = "prod:0.4:2";
+pub const INK51_CONTROL: &str = "--ink-drafter dspark";
+/// INK51: where an unset drafter looks for the DFlash2 pack, in order, relative to the target
+/// pack's files (`Pack::blobs`): `<pack>/dflash2`, then the sibling `<pack>/../inkling-2-mini-dflash2`
+/// (`tools/fetch_packs.sh inkling` puts Hugging Face `Launch80/Inkling-2-Mini-DFlash2-SABER` there).
+pub const DF2_DISCOVER: [&str; 2] = ["dflash2", "../inkling-2-mini-dflash2"];
+pub const DF2_PACK_FORMAT: &str = "ink2-dflash2/1";
 /// INK16: `--ink-first-token` -- `seam` IS THE DEFAULT (BetterBench --quick TTFT p50 116 / 115 ->
 /// 110 / 107 ms, conc-8 TTFT p50 198 / 195 -> 192 / 185; served ids / seeds / max_tokens equal to
 /// `dense`); `dense` = the control.
@@ -366,10 +414,25 @@ pub struct InkFlags {
     /// **`sk` IS THE DEFAULT (INK18)**; `base` = the target's exact GEMV (the control)
     #[arg(long, default_value = DEFAULT_INK_DRAFT_GEMV)]
     pub ink_draft_gemv: String,
-    /// INK18: the drafter's block layers -- `w8` = int8 per-32 RTN at load (INK14's record law)
-    /// **IS THE DEFAULT (INK18)**; `bf16` = the checkpoint's bytes (the control)
-    #[arg(long, default_value = DEFAULT_INK_DRAFT_LAYERS)]
+    /// INK18: the drafter's block layers -- `w8` = int8 per-32 RTN at load (INK14's record law);
+    /// `bf16` = the checkpoint's bytes (the control); `iu8` = INK50's W8A8 matrix-core form (the
+    /// DFlash2 drafter only). INK51: `auto` (THE DEFAULT) = `iu8` under the DFlash2 drafter (`w8`
+    /// on a pack without the `iu8` section), `w8` under DSpark (INK18's default)
+    #[arg(long, default_value = "auto")]
     pub ink_draft_layers: String,
+    /// INK48: the block drafter -- `dspark` = the pack's bundled DSpark drafter (`<pack>/draft/`,
+    /// the rollback), `dflash2` = the public DFlash2 drafter (it changes proposals only; the
+    /// committed tokens are the target's under the drawn-row walk). INK51: `auto` (THE DEFAULT) =
+    /// `dflash2` when its pack is named (`--ink-dflash2-path`) or found next to the target pack
+    /// (`<pack>/dflash2`, `<pack>/../inkling-2-mini-dflash2`), else `dspark`, said by name
+    #[arg(long, default_value = "auto")]
+    pub ink_drafter: String,
+    /// INK48: the DFlash2 drafter PACK dir (`tools/pack/build_ink2_dflash2.py` from the public
+    /// checkpoint: bf16 records + the 8-bit layer records; checked by `check_ink2_dflash2.py`;
+    /// published as Hugging Face `Launch80/Inkling-2-Mini-DFlash2-SABER`). INK51: unset = the
+    /// auto-discovered pack (see `--ink-drafter`)
+    #[arg(long)]
+    pub ink_dflash2_path: Option<PathBuf>,
     /// INK7: the decode cache's per-sequence rows (the INK5 harness's `--max-ctx`)
     #[arg(long, default_value_t = 512)]
     pub ink_cache_ctx: u64,
@@ -460,6 +523,23 @@ pub struct InkFlags {
     /// CONS40: the byte-equal prefill levers (`DEFAULT_INK40`, empty = off): fa128, fa128l, fam<N>, zd, zd1, zd2, zp
     #[arg(long = "ink-p40", default_value = DEFAULT_INK40)]
     pub ink40: String,
+    /// INK43: the served prefill's scheduling levers (`DEFAULT_INK43`, empty = off): ch<N>, am
+    #[arg(long = "ink-p43", default_value = DEFAULT_INK43)]
+    pub ink43: String,
+    /// INK49: split-key decode attention (`DEFAULT_INK49` = ks,rv4 since INK57; `ks` = INK52's, `none` = no split): ks | kt | kd, rv | rv1 | rv3 | rv4, t<N>, w<N>, g<N>
+    #[arg(long = "ink-p49", default_value = DEFAULT_INK49)]
+    pub ink49: String,
+    /// INK55: the prefill reduce wire (`DEFAULT_INK55` = none = the control): x32 | c32 | b16 | c16, p<N>, r<N>
+    #[arg(long = "ink-p55", default_value = DEFAULT_INK55)]
+    pub ink55: String,
+    /// INK54: serve-plane scheduling arms (`DEFAULT_INK54` = none = the control): il<N>
+    #[arg(long = "ink-p54", default_value = DEFAULT_INK54)]
+    pub ink54: String,
+    /// INK43: rank 0 prints every served prompt's prefill timeline (`INK43 req`: admit -> each
+    /// chunk's host gap / forward / seam read / drafter append, each phase drained by a stream
+    /// sync -> the first token's reply); a diagnostic, the served bytes are unchanged
+    #[arg(long)]
+    pub ink_p43_trace: bool,
     /// INK39: the multi-sequence verify levers (comma list, `cat` = THE DEFAULT, `none` = the control):
     /// `cat` = a > 8-row multi verify's attention projections as the merged group GEMMs (byte-equal:
     /// every output its own sequential sum), `push` = its reduces as `ink_p2p_push_v5` (byte-equal
@@ -524,12 +604,44 @@ impl InkFlags {
         self.ink_mtp.is_none() && self.ink_mtp_gate == "auto" && self.draft_vocab() > 0
     }
 
-    /// INK34: the serve plane's `--ink-mtp-gate` after the `auto` rule (empty = off).
+    /// INK34: the serve plane's `--ink-mtp-gate` after the `auto` rule (empty = off). INK51: the
+    /// DFlash2 drafter's default gate is `DEFAULT_INK_DF2_GATE`.
     pub fn mtp_gate_spec(&self) -> &str {
         match self.ink_mtp_gate.as_str() {
+            "auto" if self.default_gate_on() && self.ink_drafter == "dflash2" => {
+                DEFAULT_INK_DF2_GATE
+            }
             "auto" if self.default_gate_on() => DEFAULT_INK_MTP_GATE,
             "auto" => "",
             s => s,
+        }
+    }
+
+    /// INK51: the drafter's block-layer form after the `auto` rule (`iu8` under DFlash2, `w8`
+    /// under DSpark; [`InkFlags::resolved`] drops `iu8` on a pack without its section).
+    pub fn draft_layers(&self) -> &str {
+        match self.ink_draft_layers.as_str() {
+            "auto" if self.ink_drafter == "dflash2" => DEFAULT_INK_DF2_LAYERS,
+            "auto" => DEFAULT_INK_DRAFT_LAYERS,
+            s => s,
+        }
+    }
+
+    /// INK48: `--ink-drafter dspark | dflash2` -> the DFlash2 pack dir (None = DSpark). INK51:
+    /// call it on [`InkFlags::resolved`]'s flags (an `auto` drafter is resolved there).
+    pub fn dflash2(&self) -> anyhow::Result<Option<PathBuf>> {
+        match self.ink_drafter.as_str() {
+            "dspark" => Ok(None),
+            "dflash2" => {
+                let p = self.ink_dflash2_path.clone().context(
+                    "--ink-drafter dflash2 needs --ink-dflash2-path <dir> (or a pack at \
+                     <pack>/dflash2 or <pack>/../inkling-2-mini-dflash2)",
+                )?;
+                df2_pack_iu8(&p)?;
+                Ok(Some(p))
+            }
+            "auto" => anyhow::bail!("--ink-drafter auto: unresolved (InkFlags::resolved)"),
+            o => anyhow::bail!("--ink-drafter {o:?}: auto (the default) | dflash2 | dspark"),
         }
     }
 
@@ -545,6 +657,65 @@ impl InkFlags {
     pub fn resolved(&self, pack_dir: &Path) -> (Self, Vec<String>) {
         let mut f = self.clone();
         let mut said = Vec::new();
+        // INK51: the drafter (`auto` -> dflash2 when its pack is named or found, else dspark);
+        // the `--ink-run` harness reads `auto` as dspark (INK34's rule for the gate: its gates
+        // name the drafter they measure)
+        if f.ink_drafter == "auto" && f.ink_serve.is_none() {
+            f.ink_drafter = "dspark".into();
+        }
+        if f.ink_drafter != "dspark" && f.ink_dflash2_path.is_none() {
+            f.ink_dflash2_path = DF2_DISCOVER
+                .iter()
+                .map(|c| pack_dir.join(c))
+                .find(|p| p.join("manifest.json").is_file());
+        }
+        if f.ink_drafter == "auto" {
+            match f.ink_dflash2_path.as_deref().map(df2_pack_iu8) {
+                Some(Ok(iu8)) => {
+                    f.ink_drafter = "dflash2".into();
+                    if f.ink_draft_layers == "auto" && !iu8 {
+                        f.ink_draft_layers = DEFAULT_INK_DRAFT_LAYERS.into();
+                        said.push(
+                            "INK51 drafter: the DFlash2 pack has no iu8 section: layers STAND \
+                             DOWN to w8 (rebuild with tools/pack/build_ink2_dflash2.py)"
+                                .into(),
+                        );
+                    }
+                    said.push(format!(
+                        "INK51 drafter: dflash2 (the default) from {} (layers {}, gate {}; \
+                         `{INK51_CONTROL}` = the rollback)",
+                        f.ink_dflash2_path.as_deref().unwrap_or(pack_dir).display(),
+                        f.draft_layers(),
+                        if f.default_gate_on() {
+                            DEFAULT_INK_DF2_GATE
+                        } else {
+                            f.ink_mtp_gate.as_str()
+                        }
+                    ));
+                }
+                found => {
+                    f.ink_drafter = "dspark".into();
+                    f.ink_dflash2_path = None;
+                    said.push(match found {
+                        Some(Err(e)) => format!(
+                            "INK51 drafter: STANDS DOWN to dspark (the DFlash2 pack is refused: {e:#})"
+                        ),
+                        _ => format!(
+                            "INK51 drafter: STANDS DOWN to dspark (no DFlash2 pack at {}; \
+                             tools/fetch_packs.sh inkling fetches it)",
+                            DF2_DISCOVER
+                                .iter()
+                                .map(|c| pack_dir.join(c).display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(" or ")
+                        ),
+                    });
+                }
+            }
+        }
+        if f.ink_drafter == "dspark" {
+            f.ink_dflash2_path = None;
+        }
         let draft = pack_dir.join("draft");
         let has_draft = draft.join("manifest.json").is_file();
         if f.ink_mtp.is_none() && !has_draft {
@@ -572,6 +743,26 @@ impl InkFlags {
         }
         (f, said)
     }
+}
+
+/// INK51: a DFlash2 drafter pack's manifest (`ink2-dflash2/1`) -> whether it carries INK50's
+/// `iu8` section (the W8A8 layer form).
+pub fn df2_pack_iu8(dir: &Path) -> anyhow::Result<bool> {
+    let m = dir.join("manifest.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&m).with_context(|| {
+        format!(
+            "{}: no DFlash2 drafter pack manifest (tools/pack/build_ink2_dflash2.py)",
+            m.display()
+        )
+    })?)
+    .with_context(|| format!("{}: not JSON", m.display()))?;
+    ensure!(
+        v["format"] == DF2_PACK_FORMAT,
+        "{}: format {} (want {DF2_PACK_FORMAT})",
+        m.display(),
+        v["format"]
+    );
+    Ok(v["iu8"]["records"].is_object())
 }
 
 impl Default for InkFlags {
@@ -621,7 +812,9 @@ impl Default for InkFlags {
             ink_mtp: None,
             ink_draft_vocab: None,
             ink_draft_gemv: DEFAULT_INK_DRAFT_GEMV.into(),
-            ink_draft_layers: DEFAULT_INK_DRAFT_LAYERS.into(),
+            ink_draft_layers: "auto".into(),
+            ink_drafter: "auto".into(),
+            ink_dflash2_path: None,
             ink_cache_ctx: 512,
             ink_split: false,
             ink_capture: false,
@@ -645,6 +838,11 @@ impl Default for InkFlags {
             ink36: DEFAULT_INK36.into(),
             ink37: DEFAULT_INK37.into(),
             ink40: DEFAULT_INK40.into(),
+            ink49: DEFAULT_INK49.into(),
+            ink55: DEFAULT_INK55.into(),
+            ink54: DEFAULT_INK54.into(),
+            ink43: DEFAULT_INK43.into(),
+            ink_p43_trace: false,
             ink_p39: DEFAULT_INK_P39.into(),
             ink_sampler: "seam".into(),
             ink_first_token: DEFAULT_INK_FIRST_TOKEN.into(),
@@ -1559,5 +1757,115 @@ mod tests {
         let (r, said) = x.resolved(pack);
         assert_eq!((r.mtp(), r.draft_vocab()), (3, 16_384));
         assert!(said.is_empty());
+    }
+
+    /// INK51: the served drafter is DFlash2 iu8 at `prod:0.4:2` depth 7 when its pack is found
+    /// (`<pack>/dflash2`, then `<pack>/../inkling-2-mini-dflash2`) or named, `w8` on a pack
+    /// without the iu8 section, DSpark (by name) when none is found or the found one is refused;
+    /// the harness reads `auto` as DSpark; `--ink-drafter dspark` is the rollback.
+    #[test]
+    fn ink51_the_dflash2_drafter_is_the_served_default_when_its_pack_is_present() {
+        let scratch = saber_test_scratch::ScratchDir::new("ink51-drafter");
+        let root = scratch.path();
+        let pack = root.join("inkling-2-mini-nvfp4");
+        std::fs::create_dir_all(pack.join("draft")).unwrap();
+        std::fs::write(pack.join("draft/manifest.json"), b"{}").unwrap();
+        std::fs::write(
+            pack.join("draft/vocab_rank.u32"),
+            vec![0u8; crate::inkling2_exec::VOCAB * 4],
+        )
+        .unwrap();
+        let serve = InkFlags {
+            ink_serve: Some(8080),
+            ..InkFlags::default()
+        };
+        let df2 = |r: &InkFlags| {
+            (
+                r.ink_drafter.clone(),
+                r.mtp(),
+                r.mtp_gate_spec().to_string(),
+                r.draft_layers().to_string(),
+            )
+        };
+        let dspark = (
+            "dspark".to_string(),
+            7,
+            DEFAULT_INK_MTP_GATE.to_string(),
+            "w8".to_string(),
+        );
+        // no DFlash2 pack: DSpark, said by name
+        let (r, said) = serve.resolved(&pack);
+        assert_eq!(df2(&r), dspark);
+        assert_eq!(r.dflash2().unwrap(), None);
+        assert!(
+            said.len() == 1 && said[0].starts_with("INK51 drafter: STANDS DOWN"),
+            "{said:?}"
+        );
+        // the sibling pack with the iu8 section: DFlash2 iu8 at prod:0.4:2, depth 7
+        let sib = root.join("inkling-2-mini-dflash2");
+        std::fs::create_dir_all(&sib).unwrap();
+        let iu8 = br#"{"format": "ink2-dflash2/1", "iu8": {"law": "x", "records": {}}}"#;
+        std::fs::write(sib.join("manifest.json"), iu8).unwrap();
+        let (r, said) = serve.resolved(&pack);
+        let want = (
+            "dflash2".to_string(),
+            7,
+            "prod:0.4:2".to_string(),
+            "iu8".to_string(),
+        );
+        assert_eq!(df2(&r), want);
+        assert_eq!(
+            r.dflash2().unwrap().as_deref(),
+            Some(pack.join("../inkling-2-mini-dflash2").as_path())
+        );
+        assert!(
+            said.len() == 1 && said[0].starts_with("INK51 drafter: dflash2"),
+            "{said:?}"
+        );
+        // the harness reads auto as DSpark; the rollback and explicit forms are kept
+        let (r, _) = InkFlags::default().resolved(&pack);
+        assert_eq!(r.ink_drafter, "dspark");
+        let rb = InkFlags {
+            ink_drafter: "dspark".into(),
+            ..serve.clone()
+        };
+        let (r, said) = rb.resolved(&pack);
+        assert_eq!(df2(&r), dspark);
+        assert!(said.is_empty(), "{said:?}");
+        let w8 = InkFlags {
+            ink_draft_layers: "w8".into(),
+            ink_mtp_gate: "prod:0.6:2".into(),
+            ..serve.clone()
+        };
+        let (r, _) = w8.resolved(&pack);
+        assert_eq!(df2(&r).3, "w8");
+        assert_eq!(r.mtp_gate_spec(), "prod:0.6:2");
+        // <pack>/dflash2 comes first; a pack without the iu8 section runs w8 (said)
+        std::fs::create_dir_all(pack.join("dflash2")).unwrap();
+        std::fs::write(
+            pack.join("dflash2/manifest.json"),
+            br#"{"format": "ink2-dflash2/1"}"#,
+        )
+        .unwrap();
+        let (r, said) = serve.resolved(&pack);
+        assert_eq!(
+            r.ink_dflash2_path.as_deref(),
+            Some(pack.join("dflash2").as_path())
+        );
+        assert_eq!(df2(&r).3, "w8");
+        assert!(
+            said.iter().any(|l| l.contains("no iu8 section")),
+            "{said:?}"
+        );
+        // a refused pack (wrong format): DSpark, said by name
+        std::fs::write(
+            pack.join("dflash2/manifest.json"),
+            br#"{"format": "other"}"#,
+        )
+        .unwrap();
+        let (r, said) = serve.resolved(&pack);
+        assert_eq!(df2(&r), dspark);
+        assert!(said[0].contains("refused"), "{said:?}");
+        assert_eq!(INK51_CONTROL, "--ink-drafter dspark");
     }
 }
