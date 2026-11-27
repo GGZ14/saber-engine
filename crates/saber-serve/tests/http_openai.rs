@@ -733,6 +733,50 @@ async fn stop_strings_truncate_and_report_stop() {
     assert_eq!(response["choices"][0]["stop_reason"], json!("THREE"));
 }
 
+/// INK50: a stop string ends the choice at the token that completes it, whatever the step width
+/// (a speculative round commits several tokens a step): the ids, the usage and the text are the
+/// one-token-a-step reply's at every width -- the ids past the stop inside the same step are not
+/// reported (INK20's open artifact, INK48's `pp04`).
+#[tokio::test]
+async fn a_stop_string_ends_the_ids_at_its_token_at_every_step_width() {
+    let want: Vec<u32> = bytes_of("one two THREE");
+    for width in [1, 2, 3, 4, 7, 9] {
+        let (base, _engine) = spawn(vec![MockScript::in_steps_of(
+            bytes_of("one two THREE four five"),
+            width,
+            FinishReason::Stop,
+        )])
+        .await;
+        let response: Value = reqwest::Client::new()
+            .post(format!("{base}/v1/chat/completions"))
+            .json(&chat_body(json!({
+                "stop": ["THREE"],
+                "return_token_ids": true,
+                "chat_template_kwargs": {"enable_thinking": false},
+                "max_tokens": 500
+            })))
+            .send()
+            .await
+            .expect("request")
+            .json()
+            .await
+            .expect("json");
+        let choice = &response["choices"][0];
+        assert_eq!(
+            choice["message"]["content"],
+            json!("one two "),
+            "width {width}"
+        );
+        assert_eq!(choice["finish_reason"], json!("stop"), "width {width}");
+        assert_eq!(choice["token_ids"], json!(want), "width {width}");
+        assert_eq!(
+            response["usage"]["completion_tokens"],
+            json!(want.len()),
+            "width {width}"
+        );
+    }
+}
+
 /// The stop-string search starts mid-text; if it started mid-*character* it would
 /// silently find nothing.
 #[tokio::test]

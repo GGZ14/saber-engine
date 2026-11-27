@@ -965,6 +965,32 @@ pub const SEPARATELY_PLANNED: &[(&str, &str)] = &[
          (`saber_cli::inkling2_exec`), never a 27B registry row",
     ),
     (
+        "ink_df2",
+        "Inkling 2 (`inkling2_loop` packs): the DFlash2 drafter's bodies, named by the Inkling \
+         drafter's own emitters (`saber_cli::inkling2_df2` / `inkling2_draft`), never a 27B \
+         registry row",
+    ),
+    (
+        "ink_fa55",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_ks49",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_ks54",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
+        "ink_xw55",
+        "Inkling 2 (`inkling2_loop` packs): named by the Inkling path's own emitter \
+         (`saber_cli::inkling2_exec`), never a 27B registry row",
+    ),
+    (
         "moe_grouped_far",
         "FN137: FN80b-1's half-width fused back half with the MoE-out all-reduce fused into its \
          combine slices (`--fn-moe-ar-push on`; the shipped body + the exact one-shot's vadd, \

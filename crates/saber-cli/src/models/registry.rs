@@ -605,7 +605,8 @@ mod tests {
     #[test]
     fn the_shipped_registry_is_valid() {
         let r = Registry::load(None).unwrap();
-        assert_eq!(r.default_entry().name, "Qwen3.8-27B-MACaQ-W4A8-SABER");
+        assert_eq!(r.default_entry().name, "Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER");
+        // the NARI3 re-calibration keeps the model id clients send
         assert_eq!(
             r.default_entry().served_id.as_deref(),
             Some("Qwen3.8-27B-MACaQ-W4A8-SABER")
@@ -620,7 +621,7 @@ mod tests {
             .iter()
             .filter(|e| e.kind == Kind::Drafter)
             .collect();
-        assert_eq!((targets.len(), drafters.len()), (2, 2));
+        assert_eq!((targets.len(), drafters.len()), (3, 2));
         for e in &r.entries {
             assert_eq!(e.tps(), vec![1, 2], "{}", e.name);
             assert_eq!(e.origin, Origin::Shipped);
@@ -632,7 +633,9 @@ mod tests {
         let r = Registry::load(None).unwrap();
         for (k, want) in [
             ("w4a8", "Qwen3.8-27B-MACaQ-W4A8-SABER"),
-            ("default", "Qwen3.8-27B-MACaQ-W4A8-SABER"),
+            ("default", "Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER"),
+            ("27b", "Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER"),
+            ("NARI3", "Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER"),
             ("W4A8", "Qwen3.8-27B-MACaQ-W4A8-SABER"),
             ("mxfp4", "Qwen3.8-27B-MACaQ-MXFP4-SABER"),
             (
@@ -699,20 +702,23 @@ decode_widths = "1"
         assert_eq!(r.resolve("w4a8").unwrap().name, "mine");
         // the shipped entry is still there under its other names
         assert_eq!(
-            r.resolve("27b").unwrap().name,
+            r.resolve("macaq-w4a8").unwrap().name,
             "Qwen3.8-27B-MACaQ-W4A8-SABER"
         );
-        assert_eq!(r.entries.len(), 5);
+        assert_eq!(r.entries.len(), 6);
     }
 
     #[test]
     fn a_user_entry_replaces_a_shipped_one_by_name() {
         let text = MINE
-            .replace("name = \"mine\"", "name = \"qwen3.8-27b-macaq-w4a8-saber\"")
+            .replace(
+                "name = \"mine\"",
+                "name = \"qwen3.8-27b-macaq-w4a8-nari3-saber\"",
+            )
             .replace("default = \"mine\"", "");
         let r = user(&text).unwrap();
-        assert_eq!(r.entries.len(), 4);
-        let e = r.resolve("Qwen3.8-27B-MACaQ-W4A8-SABER").unwrap();
+        assert_eq!(r.entries.len(), 5);
+        let e = r.resolve("Qwen3.8-27B-MACaQ-W4A8-NARI3-SABER").unwrap();
         assert_eq!(e.served_id.as_deref(), Some("Mine"));
         assert_eq!(e.origin, Origin::User);
         // the shipped default named it; it now resolves to the user's entry

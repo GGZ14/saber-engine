@@ -1,0 +1,297 @@
+schema_version = 1
+plugin = "ink_xw55"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/ink_xw55.hip"
+source_sha256 = "e70e3493b5fe27ebff25eb506a65b2693a0b3a26dc115e5dc0800eee4d25a129"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "d84a53f661f5c33dd6aa2e50d9641cfeb6f0e781211d96ad7efcf8e7bffb8d89"
+hsaco = "ink_xw55.hsaco"
+hsaco_sha256 = "f8d5453eddecb0a20d93399bad1da665cea220fd1db1f3cd4d49fd828a50fd12"
+
+[[kernel]]
+name = "ink_xw55_b16"
+symbol = "ink_xw55_b16.kd"
+kernarg_segment_size = 328
+kernarg_segment_align = 8
+group_segment_fixed_size = 4
+private_segment_fixed_size = 0
+vgpr_count = 31
+sgpr_count = 52
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "own"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "mywin"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "peerwin"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "slot_dw"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "np"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "link"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "peer_link"
+
+[[kernel]]
+name = "ink_xw55_c16"
+symbol = "ink_xw55_c16.kd"
+kernarg_segment_size = 328
+kernarg_segment_align = 8
+group_segment_fixed_size = 8328
+private_segment_fixed_size = 0
+vgpr_count = 57
+sgpr_count = 56
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "own"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "mywin"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "peerwin"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "slot_dw"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "np"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "link"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "peer_link"
+
+[[kernel]]
+name = "ink_xw55_c32"
+symbol = "ink_xw55_c32.kd"
+kernarg_segment_size = 328
+kernarg_segment_align = 8
+group_segment_fixed_size = 8328
+private_segment_fixed_size = 0
+vgpr_count = 57
+sgpr_count = 54
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "own"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "mywin"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "peerwin"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "slot_dw"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "np"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "link"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "peer_link"
+
+[[kernel]]
+name = "ink_xw55_f32"
+symbol = "ink_xw55_f32.kd"
+kernarg_segment_size = 328
+kernarg_segment_align = 8
+group_segment_fixed_size = 4
+private_segment_fixed_size = 0
+vgpr_count = 28
+sgpr_count = 54
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "own"
+
+[[kernel.arg]]
+offset = 8
+size = 8
+value_kind = "global_buffer"
+name = "mywin"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "peerwin"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "by_value"
+name = "slot_dw"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "out"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel.arg]]
+offset = 44
+size = 4
+value_kind = "by_value"
+name = "cols"
+
+[[kernel.arg]]
+offset = 48
+size = 4
+value_kind = "by_value"
+name = "np"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "link"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "peer_link"

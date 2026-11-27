@@ -37,11 +37,11 @@ pub const FN_AGENT_DEFAULTS: &[(&str, Option<&str>)] = &[
 /// flag would leave the engine's default, on, in place.
 pub const ON_OFF_FLAGS: &[&str] = &["--enable-prefix-caching"];
 
-/// The 27B at TP=2: `tools/serve_27b.sh`'s default packs (the MACaQ W4A8-iu8 target and the
+/// The 27B at TP=2: `tools/serve_27b.sh`'s default packs (the MACaQ W4A8-iu8 NARI3 target and the
 /// W4A8-iu8 DFlash2 drafter) and its served model id.
 pub mod tp2 {
     /// The target pack (under `<nvme>/saber-packs`, mounted at `/packs`).
-    pub const PACK: &str = "qwen38-27b-macaq-w4a8";
+    pub const PACK: &str = "qwen38-27b-macaq-w4a8-nari3";
     /// The DFlash2 drafter pack.
     pub const DRAFT_PACK: &str = "qwen38-dflash2-drafter-w4a8";
 }
@@ -53,8 +53,8 @@ pub const QWEN27B_MODEL: &str = "Qwen3.8-27B-MACaQ-W4A8-SABER";
 /// weights, the single-card context / sequence / batch ladder, its container name).
 pub mod tp1 {
     /// The single-card target pack (under `<nvme>/saber-packs`, mounted at `/packs`): the
-    /// MACaQ W4A8-iu8 pack.
-    pub const PACK: &str = "qwen38-27b-macaq-w4a8-tp1";
+    /// MACaQ W4A8-iu8 NARI3 pack.
+    pub const PACK: &str = "qwen38-27b-macaq-w4a8-nari3-tp1";
     /// The single-card DFlash2 drafter pack (the W4A8-iu8 drafter).
     pub const DRAFT_PACK: &str = "qwen38-dflash2-drafter-w4a8-tp1";
     /// Per-sequence context: one conversation of up to 128k tokens (the user's default of

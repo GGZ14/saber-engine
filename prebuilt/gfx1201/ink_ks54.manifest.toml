@@ -1,0 +1,651 @@
+schema_version = 1
+plugin = "ink_ks54"
+arch = "gfx1201"
+source = "crates/saber-kernels/hip/ink_ks54.hip"
+source_sha256 = "5f506105bf02356f2f89f1cf36d0f157147be55311d43c7b2ef4d3b0a275be2e"
+flags = "--genco --offload-arch=gfx1201 -O3 -ffp-contract=off"
+build_hash = "d5fd3030f12bb4fd29dc7d02c0e32d21d11c03830af9b2493d28f53ba5fdcf53"
+hsaco = "ink_ks54.hsaco"
+hsaco_sha256 = "a43654ba1aee367f70c716c7a013d183c0cb75b09d9a660846eaede5c2c34227"
+
+[[kernel]]
+name = "ink_ks54_rv1"
+symbol = "ink_ks54_rv1.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 46368
+private_segment_fixed_size = 0
+vgpr_count = 254
+sgpr_count = 66
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ld_q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "k_pool"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "v_pool"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "table"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "table_ld"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "row_seq"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "row_pos"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "rp"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "ld_rp"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "global_buffer"
+name = "p"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "sink"
+
+[[kernel.arg]]
+offset = 96
+size = 4
+value_kind = "by_value"
+name = "ld_sink"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 112
+size = 4
+value_kind = "by_value"
+name = "ld_o"
+
+[[kernel.arg]]
+offset = 116
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 120
+size = 4
+value_kind = "by_value"
+name = "kv"
+
+[[kernel.arg]]
+offset = 124
+size = 4
+value_kind = "by_value"
+name = "extent"
+
+[[kernel.arg]]
+offset = 128
+size = 4
+value_kind = "by_value"
+name = "window"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "smax"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "thresh"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "segmin"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel]]
+name = "ink_ks54_rv1r4"
+symbol = "ink_ks54_rv1r4.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 39584
+private_segment_fixed_size = 0
+vgpr_count = 240
+sgpr_count = 52
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ld_q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "k_pool"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "v_pool"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "table"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "table_ld"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "row_seq"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "row_pos"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "rp"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "ld_rp"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "global_buffer"
+name = "p"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "sink"
+
+[[kernel.arg]]
+offset = 96
+size = 4
+value_kind = "by_value"
+name = "ld_sink"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 112
+size = 4
+value_kind = "by_value"
+name = "ld_o"
+
+[[kernel.arg]]
+offset = 116
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 120
+size = 4
+value_kind = "by_value"
+name = "kv"
+
+[[kernel.arg]]
+offset = 124
+size = 4
+value_kind = "by_value"
+name = "extent"
+
+[[kernel.arg]]
+offset = 128
+size = 4
+value_kind = "by_value"
+name = "window"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "smax"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "thresh"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "segmin"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel]]
+name = "ink_ks54_rv3"
+symbol = "ink_ks54_rv3.kd"
+kernarg_segment_size = 160
+kernarg_segment_align = 8
+group_segment_fixed_size = 56864
+private_segment_fixed_size = 0
+vgpr_count = 255
+sgpr_count = 70
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ld_q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "k_pool"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "v_pool"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "table"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "table_ld"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "row_seq"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "row_pos"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "rp"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "ld_rp"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "global_buffer"
+name = "p"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "sink"
+
+[[kernel.arg]]
+offset = 96
+size = 4
+value_kind = "by_value"
+name = "ld_sink"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 112
+size = 4
+value_kind = "by_value"
+name = "ld_o"
+
+[[kernel.arg]]
+offset = 116
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 120
+size = 4
+value_kind = "by_value"
+name = "kv"
+
+[[kernel.arg]]
+offset = 124
+size = 4
+value_kind = "by_value"
+name = "extent"
+
+[[kernel.arg]]
+offset = 128
+size = 4
+value_kind = "by_value"
+name = "window"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "smax"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "thresh"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "segmin"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "rows"
+
+[[kernel]]
+name = "ink_ks54_short"
+symbol = "ink_ks54_short.kd"
+kernarg_segment_size = 416
+kernarg_segment_align = 8
+group_segment_fixed_size = 2656
+private_segment_fixed_size = 0
+vgpr_count = 72
+sgpr_count = 42
+wavefront_size = 32
+max_flat_workgroup_size = 256
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "q"
+
+[[kernel.arg]]
+offset = 8
+size = 4
+value_kind = "by_value"
+name = "ld_q"
+
+[[kernel.arg]]
+offset = 16
+size = 8
+value_kind = "global_buffer"
+name = "k_pool"
+
+[[kernel.arg]]
+offset = 24
+size = 8
+value_kind = "global_buffer"
+name = "v_pool"
+
+[[kernel.arg]]
+offset = 32
+size = 8
+value_kind = "global_buffer"
+name = "table"
+
+[[kernel.arg]]
+offset = 40
+size = 4
+value_kind = "by_value"
+name = "table_ld"
+
+[[kernel.arg]]
+offset = 48
+size = 8
+value_kind = "global_buffer"
+name = "row_seq"
+
+[[kernel.arg]]
+offset = 56
+size = 8
+value_kind = "global_buffer"
+name = "row_pos"
+
+[[kernel.arg]]
+offset = 64
+size = 8
+value_kind = "global_buffer"
+name = "rp"
+
+[[kernel.arg]]
+offset = 72
+size = 4
+value_kind = "by_value"
+name = "ld_rp"
+
+[[kernel.arg]]
+offset = 80
+size = 8
+value_kind = "global_buffer"
+name = "p"
+
+[[kernel.arg]]
+offset = 88
+size = 8
+value_kind = "global_buffer"
+name = "sink"
+
+[[kernel.arg]]
+offset = 96
+size = 4
+value_kind = "by_value"
+name = "ld_sink"
+
+[[kernel.arg]]
+offset = 104
+size = 8
+value_kind = "global_buffer"
+name = "o"
+
+[[kernel.arg]]
+offset = 112
+size = 4
+value_kind = "by_value"
+name = "ld_o"
+
+[[kernel.arg]]
+offset = 116
+size = 4
+value_kind = "by_value"
+name = "h"
+
+[[kernel.arg]]
+offset = 120
+size = 4
+value_kind = "by_value"
+name = "kv"
+
+[[kernel.arg]]
+offset = 124
+size = 4
+value_kind = "by_value"
+name = "extent"
+
+[[kernel.arg]]
+offset = 128
+size = 4
+value_kind = "by_value"
+name = "window"
+
+[[kernel.arg]]
+offset = 136
+size = 8
+value_kind = "global_buffer"
+name = "part"
+
+[[kernel.arg]]
+offset = 144
+size = 4
+value_kind = "by_value"
+name = "smax"
+
+[[kernel.arg]]
+offset = 148
+size = 4
+value_kind = "by_value"
+name = "thresh"
+
+[[kernel.arg]]
+offset = 152
+size = 4
+value_kind = "by_value"
+name = "segmin"
+
+[[kernel.arg]]
+offset = 156
+size = 4
+value_kind = "by_value"
+name = "r"
+
+[[kernel]]
+name = "ink_wake54"
+symbol = "ink_wake54.kd"
+kernarg_segment_size = 8
+kernarg_segment_align = 8
+group_segment_fixed_size = 0
+private_segment_fixed_size = 0
+vgpr_count = 2
+sgpr_count = 3
+wavefront_size = 32
+max_flat_workgroup_size = 32
+
+[[kernel.arg]]
+offset = 0
+size = 8
+value_kind = "global_buffer"
+name = "peer_word"

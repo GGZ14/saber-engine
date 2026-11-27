@@ -272,6 +272,14 @@ pub fn rule_table_for_plugin(plugin: &str) -> Option<&'static str> {
         "ink_fa35" => "noop_gfx1201.toml",
         // INK37: the prefill levers (128-row route sort for moe_fn153's pf tiles, the R-row router).
         "ink_p37" => "noop_gfx1201.toml",
+        // INK49: split-key decode attention (target global layers + the drafter; a numerics arm).
+        "ink_ks49" => "noop_gfx1201.toml",
+        // INK55: the prefill reduce wire (staged push, f32 / bf16, raw / exponent-group coded).
+        "ink_xw55" => "noop_gfx1201.toml",
+        // INK55 task C: the key-split prefill attention (global layers, late chunks; a numerics arm).
+        "ink_fa55" => "noop_gfx1201.toml",
+        // INK54: the row-shared split-key verify attention (byte-equal to ink_ks49_part's rows).
+        "ink_ks54" => "noop_gfx1201.toml",
         // INK17: the fused T-row verify consumer (ink_xsd for chained rows of one sequence).
         "ink_vt" => "noop_gfx1201.toml",
         // INK28: the decode route on one workgroup a row (byte-equal to ink_route_fused / _rt).
@@ -288,6 +296,8 @@ pub fn rule_table_for_plugin(plugin: &str) -> Option<&'static str> {
         "ink_dr5" => "noop_gfx1201.toml",
         // INK33: the drafter's fold + argmax with the draft's top-1 probability (the gated depth).
         "ink_dr6" => "noop_gfx1201.toml",
+        // INK48: the DFlash2 drafter's glue (context ring, convs, windowed attention, top 16, walk).
+        "ink_df2" => "noop_gfx1201.toml",
         // INK18: ink_xsd / ink_xsdc with the pushed-window loads after one acquire.
         "ink_xl" => "noop_gfx1201.toml",
         // INK12: the block drafter's bodies + the verify's conv-state rollback (hist / commit).
@@ -827,6 +837,10 @@ pub mod prebuilt {
         ("ink_p29.hsaco", "ink29_gemm_i8_kx3"),
         ("ink_fa35.hsaco", "ink_fa35_wm"),
         ("ink_p37.hsaco", "ink37_post_norm_route_e128_r4"),
+        ("ink_ks49.hsaco", "ink_ks49_part"),
+        ("ink_xw55.hsaco", "ink_xw55_c32"),
+        ("ink_fa55.hsaco", "ink_fa55_ks128"),
+        ("ink_ks54.hsaco", "ink_ks54_rv1"),
         ("ink_vt.hsaco", "ink_xsdc"),
         ("ink_dr2.hsaco", "ink_dr_gemv_sk_bf16"),
         ("ink_mv.hsaco", "ink_mv_sconv"),
@@ -834,6 +848,7 @@ pub mod prebuilt {
         ("ink_dr4.hsaco", "ink_dr4_mm_w8"),
         ("ink_dr5.hsaco", "ink_dr5_scatter"),
         ("ink_dr6.hsaco", "ink_dr6_fold_p"),
+        ("ink_df2.hsaco", "ink_df2_attn"),
         ("ink_xl.hsaco", "ink_xsd_l"),
         ("ink_draft.hsaco", "ink_dr_attn"),
         // MACFN9: the MACaQ prefill tiles (tools/gen_macfn9_pf.py; tools/capture/macfn9/m9probe.py).

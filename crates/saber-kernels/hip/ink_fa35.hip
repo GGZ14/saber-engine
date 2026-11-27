@@ -36,7 +36,16 @@ __device__ __forceinline__ float wm_bf(unsigned short u) {
   return __builtin_bit_cast(float, static_cast<unsigned>(u) << 16);
 }
 
-template <int NW>
+// LEAN (ISA51, wm32's form): two address forms with the same values, so the same loads, the same LDS
+// tile and the same arithmetic (byte-equal by construction):
+//   * a staged tile's 32 keys start at a multiple of 32 (jbeg and the step are 32-aligned), so they
+//     sit in ONE 64-key page -- its row is read once a tile, not once a chunk;
+//   * the band-bias gather index dd = l16 - 16 s - 8 hh - e + 31 lies in [0, 46] for every lane, s
+//     and e, so the min / max clamp never binds and the 16 reads are one per-lane base + constant
+//     offsets.
+// Without it the compiler hoisted 16 gather addresses + 8 page rows out of the tile loop and wm32
+// (8 staging chunks a thread) spilled 7 VGPRs (256 VGPRs, 32 B scratch; INK35 / CONS40).
+template <int NW, bool LEAN>
 __device__ __forceinline__ void fa35_body(
     const unsigned short* __restrict__ q, int ld_q, const unsigned short* __restrict__ k_pool,
     const unsigned short* __restrict__ v_pool, const int* __restrict__ table, int table_ld,
@@ -95,7 +104,29 @@ __device__ __forceinline__ void fa35_body(
   const int jbeg = lo0 & ~(WM_KT - 1);
   // staging: chunk c = tid + 128 i (i 0..3): key c >> 4, part c & 15 (8 values)
   uint4 kr[NC], vr[NC];
+  static_assert(WM_PAGE % WM_KT == 0, "a staged tile must sit in one page (LEAN)");
+  // LEAN: chunk i's key = (tid >> 4) + (NT / 16) i and part = tid & 15 (NT % 16 == 0), so a chunk's
+  // element offset is the thread's tile base + i (NT / 16) C, a wave-uniform step
+  static_assert(NT % 16 == 0, "LEAN chunk map");
+  const int kb = tid >> 4, pb = tid & 15;
   auto load = [&](int j0) {
+    if (LEAN) {
+      const long prow0 = (long)table[(long)sq * table_ld + j0 / WM_PAGE] * WM_PAGE + j0 % WM_PAGE;
+      const unsigned short* kp = k_pool + (prow0 + kb) * C + kvh * WM_HD + pb * 8;
+      const unsigned short* vp = v_pool + (prow0 + kb) * C + kvh * WM_HD + pb * 8;
+#pragma unroll
+      for (int i = 0; i < NC; ++i) {
+        if (j0 + kb + (NT / 16) * i <= pos_last) {
+          const long step = (long)((NT / 16) * i) * C;
+          kr[i] = *reinterpret_cast<const uint4*>(kp + step);
+          vr[i] = *reinterpret_cast<const uint4*>(vp + step);
+        } else {
+          kr[i] = uint4{0u, 0u, 0u, 0u};
+          vr[i] = uint4{0u, 0u, 0u, 0u};
+        }
+      }
+      return;
+    }
 #pragma unroll
     for (int i = 0; i < NC; ++i) {
       const int c = tid + NT * i, key = c >> 4, part = c & 15;
@@ -114,7 +145,8 @@ __device__ __forceinline__ void fa35_body(
   auto store = [&]() {
 #pragma unroll
     for (int i = 0; i < NC; ++i) {
-      const int c = tid + NT * i, key = c >> 4, part = c & 15;
+      const int c = tid + NT * i;
+      const int key = LEAN ? kb + (NT / 16) * i : c >> 4, part = LEAN ? pb : c & 15;
       *reinterpret_cast<uint4*>(&Ks[key][part * 8]) = kr[i];
       const unsigned wv[4] = {vr[i].x, vr[i].y, vr[i].z, vr[i].w};
 #pragma unroll
@@ -176,8 +208,13 @@ __device__ __forceinline__ void fa35_body(
         const int kj = j0 + 16 * s + 8 * hh + e;
         float v = sc[s][e] * scale;
         if (bias) {
-          const int dd = min(max(l16 - 16 * s - 8 * hh - e + (WM_KT - 1), 0), 47);
-          v = v + Gs[w][l16][dd];
+          if (LEAN) {
+            // dd = (l16 - 8 hh + 8) + (23 - 16 s - e), both terms >= 0
+            v = v + (&Gs[w][l16][l16 - 8 * hh + 8])[23 - 16 * s - e];
+          } else {
+            const int dd = min(max(l16 - 16 * s - 8 * hh - e + (WM_KT - 1), 0), 47);
+            v = v + Gs[w][l16][dd];
+          }
         }
         v = (kj <= prow && kj >= plo) ? v * LOG2E : -INFINITY;
         sc[s][e] = v;
@@ -230,21 +267,22 @@ __device__ __forceinline__ void fa35_body(
   }
 }
 
-#define FA35_KERNEL(NAME, NW)                                                                      \
+#define FA35_KERNEL(NAME, NW, LN)                                                                    \
   extern "C" __global__ __launch_bounds__(32 * NW) void NAME(                                      \
       const unsigned short* __restrict__ q, int ld_q, const unsigned short* __restrict__ k_pool,   \
       const unsigned short* __restrict__ v_pool, const int* __restrict__ table, int table_ld,      \
       const int* __restrict__ row_seq, const int* __restrict__ row_pos, const float* __restrict__ rp, \
       int ld_rp, const unsigned short* __restrict__ P, const float* __restrict__ sink, int ld_sink, \
       float* __restrict__ o, int ld_o, int T, int H, int KV, int extent, int window) {             \
-    fa35_body<NW>(q, ld_q, k_pool, v_pool, table, table_ld, row_seq, row_pos, rp, ld_rp, P, sink,  \
+    fa35_body<NW, LN>(q, ld_q, k_pool, v_pool, table, table_ld, row_seq, row_pos, rp, ld_rp, P, sink,  \
                   ld_sink, o, ld_o, T, H, KV, extent, window);                                     \
   }
-FA35_KERNEL(ink_fa35_wm, 4)
-FA35_KERNEL(ink_fa35_wm32, 2)
+FA35_KERNEL(ink_fa35_wm, 4, false)
+// ISA51: wm32 runs the LEAN address forms (was 256 VGPRs + 7 spilled, 32 B scratch).
+FA35_KERNEL(ink_fa35_wm32, 2, true)
 // CONS40 `--ink-p40 fa128`: the same body on 128 rows a workgroup (8 waves): every row's tiles, order and
 // arithmetic are wm's (byte-equal by construction), the K / V tiles staged once for twice the rows.
-FA35_KERNEL(ink_fa35_wm128, 8)
+FA35_KERNEL(ink_fa35_wm128, 8, false)
 
 // ------------------------------------------------------------------------------------------------
 //   ink35_gemm_bws_s6  ink_p29's bw GEMM (K = 6 slices of 768, slices summed in order) with the f32

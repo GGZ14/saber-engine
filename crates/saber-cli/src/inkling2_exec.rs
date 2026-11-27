@@ -25,6 +25,7 @@ use saber_exec::loader::{FunctionTable, PluginSet};
 use saber_exec::LoadCounters;
 use saber_hip::{DevicePtr, Event, EventFlags, HipThread, Stream, StreamCaptureMode, StreamFlags};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::inkling2::{InkFlags, Pack, NATIVE_PACK_FORMAT};
 
@@ -57,7 +58,7 @@ const ALPHA: f32 = 0.1;
 const EXT: u64 = 1024;
 
 /// The code objects this path launches.
-pub const PLUGINS: [&str; 29] = [
+pub const PLUGINS: [&str; 35] = [
     "ink_loop",
     "ink_glue",
     "ink_attn",
@@ -87,6 +88,16 @@ pub const PLUGINS: [&str; 29] = [
     "ink_fa35",
     "moe_fn153",
     "ink_p37",
+    "ink_ks49",
+    // INK55: the prefill reduce wire (staged push, f32 / bf16, raw / exponent-group coded)
+    "ink_xw55",
+    // INK55 task C: the key-split prefill attention (global layers, late chunks)
+    "ink_fa55",
+    // INK54: the row-shared split-key verify attention
+    "ink_ks54",
+    // INK48: the DFlash2 drafter's glue + the 27B selector's edge scores
+    "ink_df2",
+    "dflash_selector",
 ];
 
 /// INK10 `--ink-fuse` bits: the push reduce fused into the next sconv + depth (`x`), the route
@@ -168,6 +179,8 @@ const FZ_VT: u64 = 2 * FZ_SITE + 256;
 const FZ_RT: u64 = 2 * FZ_SITE + 288;
 /// INK30: the `wt` stamps (u64 spin ticks, kernel ticks, launch rows; 100 MHz).
 const FZ_WT: u64 = 2 * FZ_SITE + 384;
+/// INK54 (`--ink-p54 wk`): the wake word the PEER stores into before a push (never read).
+const FZ_WAKE: u64 = 2 * FZ_SITE + 448;
 const FZ_BYTES: u64 = 2 * FZ_SITE + 512;
 
 /// `--ink-fuse` -> the bit set (a comma list of `x`, `route`, `gemv`; `all`; `off`).
@@ -413,6 +426,283 @@ pub fn ink40_bits(v: &str) -> anyhow::Result<(u32, u64)> {
         };
     }
     Ok((b, fam))
+}
+
+/// INK49 `--ink-p49`: the split-key decode attention (target global layers `tgt`, the drafter
+/// `dr`), S = 1 at <= `thresh` keys, the target's workgroup goal `wg`, the minimum segment `segmin`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct P49 {
+    pub tgt: bool,
+    pub dr: bool,
+    pub thresh: u64,
+    pub wg: u64,
+    pub segmin: u64,
+    /// INK54 `rv1` / `rv3` / `rv4`: a verify launch (T > 1 rows) of the target's split runs the row-shared
+    /// body with 1 / 3 query heads a workgroup (`ink_ks54_rv<N>`, byte-equal rows); 0 = INK49's.
+    pub rv: u8,
+}
+
+pub const P49_OFF: P49 = P49 {
+    tgt: false,
+    dr: false,
+    thresh: 2048,
+    wg: 512,
+    segmin: 512,
+    rv: 0,
+};
+
+impl Default for P49 {
+    fn default() -> Self {
+        P49_OFF
+    }
+}
+
+/// INK55 `--ink-p55`: the prefill reduce wire. `mode` = the kernel form (None = the control:
+/// `ink_p2p_xchg_v4`'s pull), `parts` = the stage count, `min_rows` = the smallest reduce it takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct P55 {
+    pub mode: Option<u8>,
+    pub parts: u32,
+    pub min_rows: u64,
+    /// task C: the global layers' wm128 prefill attention cut into `ks` key segments (0 = off, the
+    /// control) once the chunk starts at >= `ks_floor` (`ink_fa55_ks128` + `ink_fa55_comb`)
+    pub ks: u64,
+    pub ks_floor: u64,
+}
+
+pub const P55_OFF: P55 = P55 {
+    mode: None,
+    // INK55 x2: one stage measured fastest at every size (a stage's system-scope release costs more
+    // than the fold it overlaps)
+    parts: 1,
+    // above the largest decode / verify form (8 sequences x 8 rows): a captured graph never takes it
+    min_rows: 128,
+    ks: 0,
+    ks_floor: 8192,
+};
+
+impl Default for P55 {
+    fn default() -> Self {
+        P55_OFF
+    }
+}
+
+/// INK55: the kernel of a wire mode (`hip/ink_xw55.hip`'s MODE 0..3).
+pub const P55_SYM: [&str; 4] = [
+    "ink_xw55_f32",
+    "ink_xw55_c32",
+    "ink_xw55_b16",
+    "ink_xw55_c16",
+];
+/// INK55: a block's window stride in dwords by mode (raw size; the header dwords of the coded forms).
+pub const P55_STRIDE: [u64; 4] = [2048, 2080, 1024, 1056];
+/// INK55: values a block (256 threads x 8).
+pub const P55_BLK: u64 = 2048;
+/// INK55: rows a window slot holds (a 2,048-row chunk + a mixed step's decode rows); above it the
+/// reduce stands down to the control's pull (counted).
+pub const P55_ROWS: u64 = 2304;
+
+pub fn ink55_bits(v: &str) -> anyhow::Result<P55> {
+    let mut p = P55_OFF;
+    for it in v
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && *x != "none")
+    {
+        let num = |o: &str| -> anyhow::Result<u64> {
+            o[1..]
+                .parse()
+                .ok()
+                .filter(|&n: &u64| n > 0)
+                .with_context(|| format!("--ink-p55 {o:?}: {}<N>, N > 0", &o[..1]))
+        };
+        match it {
+            "x32" => p.mode = Some(0),
+            "c32" => p.mode = Some(1),
+            "b16" => p.mode = Some(2),
+            "c16" => p.mode = Some(3),
+            o if o.starts_with('p') => {
+                let n = num(o)?;
+                ensure!(n <= 8, "--ink-p55 {o:?}: p<N>, N in 1..8");
+                p.parts = u32::try_from(n)?;
+            }
+            o if o.starts_with("kf") => {
+                p.ks_floor = o[2..]
+                    .parse()
+                    .with_context(|| format!("--ink-p55 {o:?}: kf<N>"))?
+            }
+            o if o.starts_with('k') => {
+                p.ks = num(o)?;
+                ensure!(
+                    (2..=P55_KS_MAX).contains(&p.ks),
+                    "--ink-p55 {o:?}: k<S>, S in 2..{P55_KS_MAX}"
+                );
+            }
+            o if o.starts_with('r') => {
+                p.min_rows = num(o)?;
+                ensure!(
+                    p.min_rows >= 9,
+                    "--ink-p55 {o:?}: r<N>, N >= 9 (the decode rows stay on v4)"
+                );
+            }
+            o => anyhow::bail!(
+                "--ink-p55 item {o:?}: x32 | c32 | b16 | c16 | p<N> | r<N> | k<S> | kf<N> | none"
+            ),
+        }
+    }
+    Ok(p)
+}
+
+/// INK55 task C: the most key segments (the partial buffer's bound).
+pub const P55_KS_MAX: u64 = 8;
+/// INK55 task C: a segment partial's f32 (128 accumulators + m + l, padded; `FA55_LD`).
+pub const P55_KS_LD: u64 = 132;
+
+/// INK55: a window slot's dwords for `mode` (P55_ROWS rows of D).
+pub fn p55_slot_dw(mode: u8) -> u64 {
+    (P55_ROWS * D).div_ceil(P55_BLK) * P55_STRIDE[mode as usize]
+}
+
+/// INK55: the end line (the reduces on the wire / stood down past the window).
+fn p55_line(c: &Card<'_, '_>, f: &InkFlags, tag: &str, rank: u32) {
+    if c.p55 != P55_OFF {
+        println!(
+            "INK55 {tag} rank{rank}: p55 {:?} ({:?}): wire reduces {} / stood down {} / key-split attention {}",
+            f.ink55, c.p55, c.p55_n[0], c.p55_n[1], c.p55_n[2]
+        );
+    }
+}
+
+/// INK49: the drafter's minimum segment (keys; <= its 4,224-score plane).
+pub const P49_DR_SEG: u64 = 2048;
+/// INK49: the drafter's score plane (`DR_MAXS`): a segment holds at most this many keys.
+pub const P49_DR_MAXS: u64 = 4224;
+/// INK49: the partials' row (128 accumulators + max + sum, padded).
+pub const P49_LD: u64 = 132;
+
+pub fn ink49_bits(v: &str) -> anyhow::Result<P49> {
+    let mut p = P49_OFF;
+    for it in v
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && *x != "none")
+    {
+        let num = |o: &str| -> anyhow::Result<u64> {
+            o[1..]
+                .parse()
+                .ok()
+                .filter(|&n: &u64| n > 0)
+                .with_context(|| format!("--ink-p49 {o:?}: {}<N>, N > 0", &o[..1]))
+        };
+        match it {
+            "ks" => (p.tgt, p.dr) = (true, true),
+            "kt" => p.tgt = true,
+            "kd" => p.dr = true,
+            "rv" | "rv1" => p.rv = 1,
+            "rv3" => p.rv = 3,
+            "rv4" => p.rv = 4,
+            o if o.starts_with('t') => p.thresh = num(o)?,
+            o if o.starts_with('w') => p.wg = num(o)?,
+            o if o.starts_with('g') => {
+                p.segmin = num(o)?;
+                ensure!(
+                    p.segmin % 256 == 0,
+                    "--ink-p49 {o:?}: g<N>, N a multiple of 256"
+                );
+            }
+            o => anyhow::bail!(
+                "--ink-p49 item {o:?}: ks | kt | kd | rv | rv1 | rv3 | rv4 | t<N> | w<N> | g<N> | none"
+            ),
+        }
+    }
+    ensure!(
+        p.rv == 0 || p.tgt,
+        "--ink-p49 {v:?}: rv / rv1 / rv3 (INK54's row-shared verify body) needs the target split (ks | kt)"
+    );
+    Ok(p)
+}
+
+/// INK49: the target's segment cap (the grid's z) over at most `keys` keys a row: the workgroup goal
+/// over ONE row's heads (never the launch's row count: a row's segments -- its summation order --
+/// must not depend on how many rows ride the launch, or a T-row verify row differs from the same
+/// row decoded alone and the MTP law breaks; measured h5/h6), never past `keys / segmin` segments,
+/// at most 64. 1 = the parent kernel (byte-equal).
+#[must_use]
+pub fn ks49_smax(p: &P49, heads: u64, keys: u64) -> u64 {
+    if !p.tgt || keys <= p.thresh {
+        return 1;
+    }
+    p.wg.div_ceil(heads.max(1))
+        .min(keys.div_ceil(p.segmin))
+        .clamp(1, 64)
+}
+
+/// INK49: the drafter's segment cap for a context of `cap` rows (+ the 8 block keys): enough
+/// segments that none holds more than the score plane, at least `cap / P49_DR_SEG`.
+#[must_use]
+pub fn ks49_dr_smax(p: &P49, cap: u64) -> u64 {
+    if !p.dr {
+        return 1;
+    }
+    (cap + 8)
+        .div_ceil(P49_DR_SEG)
+        .max((cap + 8).div_ceil(P49_DR_MAXS))
+        .clamp(2, 128)
+}
+
+/// INK54 `--ink-p54`: `il<N>` = N decode-only steps after a chunk beside decoders (the serve plane's
+/// scheduler), `wk` = a wake store into the peer before each decode push (attention + MoE), `wke` =
+/// the MoE site's wake one launch earlier (before the down GEMM). Default `none` = the control.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct P54 {
+    pub yield_steps: u32,
+    pub wake: bool,
+    pub wake_early: bool,
+}
+
+pub fn ink54_bits(v: &str) -> anyhow::Result<P54> {
+    let mut p = P54::default();
+    for it in v
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && *x != "none")
+    {
+        match it {
+            "wk" => p.wake = true,
+            "wke" => (p.wake, p.wake_early) = (true, true),
+            o => match o.strip_prefix("il").map(str::parse::<u32>) {
+                Some(Ok(n)) if (1..=256).contains(&n) => p.yield_steps = n,
+                _ => anyhow::bail!("--ink-p54 item {o:?}: il<N> (N 1..=256) | wk | wke | none"),
+            },
+        }
+    }
+    Ok(p)
+}
+
+/// INK54: the row-shared verify body's symbol and grid y (`rv` 1 = one query head a workgroup,
+/// 3 = the KV head's three query heads, GQA 3 at TP 1 and TP 2; 4 = one query head, runs of <= 4 rows).
+#[must_use]
+pub fn ks54_launch(rv: u8, heads: u64, kv: u64) -> (&'static str, u64) {
+    if rv == 3 && kv > 0 && heads == 3 * kv {
+        ("ink_ks54_rv3", kv)
+    } else if rv == 4 {
+        ("ink_ks54_rv1r4", heads)
+    } else {
+        ("ink_ks54_rv1", heads)
+    }
+}
+
+/// INK49: the split law's host twin (`ks_split` in `hip/ink_ks49.hip`): (segments, keys a segment)
+/// for `n` keys.
+#[cfg(test)]
+#[must_use]
+pub fn ks49_split(n: u64, smax: u64, thresh: u64, segmin: u64, tile: u64, cap: u64) -> (u64, u64) {
+    if n <= thresh || smax <= 1 {
+        return (1, n);
+    }
+    let s = smax.min(n.div_ceil(segmin));
+    let seg = (n.div_ceil(s).div_ceil(tile) * tile).min(cap);
+    (n.div_ceil(seg), seg)
 }
 
 /// INK37 `moe`: the pf tile's rows for a `t`-row chunk (None = the INK29 cells).
@@ -730,7 +1020,10 @@ struct Rec {
 
 /// The pack's records + the checkpoint's shapes (host side).
 struct PackReader {
+    /// where the bytes live (INK41: the TP=2 pack under a one-card view; else the pack)
     dir: PathBuf,
+    /// INK41: the one-card view's own directory (its index files); None for a TP=2 pack
+    view: Option<PathBuf>,
     ckpt: PathBuf,
     man: Value,
     recs: [BTreeMap<String, Rec>; 3],
@@ -756,6 +1049,15 @@ struct T8Rec {
     scales_off: u64,
 }
 
+/// INK41: one 8-bit tensor of the one-card view -- its two rank records re-joined on `axis`
+/// (0 = row halves, 1 = column halves row by row), the whole bytes' sha256s pinned.
+struct T8Whole {
+    axis: u32,
+    parts: Vec<T8Rec>,
+    codes_sha256: String,
+    scales_sha256: String,
+}
+
 struct Trunk8 {
     dir: PathBuf,
     /// the head (`lm_head`) from the overlay too (`w8-head`)
@@ -764,9 +1066,115 @@ struct Trunk8 {
     /// stays bf16; a full overlay refuses a missing record
     partial: bool,
     recs: BTreeMap<(String, u32), T8Rec>,
+    /// INK41: the one-card view's whole tensors (`trunk8.json`); empty for the TP=2 overlay
+    whole: BTreeMap<String, T8Whole>,
 }
 
 impl Trunk8 {
+    /// INK41: the one-card view's index (`<view>/trunk8.json`, `ink41-trunk8-view/1`) over the TP=2
+    /// overlay's files in `<blobs>/<dir>`; every whole tensor bound to the view's whole dense
+    /// record by its sha256 and the overlay manifest by its own.
+    fn open_view(
+        view: &Path,
+        blobs: &Path,
+        mode: &str,
+        base: &BTreeMap<String, Rec>,
+    ) -> anyhow::Result<Self> {
+        let head = match mode {
+            "w8" => false,
+            "w8-head" => true,
+            o => bail!("--ink-trunk {o:?}: bf16 (the control) | w8 | w8-head"),
+        };
+        let ip = view.join("trunk8.json");
+        let man: Value = serde_json::from_str(
+            &std::fs::read_to_string(&ip).with_context(|| ip.display().to_string())?,
+        )?;
+        ensure!(
+            man["format"].as_str() == Some(crate::inkling2::TRUNK8_VIEW_FORMAT),
+            "{}: format {:?}, this path reads {}",
+            ip.display(),
+            man["format"],
+            crate::inkling2::TRUNK8_VIEW_FORMAT
+        );
+        let dir = blobs.join(man["dir"].as_str().unwrap_or("trunk8"));
+        let raw = std::fs::read(dir.join("manifest.json"))
+            .with_context(|| dir.join("manifest.json").display().to_string())?;
+        let got = hex::encode(Sha256::digest(&raw));
+        ensure!(
+            man["overlay_manifest_sha256"].as_str() == Some(got.as_str()),
+            "{}: the view pins the overlay manifest {} but {} is {got}",
+            ip.display(),
+            man["overlay_manifest_sha256"],
+            dir.display()
+        );
+        let mut whole = BTreeMap::new();
+        for t in man["tensors"].as_array().context("trunk8 view tensors")? {
+            let name = t["tensor"].as_str().unwrap_or("").to_string();
+            let src = t["src_sha256"].as_str().unwrap_or("");
+            let b = base
+                .get(&name)
+                .with_context(|| format!("trunk8 view {name}: no whole dense record"))?;
+            ensure!(
+                src == b.sha256,
+                "trunk8 view {name}: built from {src}, the view's dense record is {}",
+                b.sha256
+            );
+            let u = |v: &Value, k: &str| v[k].as_u64().unwrap_or(0);
+            let parts = t["parts"]
+                .as_array()
+                .context("trunk8 view parts")?
+                .iter()
+                .map(|x| T8Rec {
+                    file: x["file"].as_str().unwrap_or("").to_string(),
+                    rows: u(x, "rows"),
+                    cols: u(x, "cols"),
+                    codes_off: u(x, "codes_off"),
+                    scales_off: u(x, "scales_off"),
+                })
+                .collect::<Vec<_>>();
+            let axis = u32::try_from(u(t, "axis"))?;
+            let (rows, cols) = (u(t, "rows"), u(t, "cols"));
+            ensure!(
+                parts.len() == 2
+                    && axis < 2
+                    && parts.iter().all(|x| x.cols % 32 == 0)
+                    && if axis == 0 {
+                        parts[0].cols == cols
+                            && parts[1].cols == cols
+                            && parts[0].rows + parts[1].rows == rows
+                    } else {
+                        parts[0].rows == rows
+                            && parts[1].rows == rows
+                            && parts[0].cols + parts[1].cols == cols
+                    },
+                "trunk8 view {name}: parts do not tile [{rows}, {cols}] on axis {axis}"
+            );
+            whole.insert(
+                name,
+                T8Whole {
+                    axis,
+                    parts,
+                    codes_sha256: t["codes_sha256"].as_str().unwrap_or("").to_string(),
+                    scales_sha256: t["scales_sha256"].as_str().unwrap_or("").to_string(),
+                },
+            );
+        }
+        println!(
+            "INK14 trunk8: --ink-trunk {mode} from the one-card view {} over {} ({} whole tensors, head {})",
+            ip.display(),
+            dir.display(),
+            whole.len(),
+            if head { "8-bit" } else { "bf16" }
+        );
+        Ok(Self {
+            dir,
+            head,
+            partial: man["partial"].as_bool().unwrap_or(false),
+            recs: BTreeMap::new(),
+            whole,
+        })
+    }
+
     /// `mode` = `w8` (attention projections + o_proj) | `w8-head` (+ the head).
     fn open(dir: &Path, mode: &str, base: &[BTreeMap<String, Rec>; 3]) -> anyhow::Result<Self> {
         let head = match mode {
@@ -821,6 +1229,7 @@ impl Trunk8 {
             head,
             partial: man["partial"].as_bool().unwrap_or(false),
             recs,
+            whole: BTreeMap::new(),
         })
     }
 }
@@ -828,7 +1237,13 @@ impl Trunk8 {
 impl PackReader {
     fn open(p: &Pack) -> anyhow::Result<Self> {
         let mut recs: [BTreeMap<String, Rec>; 3] = Default::default();
-        for (i, d) in ["shared", "rank0", "rank1"].iter().enumerate() {
+        // INK41: a one-card view's `shared/dense.json` holds EVERY tensor whole (no rank halves)
+        let dirs: &[&str] = if p.view {
+            &["shared"]
+        } else {
+            &["shared", "rank0", "rank1"]
+        };
+        for (i, d) in dirs.iter().enumerate() {
             let f = p.dir.join(d).join("dense.json");
             let v: Value = serde_json::from_str(&std::fs::read_to_string(&f)?)?;
             for r in v.as_array().context("dense.json")? {
@@ -874,7 +1289,8 @@ impl PackReader {
             }
         }
         Ok(Self {
-            dir: p.dir.clone(),
+            dir: p.blobs.clone(),
+            view: p.view.then(|| p.dir.clone()),
             ckpt: p.ckpt.clone(),
             man: p.manifest.clone(),
             recs,
@@ -888,6 +1304,31 @@ impl PackReader {
     /// `--ink-trunk` resolves to `DEFAULT_INK_TRUNK` when the overlay is present and the boot is
     /// the two-card form, else STANDS DOWN to bf16 by name; an explicit `w8*` refuses.
     fn with_trunk(mut self, f: &InkFlags, pack_dir: &Path, two_card: bool) -> anyhow::Result<Self> {
+        // INK41: the one-card view reads its whole-tensor index over the TP=2 overlay's files;
+        // its default follows `two_card` (the caller: the serve plane's form)
+        if let Some(view) = self.view.clone() {
+            ensure!(
+                f.ink_trunk8_dir.is_none(),
+                "--ink-trunk8-dir: the one-card view names its overlay (trunk8.json)"
+            );
+            let has = view.join("trunk8.json").is_file();
+            let mode = match f.ink_trunk.as_deref() {
+                Some(m) => m.to_string(),
+                None if two_card && has => crate::inkling2::DEFAULT_INK_TRUNK.to_string(),
+                None => {
+                    println!(
+                        "INK14 trunk8: STANDS DOWN to bf16 (the default {} on the one-card view: {})",
+                        crate::inkling2::DEFAULT_INK_TRUNK,
+                        if has { "the harness form" } else { "no trunk8.json" }
+                    );
+                    "bf16".to_string()
+                }
+            };
+            if mode != "bf16" {
+                self.t8 = Some(Trunk8::open_view(&view, &self.dir, &mode, &self.recs[0])?);
+            }
+            return Ok(self);
+        }
         let dir = f
             .ink_trunk8_dir
             .clone()
@@ -930,6 +1371,13 @@ impl PackReader {
         if head && !t8.head {
             return Ok(None);
         }
+        if !t8.whole.is_empty() {
+            ensure!(
+                rank.is_none(),
+                "the one-card view's 8-bit trunk is whole (no rank records)"
+            );
+            return self.tensor_w8_whole(t8, &format!("language_model.{name}"));
+        }
         let rk = rank.context("the 8-bit trunk is the two-card form's (a rank's records)")?;
         let key = (format!("language_model.{name}"), rk);
         if t8.partial && !t8.recs.contains_key(&key) {
@@ -946,6 +1394,53 @@ impl PackReader {
         let mut sc = vec![0u8; (r.rows * r.cols / 32 * 2) as usize];
         f.read_exact_at(&mut sc, r.scales_off)?;
         Ok(Some((codes, sc, vec![r.rows, r.cols])))
+    }
+
+    /// INK41: a whole 8-bit tensor of the one-card view, its two rank records re-joined on the
+    /// view's axis; the re-joined bytes must hash to the view's sha256s.
+    fn tensor_w8_whole(&self, t8: &Trunk8, key: &str) -> anyhow::Result<Option<W8Record>> {
+        let Some(w) = t8.whole.get(key) else {
+            ensure!(t8.partial, "trunk8 view: no record {key}");
+            return Ok(None);
+        };
+        let mut cs = Vec::new();
+        let mut ss = Vec::new();
+        for r in &w.parts {
+            let f = std::fs::File::open(t8.dir.join(&r.file))
+                .with_context(|| t8.dir.join(&r.file).display().to_string())?;
+            let mut c = vec![0u8; (r.rows * r.cols) as usize];
+            f.read_exact_at(&mut c, r.codes_off)?;
+            let mut sc = vec![0u8; (r.rows * r.cols / 32 * 2) as usize];
+            f.read_exact_at(&mut sc, r.scales_off)?;
+            cs.push(c);
+            ss.push(sc);
+        }
+        let (p0, p1) = (&w.parts[0], &w.parts[1]);
+        let join = |a: &[u8], b: &[u8], n0: usize, n1: usize| -> Vec<u8> {
+            if w.axis == 0 {
+                [a, b].concat()
+            } else {
+                let mut v = Vec::with_capacity(a.len() + b.len());
+                for i in 0..p0.rows as usize {
+                    v.extend_from_slice(&a[i * n0..(i + 1) * n0]);
+                    v.extend_from_slice(&b[i * n1..(i + 1) * n1]);
+                }
+                v
+            }
+        };
+        let codes = join(&cs[0], &cs[1], p0.cols as usize, p1.cols as usize);
+        let sc = join(&ss[0], &ss[1], p0.cols as usize / 16, p1.cols as usize / 16);
+        ensure!(
+            hex::encode(Sha256::digest(&codes)) == w.codes_sha256
+                && hex::encode(Sha256::digest(&sc)) == w.scales_sha256,
+            "trunk8 view {key}: the re-joined codes / scales differ from the view's sha256"
+        );
+        let (rows, cols) = if w.axis == 0 {
+            (p0.rows + p1.rows, p0.cols)
+        } else {
+            (p0.rows, p0.cols + p1.cols)
+        };
+        Ok(Some((codes, sc, vec![rows, cols])))
     }
 
     fn read_at(&self, file: &str, off: u64, buf: &mut [u8]) -> anyhow::Result<()> {
@@ -983,9 +1478,17 @@ impl PackReader {
             .get(&name)
             .with_context(|| format!("{name}: not in the checkpoint"))?;
         let es = if dt == "BF16" { 2 } else { 4 };
+        ensure!(
+            self.view.is_none() || rank.is_none(),
+            "{name}: rank {rank:?}'s half asked of the one-card view (whole records only)"
+        );
         if let Some(r) = self.recs[0].get(&name) {
             return Ok((self.rec_bytes(r)?, es, shape.clone()));
         }
+        ensure!(
+            self.view.is_none(),
+            "{name}: not in the one-card view's whole records"
+        );
         let r0 = self.recs[1].get(&name).with_context(|| name.clone())?;
         let r1 = self.recs[2].get(&name).with_context(|| name.clone())?;
         if let Some(rk) = rank {
@@ -1120,6 +1623,18 @@ pub struct Card<'h, 'm> {
     pub p40_n: u64,
     pub p40_zd: u64,
     pub p35_n: u64,
+    /// INK49: `--ink-p49` + the split launches (target, drafter)
+    pub p49: P49,
+    pub p49_n: [u64; 2],
+    /// INK55: `--ink-p55` + the reduces on the wire / stood down to the pull (rows past the window)
+    pub p55: P55,
+    /// wire reduces / stood down past the window / key-split attention launches (task C)
+    pub p55_n: [u64; 3],
+    /// INK54: the row-shared verify launches
+    pub p54_n: u64,
+    /// INK54 `--ink-p54` (the wake arm) + the wake launches
+    pub p54: P54,
+    pub wake_n: u64,
     /// INK36: `--ink-p36` bits + the exchange cap under `ov`; `hg_live` = a prefill chunk's
     /// lazy zeroing is on (the visit region's zeroed takes memset at their take, merged into
     /// `zpend`; the plain takes stale, or poisoned under `hgp`); `hg_high` = the visit region's
@@ -1228,6 +1743,17 @@ impl<'h, 'm> Card<'h, 'm> {
             p40_n: 0,
             p40_zd: 0,
             p35_n: 0,
+            p49: P49_OFF,
+            p49_n: [0; 2],
+            p55: P55_OFF,
+            p55_n: [0; 3],
+            p54_n: 0,
+            p54: P54 {
+                yield_steps: 0,
+                wake: false,
+                wake_early: false,
+            },
+            wake_n: 0,
             p36: 0,
             p36_xw: OV_XW,
             hg_live: false,
@@ -3074,8 +3600,10 @@ impl Weights {
                 r,
             });
         }
+        // INK41: the whole head takes the 8-bit record when the trunk is bound (the one-card view's
+        // served form); unbound (the harness), the bf16 tensor as before
         let head = if tp == 1 {
-            vec![put(card, pk.tensor("lm_head.weight", None)?)?]
+            vec![put_dense(card, pk, "lm_head.weight", None, true)?]
         } else if let Some(r) = only {
             vec![put_dense(card, pk, "lm_head.weight", Some(r), true)?]
         } else {
@@ -3151,8 +3679,48 @@ impl Experts {
             }
             Ok(())
         };
+        // INK41: the one-card view's tier = two PARTS a format, part r = the TP=2 rank r file
+        // (experts 64 r .. 64 r + 63 of every layer): the same blobs map, the same 128-slot table
+        if pk.view.is_some() {
+            ensure!(
+                only.is_none(),
+                "the one-card view loads all 128 experts a layer"
+            );
+            for (k, tier) in man["tiers"]["0"].as_object().context("view tiers")? {
+                let stride = man["records"][k]["stride"].as_u64().context("stride")?;
+                let tl: Vec<u32> = tier["layers"]
+                    .as_array()
+                    .context("tier layers")?
+                    .iter()
+                    .filter_map(Value::as_u64)
+                    .map(|x| x as u32)
+                    .collect();
+                let parts = tier["parts"].as_array().context("view tier parts")?;
+                ensure!(parts.len() == 2, "view tier {k}: {} parts", parts.len());
+                for (r, part) in parts.iter().enumerate() {
+                    let file = part["file"].as_str().context("file")?;
+                    let f =
+                        std::fs::File::open(pk.dir.join(file)).with_context(|| file.to_string())?;
+                    let mut hdr = vec![0u8; 4096];
+                    f.read_exact_at(&mut hdr, 0)?;
+                    let w32 = |o: usize| u32::from_le_bytes(hdr[o..o + 4].try_into().expect("4"));
+                    // the v2 header's rank / first expert / count: part r IS rank r's 64 experts
+                    ensure!(
+                        &hdr[..8] == b"SBRXPRT1"
+                            && (w32(16), w32(24), w32(28)) == (r as u32, 64 * r as u32, 64)
+                            && w32(20) as usize == tl.len()
+                            && hex::encode(&hdr[184..216]) == part["table_sha256"].as_str().unwrap_or(""),
+                        "{}: view part {r} of {k} is not TP=2 rank {r}'s experts {}..{} (header / table pin)",
+                        pk.dir.join(file).display(),
+                        64 * r,
+                        64 * r + 63
+                    );
+                    read_tier(file, &tl, stride, r as u32, card, &mut blobs)?;
+                }
+            }
+        }
         for r in 0..2u32 {
-            if only.is_some_and(|o| o != r) {
+            if only.is_some_and(|o| o != r) || pk.view.is_some() {
                 continue;
             }
             let t = &man["tiers"][r.to_string()];
@@ -3426,6 +3994,9 @@ pub struct Peer {
     /// INK16: the push reduce's receive windows (ours, the peer's: two slots of `PWIN_ROWS` x D
     /// f32 each; (0, 0) = none) -- `ink_p2p_push_v5` above 8 rows under `--ink-prefill-gemm clp`
     pwin: (u64, u64),
+    /// INK55: the staged-push wire's receive windows (ours, the peer's: two slots of
+    /// `p55_slot_dw(mode)` dwords each; (0, 0) = none)
+    pwin55: (u64, u64),
 }
 
 /// INK16: rows a push-reduce window slot holds (the prefill chunk).
@@ -3459,6 +4030,37 @@ impl Peer {
     }
 
     fn reduce(&self, c: &mut Card<'_, '_>, partial: u64, t: u64) -> anyhow::Result<u64> {
+        // INK55 (`--ink-p55`): a prefill-sized reduce as the staged push on the chosen wire form
+        // (f32 raw / coded = the control's bytes; bf16 = the numerics arm); a reduce past the
+        // window's rows stands down to the pull (counted)
+        if let Some(mode) = c.p55.mode {
+            if self.dev && self.pwin55.0 != 0 && t >= c.p55.min_rows && partial % 16 == 0 {
+                if t <= P55_ROWS {
+                    let fin = c.z4(Reg::Visit, t * D, "reduce.out")?;
+                    let wg = (t * D).div_ceil(P55_BLK).clamp(1, 128);
+                    c.p55_n[0] += 1;
+                    c.launch(
+                        P55_SYM[mode as usize],
+                        [wg, 1, 1],
+                        256,
+                        &[
+                            A::P(partial),
+                            A::P(self.pwin55.0),
+                            A::P(self.pwin55.1),
+                            A::L(i64::try_from(p55_slot_dw(mode))?),
+                            A::P(fin),
+                            pi(t),
+                            pi(D),
+                            A::I(i32::try_from(c.p55.parts)?),
+                            A::P(self.link.0 + c.link_off),
+                            A::P(self.link.1 + c.link_off),
+                        ],
+                    )?;
+                    return Ok(fin);
+                }
+                c.p55_n[1] += 1;
+            }
+        }
         // INK39 (`push`): a > 8-row multi verify's reduces take the push too (v4's bytes)
         let mv_push = c.mv_live && c.p39 & P39_PUSH != 0;
         if self.dev
@@ -3930,38 +4532,161 @@ impl Forward<'_> {
                         (c.fa_sym, c.fa)
                     };
                     c.fa_n += 1;
-                    c.launch(
-                        sym,
-                        [t.div_ceil(fr), h, 1],
-                        if sym.starts_with("ink_fa35") {
-                            // 16 rows a wave (wm32 was launched at 128 threads > its 64-thread bound)
-                            2 * fr as u32
-                        } else {
-                            256
-                        },
-                        &[
-                            A::P(qp),
-                            pi(h * HD),
-                            A::P(kpool),
-                            A::P(vpool),
-                            A::P(table),
-                            pi(npg),
-                            A::P(rseq),
-                            A::P(rpos),
-                            A::P(rp),
-                            pi(h * 16),
-                            A::P(lw.rel_proj),
-                            A::P(sink),
-                            pi(ldsink),
-                            A::P(o),
-                            pi(h * HD),
-                            pi(t),
-                            pi(h),
-                            pi(kv),
-                            pi(EXT),
-                            A::I(if glob { 0 } else { 1024 }),
-                        ],
-                    )?;
+                    // INK55 task C: a global layer's late chunk as key segments + the merge
+                    let ks55 = w128 && glob && c.p55.ks > 1 && self.pos0 >= c.p55.ks_floor;
+                    let (sym, nseg) = if ks55 {
+                        ("ink_fa55_ks128", c.p55.ks)
+                    } else {
+                        (sym, 1)
+                    };
+                    let part = if ks55 {
+                        c.p55_n[2] += 1;
+                        c.take(Reg::Visit, t * h * nseg * P55_KS_LD * 4, "fa55.part")?
+                    } else {
+                        0
+                    };
+                    let mut fargs = vec![
+                        A::P(qp),
+                        pi(h * HD),
+                        A::P(kpool),
+                        A::P(vpool),
+                        A::P(table),
+                        pi(npg),
+                        A::P(rseq),
+                        A::P(rpos),
+                        A::P(rp),
+                        pi(h * 16),
+                        A::P(lw.rel_proj),
+                        A::P(sink),
+                        pi(ldsink),
+                        A::P(o),
+                        pi(h * HD),
+                        pi(t),
+                        pi(h),
+                        pi(kv),
+                        pi(EXT),
+                        A::I(if glob { 0 } else { 1024 }),
+                    ];
+                    if ks55 {
+                        fargs.extend([A::P(part), pi(nseg)]);
+                        c.launch(sym, [t.div_ceil(fr), h, nseg], 256, &fargs)?;
+                        c.launch(
+                            "ink_fa55_comb",
+                            [t, h, 1],
+                            128,
+                            &[
+                                A::P(part),
+                                A::P(sink),
+                                pi(ldsink),
+                                A::P(o),
+                                pi(h * HD),
+                                pi(h),
+                                pi(nseg),
+                            ],
+                        )?;
+                    } else {
+                        c.launch(
+                            sym,
+                            [t.div_ceil(fr), h, 1],
+                            if sym.starts_with("ink_fa35") {
+                                // 16 rows a wave (wm32 was launched at 128 threads > its 64-thread bound)
+                                2 * fr as u32
+                            } else {
+                                256
+                            },
+                            &[
+                                A::P(qp),
+                                pi(h * HD),
+                                A::P(kpool),
+                                A::P(vpool),
+                                A::P(table),
+                                pi(npg),
+                                A::P(rseq),
+                                A::P(rpos),
+                                A::P(rp),
+                                pi(h * 16),
+                                A::P(lw.rel_proj),
+                                A::P(sink),
+                                pi(ldsink),
+                                A::P(o),
+                                pi(h * HD),
+                                pi(t),
+                                pi(h),
+                                pi(kv),
+                                pi(EXT),
+                                A::I(if glob { 0 } else { 1024 }),
+                            ],
+                        )?;
+                    }
+                } else if c.fast && glob && ks49_smax(&c.p49, h, npg * PAGE) > 1 {
+                    // INK49 `ks`: the key range cut into segments + the merge (S = 1 below the
+                    // threshold runs v1's body and epilogue in the part kernel: byte-equal)
+                    let smax = ks49_smax(&c.p49, h, npg * PAGE);
+                    let part = c.take(Reg::Visit, t * h * smax * P49_LD * 4, "ks49.part")?;
+                    let law = [
+                        A::P(part),
+                        pi(smax),
+                        A::I(i32::try_from(c.p49.thresh.min(i32::MAX as u64))?),
+                        pi(c.p49.segmin),
+                    ];
+                    let mut args = vec![
+                        A::P(qp),
+                        pi(h * HD),
+                        A::P(kpool),
+                        A::P(vpool),
+                        A::P(table),
+                        pi(npg),
+                        A::P(rseq),
+                        A::P(rpos),
+                        A::P(rp),
+                        pi(h * 16),
+                        A::P(lw.rel_proj),
+                        A::P(sink),
+                        pi(ldsink),
+                        A::P(o),
+                        pi(h * HD),
+                        pi(h),
+                        pi(kv),
+                        pi(EXT),
+                        A::I(0),
+                    ];
+                    args.extend(law.iter().cloned());
+                    // INK54 `rv<N>`: a verify launch's rows of one sequence share each key load
+                    // (a single-sequence verify: ceil(t / R) groups; a multi-sequence verify: at
+                    // most one ragged group more a sequence slot; a batched decode has no rows to share)
+                    let rr = if c.p49.rv == 4 { 4 } else { 8 };
+                    let groups = if self.vrow && self.mrow == 0 && !self.batch {
+                        Some(t.div_ceil(rr))
+                    } else if self.mrow > 0 {
+                        Some(t.min(t.div_ceil(rr) + cache.map_or(t, |k| k.seqs + 1)))
+                    } else {
+                        None
+                    };
+                    if let (true, true, Some(gx)) = (c.p49.rv != 0, t > 1, groups) {
+                        let (sym, gy) = ks54_launch(c.p49.rv, h, kv);
+                        let mut rargs = args.clone();
+                        rargs.push(pi(t));
+                        c.launch(sym, [gx, gy, smax], 256, &rargs)?;
+                        // the groups whose rows are all at S = 1: INK49's per-row body beside it
+                        let mut sargs = args.clone();
+                        sargs.push(pi(rr));
+                        c.launch("ink_ks54_short", [t, h, smax], 256, &sargs)?;
+                        c.p54_n += 1;
+                    } else {
+                        c.launch("ink_ks49_part", [t, h, smax], 256, &args)?;
+                    }
+                    let mut args = vec![
+                        A::P(rpos),
+                        A::P(sink),
+                        pi(ldsink),
+                        A::P(o),
+                        pi(h * HD),
+                        pi(h),
+                        A::I(0),
+                    ];
+                    args.extend(law.iter().cloned());
+                    c.launch("ink_ks49_comb", [t, h, 1], 128, &args)?;
+                    c.p49_n[0] += 1;
                 } else if c.fast {
                     c.launch(
                         "ink_attn_bias_sink_v1",
@@ -4039,6 +4764,11 @@ impl Forward<'_> {
                         && (D <= 1024 || (w8 && c.fuse & FUSE_G16 != 0));
                     let gw = if narrow { 16 } else { 64 };
                     nfl = D / gw;
+                    // INK54 `wk`: wake the idle P2P path right before the pushing GEMV
+                    if c.p54.wake {
+                        c.launch("ink_wake54", [1, 1, 1], 32, &[A::P(pf + FZ_WAKE)])?;
+                        c.wake_n += 1;
+                    }
                     let mut args = vec![
                         A::P(o),
                         pi(h * HD),
@@ -4526,8 +5256,17 @@ impl Forward<'_> {
                     a0.push(pi(D));
                 }
             }
+            // INK54 `wke`: the MoE site's wake before the down GEMM (lead = its run time)
+            if let (Some(pf), true) = (push_to, c.p54.wake_early) {
+                c.launch("ink_wake54", [1, 1, 1], 32, &[A::P(pf + FZ_WAKE)])?;
+                c.wake_n += 1;
+            }
             c.launch(s0, [D / 128, maxt, 1], 256, &a0)?;
             if let Some(pf) = push_to {
+                if c.p54.wake && !c.p54.wake_early {
+                    c.launch("ink_wake54", [1, 1, 1], 32, &[A::P(pf + FZ_WAKE)])?;
+                    c.wake_n += 1;
+                }
                 let ctr = c.fz + FZ_SITE + FZ_CTR;
                 c.launch(
                     if c.fuse & FUSE_P30 != 0 {
@@ -5397,9 +6136,16 @@ pub fn run(
 ) -> anyhow::Result<()> {
     if f.ink_serve.is_some() {
         ensure!(
-            tp == 2 && f.ink_run.is_none() && !f.ink_split,
-            "--ink-serve runs the two-card process: --tp 2, no --ink-run / --ink-split"
+            f.ink_run.is_none() && !f.ink_split,
+            "--ink-serve: no --ink-run / --ink-split"
         );
+        // INK41: one card = the one-rank plane on the pack's TP=1 view (open_pack refused the
+        // TP=2 pack at --tp 1 by name); two cards = the two-card process
+        if tp == 1 {
+            ensure!(p.view, "--tp 1 --ink-serve reads the one-card (TP=1) view");
+            return run_one_card(p, prebuilt, hip_lib, device, f);
+        }
+        ensure!(tp == 2, "--ink-serve: --tp 1 (the one-card view) or --tp 2");
         return run_two_card(p, prebuilt, hip_lib, f);
     }
     let mode = f.ink_run.clone().unwrap_or_default();
@@ -5407,6 +6153,7 @@ pub fn run(
         mode == "tf"
             || mode == "decode"
             || mode == "taps"
+            || (tp == 1 && mode == "df2gate")
             || (tp == 2
                 && (mode == "long"
                     || mode == "pfc"
@@ -5444,6 +6191,10 @@ pub fn run(
         .map(String::from)
         .collect();
     ensure!(!only.is_empty(), "--ink-only p00,...");
+    ensure!(
+        !(f.ink_split && p.view),
+        "--ink-split runs the TP=2 halves on one card: it reads the TP=2 pack, not its one-card view"
+    );
     let wtp = if f.ink_split { 2 } else { 1 };
     let t0 = Instant::now();
     let hip = HipThread::spawn(hip_lib)?;
@@ -5469,6 +6220,19 @@ pub fn run(
     c.p36 &= !P36_OV;
     c.p37 = ink37_bits(&f.ink37)?;
     (c.p40, c.p40_fam) = ink40_bits(&f.ink40)?;
+    c.p49 = ink49_bits(&f.ink49)?;
+    c.p55 = ink55_bits(&f.ink55)?;
+    c.p54 = ink54_bits(&f.ink54)?;
+    if c.p49 != P49_OFF {
+        println!(
+            "INK49 boot: --ink-p49 {:?} = {:?} (split-key decode attention + the row-shared verify; \
+             the default since INK57, `{}` = INK52's per-row verify, `{}` = no split)",
+            f.ink49,
+            c.p49,
+            crate::inkling2::INK57_CONTROL,
+            crate::inkling2::INK49_CONTROL
+        );
+    }
     c.p39 = ink39_bits(&f.ink_p39)?;
     c.fz = c.alloc_zero(FZ_BYTES)?;
     let pk = PackReader::open(p)?.with_trunk(f, &p.dir, false)?;
@@ -5508,6 +6272,17 @@ pub fn run(
             format!("_{}", f.ink_control)
         }
     );
+    if mode == "df2gate" {
+        // INK48: the DFlash2 drafter's card drafts vs the host f32 oracle (no target pass)
+        let r = draft::df2::gate(&mut c, &pk, &w.head[0], &p.blobs.join("draft"), f, out);
+        drop(fw);
+        drop(w);
+        drop(x);
+        drop(c);
+        drop(ps);
+        drop(hip);
+        return r;
+    }
     let mut rep = serde_json::Map::new();
     let mut ok = true;
     let mut tap_cache: Option<(Cache, u64)> = None;
@@ -5536,6 +6311,51 @@ pub fn run(
                 sched: fw.sched.clone(),
                 ..fw
             };
+            if meta["ink47_feed"].as_bool() == Some(true) {
+                // INK47: a LONG prompt's taps -- the ref's own continuation (`generated_ids`, the
+                // served greedy ids, first `--ink-steps`) teacher-forced in `--ink-chunk`-row chunks
+                // through the cache (INK9's chunk continuation), each chunk's four taps read back and
+                // joined per visit; no greedy decode and no tf row check (one head row a chunk)
+                let mut feed = p_ids.clone();
+                feed.extend(gen.iter().take(f.ink_steps as usize));
+                let ch = usize::try_from(f.ink_chunk)?;
+                let mut per: [Vec<u8>; 4] = Default::default();
+                let mut p0 = 0;
+                while p0 < feed.len() {
+                    let e = (p0 + ch).min(feed.len());
+                    fwd.pos0 = p0 as u64;
+                    c.taps = Some(Vec::new());
+                    pass(
+                        &mut c,
+                        &fwd,
+                        &pk,
+                        Some(cache),
+                        &feed[p0..e],
+                        (e - p0 - 1) as u64,
+                    )?;
+                    let taps = c.taps.take().context("taps")?;
+                    ensure!(taps.len() == 4, "taps: {} of 4 read", taps.len());
+                    for (v, t) in taps.into_iter().enumerate() {
+                        per[v].extend(t);
+                    }
+                    p0 = e;
+                }
+                std::fs::write(out.join(format!("{pid}.taps.f32")), per.concat())?;
+                let ng = feed.len() - n0;
+                std::fs::write(
+                    out.join(format!("{pid}.taps.json")),
+                    serde_json::to_string(
+                        &json!({"prompt": p_ids, "gen": &feed[n0..], "rows": feed.len(),
+                        "chunk": ch, "visits": [5, 23, 41, 48], "ink47_feed": true}),
+                    )?,
+                )?;
+                println!(
+                    "TAPS {pid}: n {n0} gen {ng} rows {} chunk {ch} (INK47 feed)",
+                    feed.len()
+                );
+                rep.insert(pid.clone(), json!({"n": n0, "gen": ng, "chunk": ch}));
+                continue;
+            }
             let last = pass(&mut c, &fwd, &pk, Some(cache), &p_ids, n0 as u64 - 1)?;
             let mut nxt = argmax(&f32s(&last[last.len() - VOCAB * 4..]));
             let mut toks = Vec::new();
@@ -5753,6 +6573,111 @@ pub fn run(
 /// INK7 task 3: the two-card TP=2 / EP=2 process (one process, two HIP threads, card r = rank r):
 /// each rank its halves + its 64 experts a layer, the two reduces a visit as [`Peer::reduce`]
 /// (P2P), the head's halves gathered on the host. Rows -> `<id>.tp2x.tf.f32`.
+/// INK41: the ONE-CARD serve plane -- rank 0 alone on `device` with the pack's TP=1 view (all
+/// 128 experts a layer, every tensor whole, the whole head), no peer: no reduces, no command
+/// channel, no exchange. The levers that ARE the pair's (the push reduce `clp` / `--ink-p39
+/// push`, the half-chunk exchange `--ink-p36 ov`, the prefix cache's pair barrier) stand down
+/// by name; the prefix cache itself is refused (untested at one card).
+fn run_one_card(
+    p: &Pack,
+    prebuilt: &Path,
+    hip_lib: &str,
+    device: i32,
+    f: &InkFlags,
+) -> anyhow::Result<()> {
+    let t0 = Instant::now();
+    ensure!(
+        f.ink_prefix_cache == 0,
+        "--ink-prefix-cache: not at one card (INK41: the prefix cache stays off)"
+    );
+    let hip = HipThread::spawn(hip_lib)?;
+    hip.set_device(device)?;
+    let lc = LoadCounters::new();
+    let ps = PluginSet::load_named(&hip, prebuilt, &PLUGINS, &lc)?;
+    let k = Kernels::new(&ps, &hip)?;
+    let mut c = Card::new(&hip, k, f.ink_pass_mib << 20, f.ink_visit_mib << 20)?;
+    c.fast = match f.ink_bodies.as_str() {
+        "fast" => true,
+        "v0" => false,
+        o => bail!("--ink-bodies {o:?}: fast (the default) | v0 (the INK3b bodies, the control)"),
+    };
+    // the served form: the 8-bit trunk + head by default (the view's trunk8.json)
+    let pk = PackReader::open(p)?.with_trunk(f, &p.dir, true)?;
+    let x = Experts::load(&pk, &mut c, None)?;
+    let w = Weights::load(&pk, &mut c, 1, None)?;
+    c.fuse = fuse_bits(&f.ink_fuse)?;
+    (c.pf, c.cl, c.push) = prefill_gemm(&f.ink_prefill_gemm)?;
+    if c.push {
+        c.push = false;
+        println!(
+            "INK41 one card: --ink-prefill-gemm {} push reduce STANDS DOWN (no peer)",
+            f.ink_prefill_gemm
+        );
+    }
+    c.i8 = prefill_trunk(&f.ink_prefill_trunk)?;
+    (c.fa, c.fa_sym) = prefill_attn_sym(&f.ink_prefill_attn)?;
+    c.fa_floor = f.ink_prefill_attn_floor;
+    c.p29 = ink29_bits(&f.ink29)?;
+    c.p35 = ink35_bits(&f.ink35)?;
+    (c.p36, c.p36_xw) = ink36_bits(&f.ink36)?;
+    if c.p36 & P36_OV != 0 {
+        c.p36 &= !P36_OV;
+        println!(
+            "INK41 one card: --ink-p36 ov STANDS DOWN (the half-chunk exchange is the pair's)"
+        );
+    }
+    c.p37 = ink37_bits(&f.ink37)?;
+    (c.p40, c.p40_fam) = ink40_bits(&f.ink40)?;
+    c.p49 = ink49_bits(&f.ink49)?;
+    c.p55 = ink55_bits(&f.ink55)?;
+    c.p54 = ink54_bits(&f.ink54)?;
+    if c.p49 != P49_OFF {
+        println!(
+            "INK49 boot: --ink-p49 {:?} = {:?} (split-key decode attention + the row-shared verify; \
+             the default since INK57, `{}` = INK52's per-row verify, `{}` = no split)",
+            f.ink49,
+            c.p49,
+            crate::inkling2::INK57_CONTROL,
+            crate::inkling2::INK49_CONTROL
+        );
+    }
+    c.p39 = ink39_bits(&f.ink_p39)?;
+    if c.p39 & P39_PUSH != 0 {
+        c.p39 &= !P39_PUSH;
+        println!("INK41 one card: --ink-p39 push STANDS DOWN (no peer)");
+    }
+    c.fz = c.alloc_zero(FZ_BYTES)?;
+    let (free, total) = hip.mem_info()?;
+    println!(
+        "INK41 one card: card {device} weights in {:.1} s ({:.2} of {:.2} GiB used), the TP=1 view {} over {}",
+        t0.elapsed().as_secs_f64(),
+        (total - free) as f64 / f64::from(1 << 30),
+        total as f64 / f64::from(1 << 30),
+        p.dir.display(),
+        p.blobs.display()
+    );
+    let fw = Forward {
+        w: &w,
+        x: &x,
+        sched: schedule(f.ink_control == "noloop"),
+        noloop: f.ink_control == "noloop",
+        nomsg: f.ink_control == "nomsg",
+        pos0: 0,
+        graph: false,
+        peer: None,
+        slot: 0,
+        batch: false,
+        vrow: false,
+        mrow: 0,
+    };
+    let r = serve::rank_serve(&mut c, &fw, &pk, &w, f, 0, &p.blobs.join("draft"));
+    drop(fw);
+    drop(c);
+    drop(ps);
+    drop(hip);
+    r
+}
+
 fn run_two_card(p: &Pack, prebuilt: &Path, hip_lib: &str, f: &InkFlags) -> anyhow::Result<()> {
     use std::sync::mpsc::channel;
     let (a_tx, b_rx) = channel();
@@ -5833,6 +6758,19 @@ fn rank_main(
     (c.p36, c.p36_xw) = ink36_bits(&f.ink36)?;
     c.p37 = ink37_bits(&f.ink37)?;
     (c.p40, c.p40_fam) = ink40_bits(&f.ink40)?;
+    c.p49 = ink49_bits(&f.ink49)?;
+    c.p55 = ink55_bits(&f.ink55)?;
+    c.p54 = ink54_bits(&f.ink54)?;
+    if c.p49 != P49_OFF {
+        println!(
+            "INK49 boot: --ink-p49 {:?} = {:?} (split-key decode attention + the row-shared verify; \
+             the default since INK57, `{}` = INK52's per-row verify, `{}` = no split)",
+            f.ink49,
+            c.p49,
+            crate::inkling2::INK57_CONTROL,
+            crate::inkling2::INK49_CONTROL
+        );
+    }
     c.p39 = ink39_bits(&f.ink_p39)?;
     c.fz = c.alloc_zero(FZ_BYTES)?;
     // INK16: the push reduce's receive window (two slots), only when the arm asks for it
@@ -5846,11 +6784,38 @@ fn rank_main(
     tx.send(link).context("peer gone")?;
     tx.send(c.fz).context("peer gone")?;
     tx.send(pwin).context("peer gone")?;
+    // INK55: the wire's receive window (two slots), only when the arm asks for it
+    c.p55 = ink55_bits(&f.ink55)?;
+    let pwin55 = match c.p55.mode {
+        Some(m) if dev => {
+            ensure!(
+                c.p36 & P36_OV == 0,
+                "--ink-p55 with --ink-p36 ov: the wire's link words are not split per half"
+            );
+            c.alloc_zero(2 * p55_slot_dw(m) * 4)?
+        }
+        _ => 0,
+    };
+    if c.p55.mode.is_some() {
+        println!(
+            "INK55 boot rank{rank}: --ink-p55 {:?} = {:?} ({}, window {} MiB)",
+            f.ink55,
+            c.p55,
+            c.p55.mode.map_or("off", |m| P55_SYM[m as usize]),
+            (u64::from(pwin55 != 0) * 2 * c.p55.mode.map_or(0, p55_slot_dw) * 4) >> 20
+        );
+    }
+    tx.send(pwin55).context("peer gone")?;
     tx.send(w.head[0].rows()).context("peer gone")?;
     let peer_base = rx.recv().context("peer gone")?;
     let peer_link = rx.recv().context("peer gone")?;
     let pfz = rx.recv().context("peer gone")?;
     let ppwin = rx.recv().context("peer gone")?;
+    let ppwin55 = rx.recv().context("peer gone")?;
+    ensure!(
+        (pwin55 == 0) == (ppwin55 == 0),
+        "the INK55 wire windows differ across the ranks"
+    );
     ensure!(
         (pwin == 0) == (ppwin == 0),
         "the push windows differ across the ranks"
@@ -5871,6 +6836,7 @@ fn rank_main(
         link: (link, peer_link),
         pfz,
         pwin: (pwin, ppwin),
+        pwin55: (pwin55, ppwin55),
     };
     let (free, total) = hip.mem_info()?;
     println!(
@@ -5896,7 +6862,8 @@ fn rank_main(
         mrow: 0,
     };
     if f.ink_serve.is_some() {
-        let r = serve::rank_serve(&mut c, &fw, &pk, &w, f, link, &p.dir.join("draft"));
+        let r = serve::rank_serve(&mut c, &fw, &pk, &w, f, link, &p.blobs.join("draft"));
+        p55_line(&c, f, "serve", rank);
         drop(fw);
         drop(peer);
         drop(c);
@@ -6324,6 +7291,19 @@ fn rank_main(
             f.ink40, c.p40, c.p40_fam, c.p40_n, c.p40_zd
         );
     }
+    p55_line(&c, f, tag, rank);
+    if c.p49 != P49_OFF {
+        println!(
+            "INK49 {tag} rank{rank}: p49 {:?} ({:?}): split launches target {} / drafter {}; INK54 row-shared verify {}",
+            f.ink49, c.p49, c.p49_n[0], c.p49_n[1], c.p54_n
+        );
+    }
+    if c.p54 != P54::default() {
+        println!(
+            "INK54 {tag} rank{rank}: p54 {:?} ({:?}): wake launches {}",
+            f.ink54, c.p54, c.wake_n
+        );
+    }
     ok &= diag == 0;
     drop(fw);
     drop(peer);
@@ -6387,12 +7367,15 @@ fn mtp_gate(
         "--ink-mtp-gate needs --ink-mtp-graph"
     );
     let mut dr = if rank == 0 {
-        let mut o = draft::DraftOpt::of(f.draft_vocab(), &f.ink_draft_gemv, &f.ink_draft_layers)?;
+        let mut o = draft::DraftOpt::of(f.draft_vocab(), &f.ink_draft_gemv, f.draft_layers())?
+            .with_mm(&f.ink_draft_mm)?;
         o.conf = gate.is_some();
+        o.ks = ink49_bits(&f.ink49)?;
+        o.df2 = f.dflash2()?;
         Some(draft::Drafter::load(
             c,
             pk,
-            &pack.dir.join("draft"),
+            &pack.blobs.join("draft"),
             &w.head[0],
             f.ink_cache_ctx,
             1024,
@@ -7321,14 +8304,16 @@ fn mtpm_gate(
         ..Default::default()
     });
     let emb_m = c.alloc_zero(MV_ROWS * D * 4)?;
-    let mut opt = draft::DraftOpt::of(f.draft_vocab(), &f.ink_draft_gemv, &f.ink_draft_layers)?
+    let mut opt = draft::DraftOpt::of(f.draft_vocab(), &f.ink_draft_gemv, f.draft_layers())?
         .with_mm(&f.ink_draft_mm)?;
     opt.slots = 8;
+    opt.ks = ink49_bits(&f.ink49)?;
+    opt.df2 = f.dflash2()?;
     let mut dr = if rank == 0 {
         Some(draft::Drafter::load(
             c,
             pk,
-            &pack.dir.join("draft"),
+            &pack.blobs.join("draft"),
             &w.head[0],
             f.ink_cache_ctx,
             1024,
@@ -8030,6 +9015,108 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ink55_wire_flag_and_window() {
+        // the default is the control (the pulled f32 exchange)
+        assert_eq!(
+            ink55_bits(&crate::inkling2::InkFlags::default().ink55).unwrap(),
+            P55_OFF
+        );
+        let c = ink55_bits("c16,p8,r128").unwrap();
+        assert_eq!((c.mode, c.parts, c.min_rows), (Some(3), 8, 128));
+        assert_eq!(ink55_bits("x32").unwrap().mode, Some(0));
+        assert!(ink55_bits("p9").is_err());
+        assert!(ink55_bits("r8").is_err());
+        assert!(ink55_bits("f16").is_err());
+        let k = ink55_bits("k4,kf16384").unwrap();
+        assert_eq!((k.mode, k.ks, k.ks_floor), (None, 4, 16384));
+        assert!(ink55_bits("k1").is_err());
+        assert!(ink55_bits("k9").is_err());
+        // a slot holds P55_ROWS rows at the raw stride (the coded forms never write more)
+        assert_eq!(P55_ROWS * D % 64, 0);
+        for m in 0..4u8 {
+            assert!(p55_slot_dw(m) * 4 % 16 == 0);
+            assert!(p55_slot_dw(m) >= P55_ROWS * D / if m >= 2 { 2 } else { 1 });
+        }
+    }
+
+    #[test]
+    fn ink49_split_law_and_flag() {
+        // INK57: the default is `ks,rv4` (INK52's `ks` + INK54's row-shared verify body); the
+        // rollbacks `ks` (INK52's default) and `none` (no split anywhere)
+        assert_eq!(crate::inkling2::DEFAULT_INK49, "ks,rv4");
+        assert_eq!(crate::inkling2::INK49_CONTROL, "--ink-p49 none");
+        assert_eq!(crate::inkling2::INK57_CONTROL, "--ink-p49 ks");
+        let def = ink49_bits(&crate::inkling2::InkFlags::default().ink49).unwrap();
+        assert_eq!(def, ink49_bits("ks,rv4").unwrap());
+        assert!(def.tgt && def.dr && def.rv == 4);
+        assert_eq!((def.thresh, def.wg, def.segmin), (2048, 512, 512));
+        let ks_ctl =
+            ink49_bits(crate::inkling2::INK57_CONTROL.trim_start_matches("--ink-p49 ")).unwrap();
+        assert!(ks_ctl.tgt && ks_ctl.dr && ks_ctl.rv == 0);
+        assert_eq!(
+            ink49_bits(crate::inkling2::INK49_CONTROL.trim_start_matches("--ink-p49 ")).unwrap(),
+            P49_OFF
+        );
+        assert!(ink49_bits("kd,rv4").is_err());
+        assert_eq!(ink49_bits("none").unwrap(), P49_OFF);
+        let ks = ink49_bits("ks").unwrap();
+        assert!(ks.tgt && ks.dr);
+        assert_eq!((ks.thresh, ks.wg, ks.segmin), (2048, 512, 512));
+        let kt = ink49_bits("kt,t4096,w256,g1024").unwrap();
+        assert!(kt.tgt && !kt.dr);
+        assert_eq!((kt.thresh, kt.wg, kt.segmin), (4096, 256, 1024));
+        assert!(ink49_bits("g300").is_err());
+        assert!(ink49_bits("t0").is_err());
+        assert!(ink49_bits("split").is_err());
+        // short context = the parent (smax 1); 32k b1 TP2 = 43 segments of 768 keys
+        assert_eq!(ks49_smax(&ks, 12, 2048), 1);
+        assert_eq!(ks49_smax(&P49_OFF, 12, 40960), 1);
+        assert_eq!(ks49_smax(&ks, 12, 40960), 43);
+        assert_eq!(ks49_smax(&ks, 24, 40960), 22);
+        assert_eq!(ks49_split(2048, 43, 2048, 512, 256, 1 << 30), (1, 2048));
+        assert_eq!(ks49_split(32768, 43, 2048, 512, 256, 1 << 30), (43, 768));
+        assert_eq!(ks49_split(2049, 43, 2048, 512, 256, 1 << 30), (5, 512));
+        // every key is in exactly one segment
+        for n in [2049_u64, 3000, 8191, 32768, 65537, 131_072] {
+            let (s, seg) = ks49_split(n, 43, 2048, 512, 256, 1 << 30);
+            assert!(s <= 43 && seg % 256 == 0 && (s - 1) * seg < n && s * seg >= n);
+        }
+        // the drafter: no segment past the 4,224-score plane at any served context
+        for cap in [4096_u64, 40960, 131_072, 262_144] {
+            let sm = ks49_dr_smax(&ks, cap);
+            let (s, seg) = ks49_split(cap + 8, sm, 2048, P49_DR_SEG, 256, P49_DR_MAXS);
+            assert!(
+                s <= sm && seg <= P49_DR_MAXS,
+                "cap {cap}: {s} x {seg} (smax {sm})"
+            );
+        }
+    }
+
+    #[test]
+    fn ink54_the_row_shared_verify_arm_parses_and_names_its_body() {
+        // default off; rv = rv1; rv3 at GQA 3 only; rv without the target split refuses
+        assert_eq!(P49_OFF.rv, 0);
+        assert_eq!(ink49_bits("ks").unwrap().rv, 0);
+        assert_eq!(ink49_bits("ks,rv").unwrap().rv, 1);
+        assert_eq!(ink49_bits("kt,rv1").unwrap().rv, 1);
+        assert_eq!(ink49_bits("ks,rv3").unwrap().rv, 3);
+        assert!(ink49_bits("rv").is_err());
+        assert!(ink49_bits("kd,rv3").is_err());
+        assert_eq!(ks54_launch(1, 12, 4), ("ink_ks54_rv1", 12));
+        assert_eq!(ks54_launch(3, 12, 4), ("ink_ks54_rv3", 4));
+        assert_eq!(ks54_launch(3, 24, 8), ("ink_ks54_rv3", 8));
+        assert_eq!(ks54_launch(3, 16, 4), ("ink_ks54_rv1", 16));
+        assert_eq!(ks54_launch(4, 12, 4), ("ink_ks54_rv1r4", 12));
+        assert_eq!(ink49_bits("ks,rv4").unwrap().rv, 4);
+        assert!(PLUGINS.contains(&"ink_ks54"));
+        assert_eq!(ink54_bits("none").unwrap(), P54::default());
+        let w = ink54_bits("wk,il8").unwrap();
+        assert!(w.wake && !w.wake_early && w.yield_steps == 8);
+        assert!(ink54_bits("wke").unwrap().wake_early);
+        assert!(ink54_bits("il0").is_err() && ink54_bits("wake").is_err());
+    }
+
+    #[test]
     fn ink14_the_trunk_defaults_to_w8_head_with_the_overlay_and_stands_down_without() {
         // INK14: unset = w8-head when <pack>/trunk8 exists (two-card), else bf16 by name; `bf16`
         // is the control; an explicit w8 refuses a missing overlay and a one-card run
@@ -8038,6 +9125,7 @@ mod tests {
         let scratch = saber_test_scratch::ScratchDir::new("ink14-trunk");
         let pk = || PackReader {
             dir: scratch.path().to_path_buf(),
+            view: None,
             ckpt: scratch.path().to_path_buf(),
             man: Value::Null,
             recs: Default::default(),
@@ -8341,5 +9429,122 @@ mod tests {
             .filter(|a| !a.value_kind.starts_with("hidden"))
             .collect();
         assert_eq!(ex[1].size, 8, "the element count is a long");
+    }
+
+    /// INK41: the one-card view reads the TP=2 pack's bytes whole: every dense tensor == the TP=2
+    /// reader's halves assembled, the 8-bit trunk re-joined == the TP=2 overlay's rank records
+    /// joined by hand (row halves and column halves), the split / rank forms refused by name.
+    #[test]
+    fn ink41_the_one_card_view_reads_the_two_card_bytes_whole() {
+        let (vdir, tdir) = (
+            Path::new("/mnt/nvme/models/ink2-pack-nv-tp1"),
+            Path::new("/mnt/nvme/models/ink2-pack-nv"),
+        );
+        if !vdir.join("trunk8.json").is_file() || !tdir.join("trunk8/manifest.json").is_file() {
+            eprintln!("skip: {} absent", vdir.display());
+            return;
+        }
+        let pv = crate::inkling2::open_pack(vdir, 1).unwrap();
+        let p2 = crate::inkling2::open_pack(tdir, 2).unwrap();
+        assert!(pv.view && !p2.view);
+        assert_eq!(
+            pv.blobs.canonicalize().unwrap(),
+            tdir.canonicalize().unwrap()
+        );
+        assert_eq!(
+            (pv.ckpt.clone(), pv.plan_sha256.clone()),
+            (p2.ckpt.clone(), p2.plan_sha256.clone())
+        );
+        let rv = PackReader::open(&pv).unwrap();
+        let r2 = PackReader::open(&p2).unwrap();
+        assert_eq!(rv.recs[0].len(), 645);
+        assert!(rv.recs[1].is_empty() && rv.recs[2].is_empty());
+        for n in [
+            "model.layers.3.self_attn.q_proj.weight",
+            "model.layers.3.self_attn.o_proj.weight",
+            "model.layers.5.self_attn.k_sconv.static_weight",
+            "model.layers.0.self_attn.rel_scale",
+            "model.embed_norm.weight",
+        ] {
+            assert_eq!(
+                rv.tensor(n, None).unwrap(),
+                r2.tensor(n, None).unwrap(),
+                "{n}"
+            );
+        }
+        let e = rv
+            .tensor("model.layers.3.self_attn.q_proj.weight", Some(0))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("one-card view"), "{e}");
+        // the 8-bit trunk: the view's whole tensors vs the TP=2 overlay's rank records
+        let w8 = crate::inkling2::InkFlags {
+            ink_trunk: Some("w8-head".into()),
+            ..Default::default()
+        };
+        let rv = rv.with_trunk(&w8, vdir, false).unwrap();
+        let r2 = r2.with_trunk(&w8, tdir, true).unwrap();
+        for (n, axis) in [
+            ("model.layers.3.self_attn.q_proj.weight", 0),
+            ("model.layers.3.self_attn.o_proj.weight", 1),
+            ("model.layers.20.self_attn.v_proj.weight", 0),
+        ] {
+            let (c, s, sh) = rv.tensor_w8(n, None, false).unwrap().unwrap();
+            let (c0, s0, sh0) = r2.tensor_w8(n, Some(0), false).unwrap().unwrap();
+            let (c1, s1, sh1) = r2.tensor_w8(n, Some(1), false).unwrap().unwrap();
+            let join = |a: &[u8], b: &[u8], n0: usize, n1: usize| -> Vec<u8> {
+                if axis == 0 {
+                    [a, b].concat()
+                } else {
+                    (0..sh0[0] as usize)
+                        .flat_map(|i| {
+                            a[i * n0..(i + 1) * n0]
+                                .iter()
+                                .chain(&b[i * n1..(i + 1) * n1])
+                                .copied()
+                        })
+                        .collect()
+                }
+            };
+            let (k0, k1) = (sh0[1] as usize, sh1[1] as usize);
+            assert_eq!(c, join(&c0, &c1, k0, k1), "{n} codes");
+            assert_eq!(s, join(&s0, &s1, k0 / 16, k1 / 16), "{n} scales");
+            assert_eq!(
+                sh,
+                if axis == 0 {
+                    vec![sh0[0] + sh1[0], sh0[1]]
+                } else {
+                    vec![sh0[0], sh0[1] + sh1[1]]
+                }
+            );
+        }
+        assert!(rv
+            .tensor_w8("lm_head.weight", None, true)
+            .unwrap()
+            .is_some());
+        // a rank's record is not the view's form; the global layers stay bf16 (the overlay's policy)
+        assert!(rv
+            .tensor_w8("model.layers.3.self_attn.q_proj.weight", Some(0), false)
+            .is_err());
+        assert!(rv
+            .tensor_w8("model.layers.5.self_attn.q_proj.weight", None, false)
+            .unwrap()
+            .is_none());
+        // the harness form's default stands down to bf16 on the view; the served form takes w8-head
+        let f = crate::inkling2::InkFlags::default();
+        let pv = crate::inkling2::open_pack(vdir, 1).unwrap();
+        assert!(PackReader::open(&pv)
+            .unwrap()
+            .with_trunk(&f, vdir, false)
+            .unwrap()
+            .t8
+            .is_none());
+        let t8 = PackReader::open(&pv)
+            .unwrap()
+            .with_trunk(&f, vdir, true)
+            .unwrap()
+            .t8
+            .unwrap();
+        assert!(t8.head && t8.whole.len() == 141);
     }
 }
