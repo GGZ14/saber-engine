@@ -785,7 +785,7 @@ static __device__ __forceinline__ T ld_w(const T *p) {
   else return *p;
 }
 
-// DTM = number of 16-row M-fragments; the launcher picks ceil(M/16). vLLM captures decode at
+// DTM = number of 16-row M-fragments; the launcher picks ceil(M/16). The host framework captures decode at
 // num_seqs*(SPEC+1): 5/10/20/25/35/40 under mtp at SPEC=4, and batch x 8 under a dflash drafter
 // at SPEC=7, which reaches 64 at max_num_seqs=8. DTM 1..4 covers every reachable batch of both.
 // Use the SMALLEST DTM that covers M: measured at M=20, DTM=2 beats DTM=3 by 12% (89.1 vs 99.9 us
@@ -1011,11 +1011,11 @@ __global__ __launch_bounds__(DWN * 32) void ref_mxfp4_fp8_gemm_decode(
 // Split-K partial slab. PyTorch owns the memory; we only hold the pointer.
 //
 // This used to hipMalloc here and that was wrong twice over. Allocating lazily from launch() puts
-// the allocation inside CUDA-graph capture whenever the torch.compile cache is warm (vLLM then
+// the allocation inside CUDA-graph capture whenever the torch.compile cache is warm (the host framework then
 // skips the eager profile run), where it is illegal. And allocating from this .so at all produced
-// a completely misleading error: quark's TileLang registers a pybind11 exception translator in the
+// a completely misleading error: another loaded extension registers a pybind11 exception translator in the
 // same ABI domain, so ANY C++ exception escaping our module is reported as
-// "HIP runtime library (libamdhip64.so) not found ... TileLang's ROCm backend", pointing at our own
+// a missing HIP runtime library from that extension's ROCm backend, pointing at our own
 // pybind frame. Letting torch allocate it removes both problems and makes the buffer visible from
 // Python, where its lifetime is obvious.
 //
@@ -1328,7 +1328,7 @@ static void launch_p(uintptr_t a, uintptr_t w, uintptr_t ws, uintptr_t wref, uin
 // runs (add+rms_norm) and the traced per-token quant -- 2-3 inductor kernels per site whose
 // tiling inductor chooses for the M=8192 compile hint and replays at M=8 (XBLOCK=1, one row per
 // workgroup, ~4.4 us of kernels + 2 dispatch gaps per site). This kernel does the whole epilogue
-// in ONE launch. Semantics mirror vllm.ir.ops.fused_add_rms_norm with the GemmaRMSNorm weight
+// in ONE launch. Semantics mirror the reference fused add + rms_norm op with the GemmaRMSNorm weight
 // convention plus the reference traced quant, in exactly its precision:
 //   s      = f32(y) + f32(residual)         (fp32 sum feeds BOTH residual_out and the variance)
 //   res_o  = bf16(s)
@@ -1537,7 +1537,7 @@ static void launch_silu_mul_quant(uintptr_t gu, uintptr_t q, uintptr_t scale, in
 // quant in _output_projection, which inductor emits as two kernels per GDN layer (a variance
 // reduction and a normalize+gate+quant). Precision contract mirrors ref_add_rms_quant and
 // the traced reference: fp32 throughout, ((x * rsqrt(mean(x^2) + eps)) * w) * silu(z) rounded
-// to bf16 once, amax over the rounded values, e4m3 with the vLLM min-scale clamp. The per-head
+// to bf16 once, amax over the rounded values, e4m3 with the reference min-scale clamp. The per-head
 // sum of squares is a 16-lane xor-shuffle: 16 consecutive 8-groups make one head and, with ART a
 // multiple of 16 and N a multiple of 128, every 16-lane segment is either fully active or fully
 // idle in each pass. x: [M, N] contiguous bf16; z: [M, N] bf16 with row stride zs (a column

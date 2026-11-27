@@ -58,7 +58,7 @@ const ALPHA: f32 = 0.1;
 const EXT: u64 = 1024;
 
 /// The code objects this path launches.
-pub const PLUGINS: [&str; 35] = [
+pub const PLUGINS: [&str; 38] = [
     "ink_loop",
     "ink_glue",
     "ink_attn",
@@ -91,6 +91,11 @@ pub const PLUGINS: [&str; 35] = [
     "ink_ks49",
     // INK55: the prefill reduce wire (staged push, f32 / bf16, raw / exponent-group coded)
     "ink_xw55",
+    // INK58: the byte-equal prefill trunk re-tiles (LDS-staged iu8 b16, bf16 n-subtile reuse)
+    "ink_p58",
+    "ink_p60",
+    // INK61: the byte-equal prefill stack (MXFP8 64-row tile, router + act quant)
+    "ink_p61",
     // INK55 task C: the key-split prefill attention (global layers, late chunks)
     "ink_fa55",
     // INK54: the row-shared split-key verify attention
@@ -561,6 +566,184 @@ pub const P55_KS_LD: u64 = 132;
 /// INK55: a window slot's dwords for `mode` (P55_ROWS rows of D).
 pub fn p55_slot_dw(mode: u8) -> u64 {
     (P55_ROWS * D).div_ceil(P55_BLK) * P55_STRIDE[mode as usize]
+}
+
+/// INK58 `--ink-p58` items (hip/ink_p58.hip), each byte-equal to the body it replaces.
+pub const P58_I8: u32 = 1;
+pub const P58_BW: u32 = 2;
+/// INK58: the smallest chunk the re-tiles take (the oracle's range 128..2,048 rows; the 128-row tile).
+pub const P58_MIN_ROWS: u64 = 128;
+/// INK58: the iu8 tile's columns (`ink58_i8l_m2n1_g4x4`: 128 rows x 64 columns, 16 waves) and the bf16 body's.
+pub const P58_I8_TILE: (u64, u64) = (128, 64);
+pub const P58_BW_COLS: u64 = 64;
+
+/// INK58: `--ink-p58` -> item bits (`none` / empty = 0, the control; `all` the default since INK59).
+pub fn ink58_bits(v: &str) -> anyhow::Result<u32> {
+    let mut b = 0;
+    for it in v
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && *x != "none")
+    {
+        b |= match it {
+            "i8" => P58_I8,
+            "bw" => P58_BW,
+            "all" => P58_I8 | P58_BW,
+            o => anyhow::bail!("--ink-p58 {o:?}: all (the default) | i8 | bw | none (the control)"),
+        };
+    }
+    Ok(b)
+}
+
+/// INK58: the end line (the re-tiled launches / the trunk GEMMs that kept the shipped body).
+fn p58_line(c: &Card<'_, '_>, f: &InkFlags, tag: &str, rank: u32) {
+    if c.p58 != 0 {
+        println!(
+            "INK58 {tag} rank{rank}: p58 {:?} (0x{:x}): iu8 re-tiled {} / bf16 re-tiled {} / kept the shipped body {}",
+            f.ink58, c.p58, c.p58_n[0], c.p58_n[1], c.p58_n[2]
+        );
+    }
+}
+
+/// INK60 `--ink-p60` items (hip/ink_p60.hip): a NUMERICS arm (the summation order of the MoE prefill GEMM).
+pub const P60_F16: u32 = 1;
+
+/// INK60: `--ink-p60` -> item bits (`none` / empty = 0, THE DEFAULT and the control).
+pub fn ink60_bits(v: &str) -> anyhow::Result<u32> {
+    let mut b = 0;
+    for it in v
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && *x != "none")
+    {
+        b |= match it {
+            "f16" => P60_F16,
+            o => anyhow::bail!(
+                "--ink-p60 {o:?}: f16 (the f16 scale-folded MoE prefill GEMM) | none (the default)"
+            ),
+        };
+    }
+    Ok(b)
+}
+
+/// INK60: the flag's bits, its boot line and (when on) the MXFP8 fold's range counter (one word,
+/// zeroed once; every `ink60_f16_mx_*` launch adds the blocks it could not fold exactly).
+fn p60_setup(c: &mut Card<'_, '_>, f: &InkFlags) -> anyhow::Result<()> {
+    c.p60 = ink60_bits(&f.ink60)?;
+    if c.p60 != 0 && c.p60_cnt == 0 {
+        c.p60_cnt = c.alloc_zero(256)?;
+        println!(
+            "INK60 boot: --ink-p60 {:?} = 0x{:x} (the f16 scale-folded MoE prefill GEMM, a NUMERICS arm; \
+             `none` = the default and the control)",
+            f.ink60, c.p60
+        );
+    }
+    Ok(())
+}
+
+/// INK60: the end line (f16 launches by record kind + the MXFP8 fold's out-of-range blocks, which
+/// must be 0: a non-zero count means a block was folded inexactly and the run is not the arm's law).
+fn p60_line(c: &Card<'_, '_>, f: &InkFlags, tag: &str, rank: u32) -> anyhow::Result<()> {
+    if c.p60 == 0 {
+        return Ok(());
+    }
+    c.hip.sync_stream(&c.stream)?;
+    let w = c.read(c.p60_cnt, 4)?;
+    let bad = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
+    println!(
+        "INK60 {tag} rank{rank}: p60 {:?}: f16 nvfp4 launches {} / mxfp8 launches {} / mxfp8 blocks out of the \
+         f16 range {bad}{}",
+        f.ink60,
+        c.p60_n[0],
+        c.p60_n[1],
+        if bad == 0 { "" } else { " -- INEXACT FOLD: this run is void" }
+    );
+    ensure!(
+        bad == 0,
+        "INK60: {bad} MXFP8 blocks outside the exact f16 fold range"
+    );
+    Ok(())
+}
+
+/// INK61 `--ink-p61` letters (hip/ink_p61.hip), each byte-equal to the body it replaces.
+/// `a` = the MXFP8 expert GEMMs (layers 20..23) of a sorted prefill visit on INK37's 64-row tile
+/// (`ink61_mx8_tm4_n2_g*`, 64 x 256 a workgroup; byte-equal to `ink_mx8_w8a8_g*` per row);
+/// `b` = the prefill router + the MoE cells' act quant in one launch (`ink61_route_q8_e128_r4` ==
+/// `ink37_post_norm_route_e128_r4` + `ink_act_quant_rows` byte for byte).
+pub const P61_MX8: u32 = 1;
+pub const P61_RQ8: u32 = 2;
+/// INK61: the MXFP8 64-row body's columns a workgroup.
+pub const P61_MX8_BN: u64 = 256;
+
+/// INK61: `--ink-p61` -> item bits (`none` / empty = 0, the control): letters `a` / `b` (a run of
+/// letters, comma separated or not), `all` = every letter.
+pub fn ink61_bits(v: &str) -> anyhow::Result<u32> {
+    let mut b = 0;
+    for it in v
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && *x != "none")
+    {
+        if it == "all" {
+            b |= P61_MX8 | P61_RQ8;
+            continue;
+        }
+        for ch in it.chars() {
+            b |= match ch {
+                'a' => P61_MX8,
+                'b' => P61_RQ8,
+                o => anyhow::bail!(
+                    "--ink-p61 {it:?} ({o:?}): letters a (MXFP8 64-row tile) | b (router + act quant) | all | none (the control)"
+                ),
+            };
+        }
+    }
+    Ok(b)
+}
+
+/// INK61: the flag's bits + the boot line (the control named).
+fn p61_setup(c: &mut Card<'_, '_>, f: &InkFlags) -> anyhow::Result<()> {
+    c.p61 = ink61_bits(&f.ink61)?;
+    println!(
+        "INK61 boot: --ink-p61 {:?} = 0x{:x} (byte-equal prefill stack: a = MXFP8 64-row tile, b = router + act \
+         quant; the default `ab` since INK61, `{}` = the shipped bodies)",
+        f.ink61,
+        c.p61,
+        crate::inkling2::INK61_CONTROL
+    );
+    Ok(())
+}
+
+/// INK61: the end line (launches by letter).
+fn p61_line(c: &Card<'_, '_>, f: &InkFlags, tag: &str, rank: u32) {
+    if c.p61 != 0 {
+        println!(
+            "INK61 {tag} rank{rank}: p61 {:?} (0x{:x}): a mxfp8 64-row visits {} / b fused router + quant {}",
+            f.ink61, c.p61, c.p61_n[0], c.p61_n[1]
+        );
+    }
+}
+
+/// INK61: the boot line of the prefill reduce wire (`c16` the default since INK61, the rollback named;
+/// a one-card boot has no exchange, so the wire is inert there).
+fn p55_boot_line(f: &InkFlags, p55: &P55) {
+    println!(
+        "INK55 boot: --ink-p55 {:?} = {} (the prefill reduce wire; the default `c16` since INK61, `{}` = the \
+         pulled f32 exchange; inert on one card)",
+        f.ink55,
+        p55.mode.map_or("off", |m| P55_SYM[m as usize]),
+        crate::inkling2::INK55_CONTROL
+    );
+}
+
+/// INK59: the boot line (the prefill trunk re-tiles; `all` the default since INK59, the rollback named).
+fn p58_boot_line(f: &InkFlags, p58: u32) {
+    println!(
+        "INK58 boot: --ink-p58 {:?} = 0x{p58:x} (byte-equal prefill trunk re-tiles; the default `all` since INK59, \
+         `{}` = the shipped bodies)",
+        f.ink58,
+        crate::inkling2::INK58_CONTROL
+    );
 }
 
 /// INK55: the end line (the reduces on the wire / stood down past the window).
@@ -1630,6 +1813,19 @@ pub struct Card<'h, 'm> {
     pub p55: P55,
     /// wire reduces / stood down past the window / key-split attention launches (task C)
     pub p55_n: [u64; 3],
+    /// INK58: `--ink-p58` items + (iu8 re-tiled, bf16 re-tiled, kept the shipped body)
+    pub p58: u32,
+    pub p58_n: [u64; 3],
+    /// INK60: `--ink-p60` items + (NVFP4 f16 launches, MXFP8 f16 launches) + the MXFP8 range
+    /// counter's device word (0 = not allocated)
+    pub p60: u32,
+    pub p60_n: [u64; 2],
+    pub p60_cnt: u64,
+    /// INK61: `--ink-p61` letters + (a: MXFP8 64-row visits, b: fused router + quant launches)
+    pub p61: u32,
+    pub p61_n: [u64; 2],
+    /// INK60 `--ink-pfk`: a pass's head runs every row in 8-row GEMV launches
+    pub pfk_head: bool,
     /// INK54: the row-shared verify launches
     pub p54_n: u64,
     /// INK54 `--ink-p54` (the wake arm) + the wake launches
@@ -1747,6 +1943,14 @@ impl<'h, 'm> Card<'h, 'm> {
             p49_n: [0; 2],
             p55: P55_OFF,
             p55_n: [0; 3],
+            p58: 0,
+            p58_n: [0; 3],
+            p60: 0,
+            p60_n: [0; 2],
+            p60_cnt: 0,
+            p61: 0,
+            p61_n: [0; 2],
+            pfk_head: false,
             p54_n: 0,
             p54: P54 {
                 yield_steps: 0,
@@ -2304,7 +2508,20 @@ impl<'h, 'm> Card<'h, 'm> {
         } else {
             kx_slices(m, n, k)
         };
+        // INK58 `i8`: the LDS-staged b16 tile (byte-equal) on a >= 128-row chunk with whole 64-column tiles
+        let p58 = b16 && self.p58 & P58_I8 != 0 && m >= P58_MIN_ROWS && n % P58_I8_TILE.1 == 0;
+        if b16 && self.p58 & P58_I8 != 0 && !p58 {
+            self.p58_n[2] += 1;
+        }
         let (sym, grid, block) = match kx {
+            _ if p58 => {
+                self.p58_n[0] += 1;
+                (
+                    "ink58_i8l_m2n1_g4x4".to_string(),
+                    [n / P58_I8_TILE.1, m.div_ceil(P58_I8_TILE.0), 1],
+                    512,
+                )
+            }
             Some(sl) => {
                 self.p29_n[0] += 1;
                 (
@@ -2369,6 +2586,32 @@ impl<'h, 'm> Card<'h, 'm> {
         };
         if a % 16 != 0 || w.addr % 16 != 0 || w.es != 2 {
             return Ok(false);
+        }
+        // INK58 `bw`: 4 n-subtiles a wave on one converted activation fragment (byte-equal)
+        if self.p58 & P58_BW != 0 {
+            if m >= P58_MIN_ROWS && n % P58_BW_COLS == 0 && (sl == 2 || sl == 3) {
+                self.launch(
+                    &format!("ink58_bw_t4_s{sl}"),
+                    [n / P58_BW_COLS, m.div_ceil(16), 1],
+                    32 * sl as u32,
+                    &[
+                        A::P(a),
+                        pi(k),
+                        A::P(w.addr),
+                        pi(k),
+                        A::P(c),
+                        pi(ldc),
+                        pi(m),
+                        pi(n),
+                        pi(k),
+                        A::I(i32::from(acc)),
+                    ],
+                )?;
+                self.p29_n[1] += 1;
+                self.p58_n[1] += 1;
+                return Ok(true);
+            }
+            self.p58_n[2] += 1;
         }
         self.launch(
             &format!("ink29_gemm_bw_s{sl}"),
@@ -4939,6 +5182,8 @@ impl Forward<'_> {
         let as_ = c.z4(Reg::Visit, t, "as")?;
         // INK10: the route's sort tables of part 0, taken before the route when it is fused
         let mut tabs0: Option<[u64; 7]> = None;
+        // INK61 `b`: the router launch wrote a8 / as too
+        let mut q_done = false;
         // INK30: `r1` also takes every row count the logits + tail pair ran (<= 32, <= 8 under pf):
         // the 24-row batched verify; the same tables (the tail's stable 256-wide rank)
         let r1_rows = if c.pf { 8 } else { 32 };
@@ -5021,6 +5266,37 @@ impl Forward<'_> {
             )?;
             // INK9: the top-8 rides ink_route_tail with the act quant and the first route sort
             tail_sk = Some(sk);
+        } else if t > 8
+            && c.p35_live
+            && c.p37 & P37_GLUE != 0
+            && c.p37 & P37_GLUE8 == 0
+            && c.p61 & P61_RQ8 != 0
+        {
+            // INK61 `b`: INK37's 4-row router + the act quant of its u in one launch (the same bytes)
+            c.p61_n[1] += 1;
+            c.launch(
+                "ink61_route_q8_e128_r4",
+                [t.div_ceil(4), 1, 1],
+                128,
+                &[
+                    A::P(h),
+                    pi(D),
+                    A::P(lw.post_ln),
+                    A::P(lw.router),
+                    A::P(lw.bias),
+                    A::P(u),
+                    pi(D),
+                    A::P(ids),
+                    A::P(wts),
+                    pi(D),
+                    A::F(8.0),
+                    pi(t),
+                    A::P(a8),
+                    pi(D),
+                    A::P(as_),
+                ],
+            )?;
+            q_done = true;
         } else if t > 8 && c.p35_live && c.p37 & (P37_GLUE | P37_GLUE8) != 0 {
             // INK37 `glue`: the same bytes, R rows a workgroup (the router rows read once per R)
             let r = if c.p37 & P37_GLUE8 != 0 { 8 } else { 4 };
@@ -5069,7 +5345,7 @@ impl Forward<'_> {
             )?;
         }
         let kind = self.x.kind[&l].as_str();
-        if tail_sk.is_none() && tabs0.is_none() {
+        if tail_sk.is_none() && tabs0.is_none() && !q_done {
             c.launch(
                 "ink_act_quant_rows",
                 [t, 1, 1],
@@ -5088,7 +5364,25 @@ impl Forward<'_> {
             } else {
                 None
             };
-            let tr = if let Some(r) = p37r {
+            // INK60 `f16`: the scale-folded f16 cells at INK37's 64-row tile, both record kinds, wherever
+            // INK37's tile fires for the NVFP4 layers (the same chunk rows on the MXFP8 layers)
+            let p60 = c.p60 & P60_F16 != 0
+                && sorted
+                && t > 8
+                && c.p35_live
+                && (kind == "nvfp4_native" || kind == "mxfp8_native")
+                && p37_rows(c.p37 | P37_MOE, t).is_some();
+            // INK61 `a`: the MXFP8 cell on INK37's 64-row tile at the same chunk rows (byte-equal per row)
+            let p61a = !p60
+                && c.p61 & P61_MX8 != 0
+                && sorted
+                && t > 8
+                && c.p35_live
+                && kind == "mxfp8_native"
+                && p37_rows(c.p37 | P37_MOE, t).is_some();
+            let tr = if p60 || p61a {
+                64
+            } else if let Some(r) = p37r {
                 r
             } else if sorted && t > 8 && kind == "nvfp4_native" && c.p29 & P29_MT != 0 {
                 mt_rows(t)
@@ -5171,6 +5465,14 @@ impl Forward<'_> {
             let mut a1 = vec![A::P(a8), A::P(xgu)];
             a1.extend(tt.iter().cloned());
             let (s1, s0) = match kind {
+                "nvfp4_native" if p60 => {
+                    c.p60_n[0] += 1;
+                    ("ink60_f16_nv2_g1", "ink60_f16_nv2_g0")
+                }
+                "mxfp8_native" if p60 => {
+                    c.p60_n[1] += 1;
+                    ("ink60_f16_mx_g1", "ink60_f16_mx_g0")
+                }
                 "mxfp4" => (
                     "moe_grouped_w4a8_bk128_ks1_tm1_g1",
                     "moe_grouped_w4a8_bk128_ks1_tm1_g0",
@@ -5197,26 +5499,40 @@ impl Forward<'_> {
                         "fn148_w4a8b_bk128_ks1_tm1_g0",
                     ),
                 },
+                "mxfp8_native" if p61a => {
+                    c.p61_n[0] += 1;
+                    ("ink61_mx8_tm4_n2_g1", "ink61_mx8_tm4_n2_g0")
+                }
                 "mxfp8_native" => ("ink_mx8_w8a8_g1", "ink_mx8_w8a8_g0"),
                 k => bail!("layer {l}: expert kind {k:?}"),
             };
-            if kind == "mxfp8_native" {
+            // INK60: the f16 cells take FN148's signature for both kinds (`cnt` = the range counter)
+            let cnt60 = if p60 { c.p60_cnt } else { cnt };
+            if kind == "mxfp8_native" && !p60 {
                 a1.extend([A::P(as_), A::P(gu), pi(2 * I), pi(D)]);
             } else {
                 a1.extend([
                     A::P(as_),
                     A::P(dummy),
-                    A::P(cnt),
+                    A::P(cnt60),
                     A::P(gu),
                     pi(2 * I),
                     pi(D),
                     A::I(0),
                 ]);
-                if kind == "nvfp4_native" {
+                if kind == "nvfp4_native" || p60 {
                     a1.push(pi(I));
                 }
             }
-            c.launch(s1, [2 * I / 128, maxt, 1], 256, &a1)?;
+            // INK60: the NVFP4 f16 body (nv2) is 256 columns a workgroup
+            let bn = if p60 && kind == "nvfp4_native" {
+                256
+            } else if p61a {
+                P61_MX8_BN
+            } else {
+                128
+            };
+            c.launch(s1, [2 * I / bn, maxt, 1], 256, &a1)?;
             let q8 = c.take(Reg::Visit, maxrows * I, "q8")?;
             let qs = c.z4(Reg::Visit, maxrows, "qs")?;
             c.launch(
@@ -5240,19 +5556,19 @@ impl Forward<'_> {
             )?;
             let mut a0 = vec![A::P(q8), A::P(xdn)];
             a0.extend(tt.iter().cloned());
-            if kind == "mxfp8_native" {
+            if kind == "mxfp8_native" && !p60 {
                 a0.extend([A::P(qs), A::P(dn), pi(D), pi(I)]);
             } else {
                 a0.extend([
                     A::P(qs),
                     A::P(dummy),
-                    A::P(cnt),
+                    A::P(cnt60),
                     A::P(dn),
                     pi(D),
                     pi(I),
                     A::I(0),
                 ]);
-                if kind == "nvfp4_native" {
+                if kind == "nvfp4_native" || p60 {
                     a0.push(pi(D));
                 }
             }
@@ -5261,7 +5577,7 @@ impl Forward<'_> {
                 c.launch("ink_wake54", [1, 1, 1], 32, &[A::P(pf + FZ_WAKE)])?;
                 c.wake_n += 1;
             }
-            c.launch(s0, [D / 128, maxt, 1], 256, &a0)?;
+            c.launch(s0, [D / bn, maxt, 1], 256, &a0)?;
             if let Some(pf) = push_to {
                 if c.p54.wake && !c.p54.wake_early {
                     c.launch("ink_wake54", [1, 1, 1], 32, &[A::P(pf + FZ_WAKE)])?;
@@ -5952,9 +6268,38 @@ impl Forward<'_> {
         let hs = hn + head_from * D * 4;
         let vpad: u64 = self.w.head.iter().map(Tw::rows).sum();
         let lg = c.z4(Reg::Pass, rows * vpad, "logits")?;
+        let pr_rank = self.peer.map_or(0, |p| p.rank);
+        let tstamp = |c: &Card<'_, '_>, what: &str| -> anyhow::Result<()> {
+            if c.pfk_head {
+                c.hip.sync_stream(&c.stream)?;
+                let t = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0.0, |d| d.as_secs_f64());
+                println!("PFKT rank{pr_rank} {what} {t:.3}");
+            }
+            Ok(())
+        };
+        tstamp(c, "trunk-done")?;
         let mut col = 0;
         for hw in &self.w.head {
-            c.gemm(hs, rows, D, hw, lg + col * 4, vpad, false)?;
+            if c.pfk_head && rows > PFK_HEAD_ROWS {
+                // INK60 `--ink-pfk`: every row through the served head's own GEMV class, 8 rows a
+                // launch (the column-lane f32 GEMM over 2,048 rows x the 100k-column half is ~100x slower)
+                for r0 in (0..rows).step_by(PFK_HEAD_ROWS as usize) {
+                    let mr = (rows - r0).min(PFK_HEAD_ROWS);
+                    c.gemm(
+                        hs + r0 * D * 4,
+                        mr,
+                        D,
+                        hw,
+                        lg + (r0 * vpad + col) * 4,
+                        vpad,
+                        false,
+                    )?;
+                }
+            } else {
+                c.gemm(hs, rows, D, hw, lg + col * 4, vpad, false)?;
+            }
             col += hw.rows();
         }
         c.launch(
@@ -5963,6 +6308,7 @@ impl Forward<'_> {
             256,
             &[A::P(lg), A::L((rows * vpad) as i64), A::F(30.0)],
         )?;
+        tstamp(c, "head-done")?;
         if let Some(pr) = self.peer.filter(|p| p.dev) {
             // INK8: the head's vocab halves gathered on the card: rank 0 = [its half | the
             // peer's], read over P2P; rank 1 only answers the handshake (rows 0)
@@ -6075,6 +6421,75 @@ fn pass_lg(
 /// region's one reset (served single TTFT p50 +2 ms at the 8-row floor, s2 / s2b).
 fn hg_form(c: &Card<'_, '_>, fw: &Forward<'_>, t: u64) -> bool {
     c.p36 & P36_HG != 0 && t >= HG_MIN_ROWS && !fw.graph && !fw.batch && !fw.vrow && fw.mrow == 0
+}
+
+/// INK60: the reference's ids a position in `--ink-pfk-ref` (ref_gpu.py's top-20).
+pub const PFK_REF: usize = 20;
+/// INK60: `--ink-pfk`'s head rows a launch (the served GEMV's widest form, `m <= 8`).
+pub const PFK_HEAD_ROWS: u64 = 8;
+
+/// INK60 `--ink-pfk K`: each logits row (`VOCAB` f32, the softcapped head) -> one record of
+/// little-endian 4-byte words: argmax (i32), log-sum-exp (f32, summed in f64), the row's own top-K
+/// ids (i32, descending) then their logprobs (f32), then the logprobs at the reference's ids `rf`
+/// (`PFK_REF` a row, f32; absent when `rf` is empty). Rows split over the host's threads.
+pub fn pfk_rows(rows: &[u8], k: usize, rf: &[i32]) -> Vec<u8> {
+    let n = rows.len() / (VOCAB * 4);
+    let rec = 2 + 2 * k + if rf.is_empty() { 0 } else { PFK_REF };
+    let mut out = vec![0u8; n * rec * 4];
+    let nt = std::thread::available_parallelism()
+        .map_or(8, |x| x.get())
+        .min(16);
+    let per = n.div_ceil(nt.max(1)).max(1);
+    std::thread::scope(|sc| {
+        for (ti, dst) in out.chunks_mut(per * rec * 4).enumerate() {
+            sc.spawn(move || {
+                for (j, d) in dst.chunks_exact_mut(rec * 4).enumerate() {
+                    let r = ti * per + j;
+                    let row: Vec<f32> = rows[r * VOCAB * 4..(r + 1) * VOCAB * 4]
+                        .chunks_exact(4)
+                        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                        .collect();
+                    let (mut am, mut mx) = (0usize, f32::NEG_INFINITY);
+                    // the top-K, kept descending (ties: the lower id first, as a stable sort)
+                    let mut top: Vec<(f32, u32)> = Vec::with_capacity(k + 1);
+                    for (i, &v) in row.iter().enumerate() {
+                        if v > mx {
+                            mx = v;
+                            am = i;
+                        }
+                        if top.len() < k || v > top[top.len() - 1].0 {
+                            let at = top.partition_point(|&(x, _)| x >= v);
+                            top.insert(at, (v, i as u32));
+                            top.truncate(k);
+                        }
+                    }
+                    let m = f64::from(mx);
+                    let lse = m + row
+                        .iter()
+                        .map(|&v| (f64::from(v) - m).exp())
+                        .sum::<f64>()
+                        .ln();
+                    let mut w = |i: usize, b: [u8; 4]| d[i * 4..i * 4 + 4].copy_from_slice(&b);
+                    w(0, (am as i32).to_le_bytes());
+                    w(1, (lse as f32).to_le_bytes());
+                    for (q, &(v, id)) in top.iter().enumerate() {
+                        w(2 + q, (id as i32).to_le_bytes());
+                        w(2 + k + q, ((f64::from(v) - lse) as f32).to_le_bytes());
+                    }
+                    if !rf.is_empty() {
+                        for q in 0..PFK_REF {
+                            let id = rf[r * PFK_REF + q] as usize;
+                            w(
+                                2 + 2 * k + q,
+                                ((f64::from(row[id]) - lse) as f32).to_le_bytes(),
+                            );
+                        }
+                    }
+                }
+            });
+        }
+    });
+    out
 }
 
 fn pass(
@@ -6222,6 +6637,11 @@ pub fn run(
     (c.p40, c.p40_fam) = ink40_bits(&f.ink40)?;
     c.p49 = ink49_bits(&f.ink49)?;
     c.p55 = ink55_bits(&f.ink55)?;
+    p55_boot_line(f, &c.p55);
+    c.p58 = ink58_bits(&f.ink58)?;
+    p58_boot_line(f, c.p58);
+    p60_setup(&mut c, f)?;
+    p61_setup(&mut c, f)?;
     c.p54 = ink54_bits(&f.ink54)?;
     if c.p49 != P49_OFF {
         println!(
@@ -6630,6 +7050,11 @@ fn run_one_card(
     (c.p40, c.p40_fam) = ink40_bits(&f.ink40)?;
     c.p49 = ink49_bits(&f.ink49)?;
     c.p55 = ink55_bits(&f.ink55)?;
+    p55_boot_line(f, &c.p55);
+    c.p58 = ink58_bits(&f.ink58)?;
+    p58_boot_line(f, c.p58);
+    p60_setup(&mut c, f)?;
+    p61_setup(&mut c, f)?;
     c.p54 = ink54_bits(&f.ink54)?;
     if c.p49 != P49_OFF {
         println!(
@@ -6671,6 +7096,11 @@ fn run_one_card(
         mrow: 0,
     };
     let r = serve::rank_serve(&mut c, &fw, &pk, &w, f, 0, &p.blobs.join("draft"));
+    // INK59: the one-card serve's end lines (the two-card plane prints them per rank)
+    p55_line(&c, f, "serve1", 0);
+    p58_line(&c, f, "serve1", 0);
+    p60_line(&c, f, "serve1", 0)?;
+    p61_line(&c, f, "serve1", 0);
     drop(fw);
     drop(c);
     drop(ps);
@@ -6760,6 +7190,11 @@ fn rank_main(
     (c.p40, c.p40_fam) = ink40_bits(&f.ink40)?;
     c.p49 = ink49_bits(&f.ink49)?;
     c.p55 = ink55_bits(&f.ink55)?;
+    p55_boot_line(f, &c.p55);
+    c.p58 = ink58_bits(&f.ink58)?;
+    p58_boot_line(f, c.p58);
+    p60_setup(&mut c, f)?;
+    p61_setup(&mut c, f)?;
     c.p54 = ink54_bits(&f.ink54)?;
     if c.p49 != P49_OFF {
         println!(
@@ -6786,6 +7221,10 @@ fn rank_main(
     tx.send(pwin).context("peer gone")?;
     // INK55: the wire's receive window (two slots), only when the arm asks for it
     c.p55 = ink55_bits(&f.ink55)?;
+    p55_boot_line(f, &c.p55);
+    c.p58 = ink58_bits(&f.ink58)?;
+    p60_setup(&mut c, f)?;
+    p61_setup(&mut c, f)?;
     let pwin55 = match c.p55.mode {
         Some(m) if dev => {
             ensure!(
@@ -6864,6 +7303,9 @@ fn rank_main(
     if f.ink_serve.is_some() {
         let r = serve::rank_serve(&mut c, &fw, &pk, &w, f, link, &p.blobs.join("draft"));
         p55_line(&c, f, "serve", rank);
+        p58_line(&c, f, "serve", rank);
+        p60_line(&c, f, "serve", rank)?;
+        p61_line(&c, f, "serve", rank);
         drop(fw);
         drop(peer);
         drop(c);
@@ -6958,7 +7400,10 @@ fn rank_main(
             // chunks through the per-visit caches (the served chunk law), each chunk's host clock
             // and (`--ink-op-timing`) every launch timed -> pfcensus_<pid>_rank<r>.json; no oracle
             // rows are read (any meta.json with `token_ids` serves).
+            // INK60: the prompt's caches are freed after it (a 76-prompt run leaked them into an OOM)
+            let keep0 = c.keep.len();
             let cache = Cache::new(&mut c, &w, &fw.sched, f.ink_cache_ctx, f.ink_local_ring, 1)?;
+            let keep1 = c.keep.len();
             let mut fwd = Forward {
                 pos0: 0,
                 graph: false,
@@ -6968,6 +7413,26 @@ fn rank_main(
             let n0 = p_ids.len();
             let ch = usize::try_from(f.ink_chunk)?;
             let (mut p0, mut k, mut chunks) = (0usize, 0usize, Vec::new());
+            // INK60 `--ink-pfk K`: every row of every chunk scored (the head over all rows) + the
+            // reference's top-20 ids a position (`--ink-pfk-ref <dir>/<id>.i32`)
+            let pfk = f.ink_pfk as usize;
+            let pfk_ref = match (&f.ink_pfk_ref, pfk) {
+                (Some(d), 1..) if rank == 0 => {
+                    let b = std::fs::read(d.join(format!("{pid}.i32")))
+                        .with_context(|| format!("--ink-pfk-ref {}/{pid}.i32", d.display()))?;
+                    ensure!(
+                        b.len() == n0 * PFK_REF * 4,
+                        "{pid}: the reference ids hold {} rows, the prompt {n0}",
+                        b.len() / (PFK_REF * 4)
+                    );
+                    b.chunks_exact(4)
+                        .map(|w| i32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+                        .collect::<Vec<_>>()
+                }
+                _ => Vec::new(),
+            };
+            let mut pfk_out = Vec::new();
+            c.pfk_head = pfk > 0;
             let tall = Instant::now();
             while p0 < n0 {
                 let e = (p0 + ch).min(n0);
@@ -6978,16 +7443,36 @@ fn rank_main(
                 }
                 let ts = Instant::now();
                 let l0 = c.k.launches;
+                if pfk > 0 {
+                    println!(
+                        "PFKT rank{rank} start {:.3}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0.0, |d| d.as_secs_f64())
+                    );
+                }
                 let lastrow = pass(
                     &mut c,
                     &fwd,
                     &pk,
                     Some(&cache),
                     &p_ids[p0..e],
-                    (e - p0 - 1) as u64,
+                    if pfk > 0 { 0 } else { (e - p0 - 1) as u64 },
                 )?;
                 let ms = ts.elapsed().as_secs_f64() * 1e3;
-                if rank == 0 {
+                if rank == 0 && pfk > 0 {
+                    let rr = if pfk_ref.is_empty() {
+                        &[][..]
+                    } else {
+                        &pfk_ref[p0 * PFK_REF..e * PFK_REF]
+                    };
+                    pfk_out.extend(pfk_rows(&lastrow, pfk, rr));
+                    // the chunk's last row (the head over every row: the M = rows class)
+                    std::fs::write(
+                        out.join(format!("pfc_{pid}_c{k}.f32")),
+                        &lastrow[(e - p0 - 1) * VOCAB * 4..],
+                    )?;
+                } else if rank == 0 {
                     // every chunk's last logits row (the arms' byte compare)
                     std::fs::write(out.join(format!("pfc_{pid}_c{k}.f32")), &lastrow)?;
                 }
@@ -7014,6 +7499,15 @@ fn rank_main(
                 k += 1;
             }
             let tot = tall.elapsed().as_secs_f64() * 1e3;
+            c.pfk_head = false;
+            if rank == 0 && pfk > 0 {
+                std::fs::write(out.join(format!("pfk_{pid}.bin")), &pfk_out)?;
+                println!(
+                    "PFK {pid} rows {n0} k {pfk} ref {} record {} words",
+                    !pfk_ref.is_empty(),
+                    2 + 2 * pfk + if pfk_ref.is_empty() { 0 } else { PFK_REF }
+                );
+            }
             std::fs::write(
                 out.join(format!("pfcensus_{pid}_rank{rank}.json")),
                 serde_json::to_string(&json!({"prompt_rows": n0, "chunk": ch,
@@ -7022,6 +7516,14 @@ fn rank_main(
             if rank == 0 {
                 println!("PFC {pid} total rows {n0} chunk {ch} {tot:.1} ms");
             }
+            drop(cache);
+            c.hip.sync_stream(&c.stream)?;
+            ensure!(
+                c.keep.len() == keep1,
+                "pfc {pid}: {} allocations past the prompt's caches; not freed",
+                c.keep.len() - keep1
+            );
+            c.keep.truncate(keep0);
             continue;
         }
         let gen = ids_of(&meta["generated_ids"]);
@@ -7266,6 +7768,7 @@ fn rank_main(
         t0.elapsed().as_secs_f64(),
         c.k.launches
     );
+    p60_line(&c, f, "harness", rank)?;
     let diag = c.fuse_diag()?;
     println!(
         "INK10 {tag} rank{rank}: fuse {} ({:#x}), push-spin timeouts {diag}",
@@ -7292,6 +7795,8 @@ fn rank_main(
         );
     }
     p55_line(&c, f, tag, rank);
+    p58_line(&c, f, tag, rank);
+    p61_line(&c, f, tag, rank);
     if c.p49 != P49_OFF {
         println!(
             "INK49 {tag} rank{rank}: p49 {:?} ({:?}): split launches target {} / drafter {}; INK54 row-shared verify {}",
@@ -9016,9 +9521,13 @@ mod tests {
 
     #[test]
     fn ink55_wire_flag_and_window() {
-        // the default is the control (the pulled f32 exchange)
+        // INK61: the default is c16 (the bf16 coded wire); `INK55_CONTROL` = the pulled f32 exchange
+        let d = ink55_bits(&crate::inkling2::InkFlags::default().ink55).unwrap();
+        assert_eq!((d.mode, d.parts, d.min_rows, d.ks), (Some(3), 1, 128, 0));
+        assert_eq!(P55_SYM[3], "ink_xw55_c16");
+        assert_eq!(crate::inkling2::INK55_CONTROL, "--ink-p55 none");
         assert_eq!(
-            ink55_bits(&crate::inkling2::InkFlags::default().ink55).unwrap(),
+            ink55_bits(crate::inkling2::INK55_CONTROL.trim_start_matches("--ink-p55 ")).unwrap(),
             P55_OFF
         );
         let c = ink55_bits("c16,p8,r128").unwrap();
@@ -9265,6 +9774,114 @@ mod tests {
         assert_eq!(mt_rows(25), 16);
         assert_eq!(mt_rows(405), 32);
         assert_eq!(mt_rows(1024), 64);
+    }
+
+    #[test]
+    fn ink60_the_f16_fold_is_an_arm_and_pfk_scores_every_row() {
+        // INK60: `none` is the default (the control); `f16` the numerics arm
+        assert_eq!(ink60_bits(crate::inkling2::DEFAULT_INK60).unwrap(), 0);
+        assert_eq!(ink60_bits("none").unwrap(), 0);
+        assert_eq!(ink60_bits("f16").unwrap(), P60_F16);
+        assert!(ink60_bits("f8").is_err());
+        assert!(PLUGINS.contains(&"ink_p60"));
+        // the f16 cells take INK37's 64-row tile at the 2,048-row chunk (both record kinds); nv2 tiles
+        // 256 columns, the MXFP8 body 128: both expert GEMMs' N are whole tiles
+        assert_eq!(p37_rows(P37_MOE, 2048), Some(64));
+        assert_eq!((2 * I) % 256, 0);
+        assert_eq!(D % 256, 0);
+        // pfk_rows: two rows, k 3, the reference ids -> argmax, lse, own top-3, logprobs at the ids
+        let mut rows = vec![0f32; 2 * VOCAB];
+        rows[7] = 5.0;
+        rows[9] = 4.0;
+        rows[3] = 4.0;
+        rows[VOCAB + 100] = -1.0;
+        rows[VOCAB + 200] = 2.0;
+        let b: Vec<u8> = rows.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let mut rf = vec![0i32; 2 * PFK_REF];
+        rf[0] = 9;
+        rf[PFK_REF] = 200;
+        let out = pfk_rows(&b, 3, &rf);
+        let rec = 2 + 2 * 3 + PFK_REF;
+        assert_eq!(out.len(), 2 * rec * 4);
+        let w = |r: usize, i: usize| {
+            let o = (r * rec + i) * 4;
+            [out[o], out[o + 1], out[o + 2], out[o + 3]]
+        };
+        assert_eq!(i32::from_le_bytes(w(0, 0)), 7);
+        assert_eq!(i32::from_le_bytes(w(1, 0)), 200);
+        let lse0 = f64::from(f32::from_le_bytes(w(0, 1)));
+        let want = (5f64.exp() + 2.0 * 4f64.exp() + (VOCAB - 3) as f64).ln();
+        assert!((lse0 - want).abs() < 1e-5, "{lse0} vs {want}");
+        // own top-3 descending, ties by the lower id first
+        assert_eq!(
+            (1..4)
+                .map(|q| i32::from_le_bytes(w(0, q + 1)))
+                .collect::<Vec<_>>(),
+            vec![7, 3, 9]
+        );
+        let lp9 = f64::from(f32::from_le_bytes(w(0, 2 + 2 * 3)));
+        assert!((lp9 - (4.0 - want)).abs() < 1e-5);
+        let lp200 = f64::from(f32::from_le_bytes(w(1, 2 + 2 * 3)));
+        assert!(lp200 < 0.0 && lp200 > -13.0);
+    }
+
+    #[test]
+    fn ink61_the_prefill_stack_letters_parse_and_ab_is_the_default() {
+        assert_eq!(
+            ink61_bits(crate::inkling2::DEFAULT_INK61).unwrap(),
+            P61_MX8 | P61_RQ8,
+            "the default is the stack a + b"
+        );
+        assert_eq!(crate::inkling2::INK61_CONTROL, "--ink-p61 none");
+        assert_eq!(
+            ink61_bits(crate::inkling2::INK61_CONTROL.trim_start_matches("--ink-p61 ")).unwrap(),
+            0,
+            "the rollback is the shipped bodies"
+        );
+        assert_eq!(ink61_bits("").unwrap(), 0);
+        assert_eq!(ink61_bits("a").unwrap(), P61_MX8);
+        assert_eq!(ink61_bits("b").unwrap(), P61_RQ8);
+        assert_eq!(ink61_bits("ab").unwrap(), P61_MX8 | P61_RQ8);
+        assert_eq!(ink61_bits("a,b").unwrap(), P61_MX8 | P61_RQ8);
+        assert_eq!(ink61_bits("all").unwrap(), P61_MX8 | P61_RQ8);
+        assert!(ink61_bits("c").is_err());
+        assert!(ink61_bits("a,x").is_err());
+        assert!(PLUGINS.contains(&"ink_p61"));
+        // the MXFP8 GEMMs' N (2 I gate_up, D down) are whole 256-column tiles, K a whole 128-deep slab
+        for n in [2 * I, D] {
+            assert_eq!(n % P61_MX8_BN, 0);
+        }
+        for k in [I, D] {
+            assert_eq!(k % 128, 0);
+        }
+    }
+
+    #[test]
+    fn ink58_the_trunk_retiles_parse_and_all_is_the_default() {
+        // INK59: `all` is the default; `INK58_CONTROL` (`--ink-p58 none`) = the rollback
+        assert_eq!(
+            ink58_bits(crate::inkling2::DEFAULT_INK58).unwrap(),
+            P58_I8 | P58_BW,
+            "the default is all"
+        );
+        assert_eq!(crate::inkling2::INK58_CONTROL, "--ink-p58 none");
+        assert_eq!(
+            ink58_bits(crate::inkling2::INK58_CONTROL.trim_start_matches("--ink-p58 ")).unwrap(),
+            0,
+            "the rollback is the shipped bodies"
+        );
+        assert_eq!(ink58_bits("none").unwrap(), 0);
+        assert_eq!(ink58_bits("i8").unwrap(), P58_I8);
+        assert_eq!(ink58_bits("bw").unwrap(), P58_BW);
+        assert_eq!(ink58_bits("all").unwrap(), P58_I8 | P58_BW);
+        assert_eq!(ink58_bits("i8,bw").unwrap(), P58_I8 | P58_BW);
+        assert!(ink58_bits("i16").is_err());
+        assert!(PLUGINS.contains(&"ink_p58"));
+        // every local / global trunk shape the re-tiles take is whole 64-column tiles (sink keeps the parent)
+        for n in [512u64, 1536, 192, 2304] {
+            assert_eq!(n % P58_I8_TILE.1, 0);
+            assert_eq!(n % P58_BW_COLS, 0);
+        }
     }
 
     #[test]

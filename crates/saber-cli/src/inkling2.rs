@@ -140,7 +140,34 @@ pub const INK57_CONTROL: &str = "--ink-p49 ks";
 /// bf16 raw / `c16` bf16 coded (a NUMERICS arm: each rank's partial rounded to bf16 before the add);
 /// `p<N>` = the stage count (1..8, default 1), `r<N>` = the smallest reduce it takes (rows, default 128:
 /// above every decode / verify form, so no captured graph takes it).
-pub const DEFAULT_INK55: &str = "none";
+/// INK61: `c16` IS THE DEFAULT (the user's word 2026-11-27: "proceed with recommended changes and stack
+/// small gains too" = the c16 flip approved on INK60's KL harness: top-5 KL +2.01 % [-1.19, +5.31] vs the
+/// control, inside the +-3.2 % perturbation floor; served prefill +7.7..+9.2 %); `INK55_CONTROL`
+/// (`--ink-p55 none`) = the rollback (the pulled f32 exchange). One card has no exchange: inert there.
+pub const DEFAULT_INK55: &str = "c16";
+pub const INK55_CONTROL: &str = "--ink-p55 none";
+/// INK58: `--ink-p58` -- byte-equal prefill trunk re-tiles (`hip/ink_p58.hip`; `none` = off, THE
+/// DEFAULT and the control): `i8` = the 8-bit trunk's b16 GEMMs of a >= 128-row chunk on the LDS-staged
+/// tile `ink58_i8l_m2n1_g4x4` (byte-equal to `ink29_gemm_i8b16`), `bw` = the global layers' bf16
+/// projections on `ink58_bw_t4_s<S>` (byte-equal to `ink29_gemm_bw_s<S>`); `all` = both.
+/// INK59: `all` IS THE DEFAULT (the user's word 2026-11-27: "proceed with recommended path", on the
+/// merged-main gate; LEDGER INK59); `INK58_CONTROL` (`--ink-p58 none`) = the rollback (the shipped bodies).
+pub const DEFAULT_INK58: &str = "all";
+pub const INK58_CONTROL: &str = "--ink-p58 none";
+/// INK60: `--ink-p60` -- the f16 SCALE-FOLDED MoE prefill GEMM (`hip/ink_p60.hip`), a NUMERICS arm
+/// (`none` = off, THE DEFAULT and the control): `f16` = every prefill MoE expert GEMM that takes INK37's
+/// 64-row tile (the NVFP4 layers) or would (the MXFP8 layers at the same chunk rows) runs
+/// `ink60_f16_{nv,mx}_g*`: the block scale folded into the f16 weight at LDS staging (exact), one f32
+/// WMMA accumulation over K instead of a zero-started fp8 WMMA + one FMA a group.
+pub const DEFAULT_INK60: &str = "none";
+/// INK61: `--ink-p61` -- the byte-equal prefill stack (`hip/ink_p61.hip`; letters, `none` = off, the
+/// control): `a` = the MXFP8 expert GEMMs on INK37's 64-row tile (`ink61_mx8_tm4_n2_g*`), `b` = the
+/// prefill router + the MoE act quant in one launch (`ink61_route_q8_e128_r4`); `all` = every letter.
+/// INK61: `ab` IS THE DEFAULT (the user's word 2026-11-27: "stack small gains too" -- every byte-equal arm
+/// that is not negative, read in one stacked gate; LEDGER INK61); `INK61_CONTROL` (`--ink-p61 none`) =
+/// the rollback (the shipped bodies).
+pub const DEFAULT_INK61: &str = "ab";
+pub const INK61_CONTROL: &str = "--ink-p61 none";
 /// INK54: `--ink-p54` -- serve-plane scheduling arms (default `none` = the control): `il<N>` = after a
 /// prefill chunk that ran while sequences decode, N decode-only steps before the next chunk
 /// (`PrefillChunking::yield_steps`; the schedule only, every row's bytes are its own).
@@ -529,9 +556,26 @@ pub struct InkFlags {
     /// INK49: split-key decode attention (`DEFAULT_INK49` = ks,rv4 since INK57; `ks` = INK52's, `none` = no split): ks | kt | kd, rv | rv1 | rv3 | rv4, t<N>, w<N>, g<N>
     #[arg(long = "ink-p49", default_value = DEFAULT_INK49)]
     pub ink49: String,
-    /// INK55: the prefill reduce wire (`DEFAULT_INK55` = none = the control): x32 | c32 | b16 | c16, p<N>, r<N>
+    /// INK55: the prefill reduce wire (`DEFAULT_INK55` = c16 since INK61; none = the control): x32 | c32 | b16 | c16, p<N>, r<N>
     #[arg(long = "ink-p55", default_value = DEFAULT_INK55)]
     pub ink55: String,
+    /// INK58: byte-equal prefill trunk re-tiles (`DEFAULT_INK58` = all since INK59; none = the control): i8 | bw | all
+    #[arg(long = "ink-p58", default_value = DEFAULT_INK58)]
+    pub ink58: String,
+    /// INK60: the f16 scale-folded MoE prefill GEMM (`DEFAULT_INK60` = none = the control): f16
+    #[arg(long = "ink-p60", default_value = DEFAULT_INK60)]
+    pub ink60: String,
+    /// INK61: the byte-equal prefill stack (`DEFAULT_INK61` = ab; `none` = the control): letters a | b, all
+    #[arg(long = "ink-p61", default_value = DEFAULT_INK61)]
+    pub ink61: String,
+    /// INK60: `--ink-run pfc` scores EVERY row of each chunk (the head over all rows): rank 0 writes
+    /// `pfk_<id>.bin` with each row's argmax, log-sum-exp, own top-K (ids + logprobs) and the logprobs at
+    /// the reference's top-20 ids (`--ink-pfk-ref`); 0 = off (the chunk-end rows only)
+    #[arg(long, default_value_t = 0)]
+    pub ink_pfk: u32,
+    /// INK60: the reference's top-20 ids a position (`<dir>/<id>.i32`, [rows, 20] i32 little-endian)
+    #[arg(long)]
+    pub ink_pfk_ref: Option<PathBuf>,
     /// INK54: serve-plane scheduling arms (`DEFAULT_INK54` = none = the control): il<N>
     #[arg(long = "ink-p54", default_value = DEFAULT_INK54)]
     pub ink54: String,
@@ -840,6 +884,11 @@ impl Default for InkFlags {
             ink40: DEFAULT_INK40.into(),
             ink49: DEFAULT_INK49.into(),
             ink55: DEFAULT_INK55.into(),
+            ink58: DEFAULT_INK58.into(),
+            ink60: DEFAULT_INK60.into(),
+            ink61: DEFAULT_INK61.into(),
+            ink_pfk: 0,
+            ink_pfk_ref: None,
             ink54: DEFAULT_INK54.into(),
             ink43: DEFAULT_INK43.into(),
             ink_p43_trace: false,
