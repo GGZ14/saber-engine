@@ -3677,6 +3677,26 @@ pub const SIG_INK37_ROUTE: &[SigArg] = &[
     a("t", I32),
 ];
 
+/// INK61 `ink61_route_q8_e128_r4`: `SIG_INK37_ROUTE` + the act quant's codes / row scales
+/// (`ink_act_quant_rows` of the u it writes, in the same launch).
+pub const SIG_INK61_ROUTE_Q8: &[SigArg] = &[
+    a("h", Buffer),
+    a("ld_h", I32),
+    a("gain", Buffer),
+    a("wr", Buffer),
+    a("bias", Buffer),
+    a("u", Buffer),
+    a("ld_u", I32),
+    a("ids", Buffer),
+    a("wts", Buffer),
+    a("d", I32),
+    a("route_scale", F32),
+    a("t", I32),
+    a("q", Buffer),
+    a("ld_q", I32),
+    a("qs", Buffer),
+];
+
 /// `ink_swiglu_softcap`.
 pub const SIG_INK_SWIGLU: &[SigArg] = &[
     a("gu", Buffer),
@@ -5077,11 +5097,17 @@ fn ink_signature(kernel: &str) -> Option<&'static [SigArg]> {
         "ink29_q8_ls" | "ink29_q8_b16" => SIG_INK_ACT_Q8,
         "ink29_gemm_i8_kx2" | "ink29_gemm_i8_kx3" | "ink29_gemm_i8b16" => SIG_INK_I8_GEMM,
         k if k.starts_with("ink29_gemm_bw_s") => SIG_INK_GEMM,
+        // INK58: the byte-equal trunk re-tiles (`hip/ink_p58.hip`), the parents' arguments
+        k if k.starts_with("ink58_i8l_") => SIG_INK_I8_GEMM,
+        k if k.starts_with("ink58_bw_") => SIG_INK_GEMM,
         "ink35_gemm_bws_s6" => SIG_INK_GEMM,
         k if k.starts_with("ink29_route_sort_e128_v2") => SIG_INK_ROUTE_SORT,
         "ink37_route_sort_e128_v2_t128" => SIG_INK_ROUTE_SORT,
         "ink37_msg_out_r8" => SIG_INK37_MSG_OUT,
         "ink37_post_norm_route_e128_r4" | "ink37_post_norm_route_e128_r8" => SIG_INK37_ROUTE,
+        // INK61: the byte-equal prefill stack (`hip/ink_p61.hip`)
+        "ink61_route_q8_e128_r4" => SIG_INK61_ROUTE_Q8,
+        k if k.starts_with("ink61_mx8_") => SIG_INK_MX8_W8A8,
         "ink29_out_gate_q8" | "ink29_out_gate_q8_b16" => SIG_INK29_OUT_GATE_Q8,
         "ink29_msg_norm2" => SIG_INK29_MSG_NORM2,
         "ink_gemv_f32_w8" | "ink_gemv_n16_f32_w8" | "ink_gemm_f32_w8" => SIG_INK_W8_GEMM,
@@ -5613,6 +5639,8 @@ pub fn signature_for(kernel: &str) -> Option<&'static [SigArg]> {
         || kernel.starts_with("fn148_w4a8c_")
         || kernel.starts_with("fn151_w4a8b_")
         || kernel.starts_with("fn153_w4a8b_")
+        || kernel.starts_with("ink60_f16_")
+        || kernel.starts_with("ink62_nv_")
     {
         SIG_FN148_GROUPED
     } else if kernel.starts_with("macfn7_back_h2_far_") {

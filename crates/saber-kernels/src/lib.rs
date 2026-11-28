@@ -276,6 +276,14 @@ pub fn rule_table_for_plugin(plugin: &str) -> Option<&'static str> {
         "ink_ks49" => "noop_gfx1201.toml",
         // INK55: the prefill reduce wire (staged push, f32 / bf16, raw / exponent-group coded).
         "ink_xw55" => "noop_gfx1201.toml",
+        // INK58: the byte-equal prefill trunk re-tiles (LDS-staged iu8 b16, bf16 n-subtile reuse).
+        "ink_p58" => "noop_gfx1201.toml",
+        // INK60: the f16 scale-folded MoE prefill GEMM (a numerics arm, `--ink-p60 f16`).
+        "ink_p60" => "noop_gfx1201.toml",
+        // INK61: the byte-equal prefill stack (MXFP8 64-row tile, router + act quant).
+        "ink_p61" => "noop_gfx1201.toml",
+        // INK62: byte-equal NVFP4 MoE prefill GEMM schedules (pipelined slab, 64 x 256 tile).
+        "ink_p62" => "noop_gfx1201.toml",
         // INK55 task C: the key-split prefill attention (global layers, late chunks; a numerics arm).
         "ink_fa55" => "noop_gfx1201.toml",
         // INK54: the row-shared split-key verify attention (byte-equal to ink_ks49_part's rows).
@@ -839,6 +847,10 @@ pub mod prebuilt {
         ("ink_p37.hsaco", "ink37_post_norm_route_e128_r4"),
         ("ink_ks49.hsaco", "ink_ks49_part"),
         ("ink_xw55.hsaco", "ink_xw55_c32"),
+        ("ink_p58.hsaco", "ink58_i8l_m2n1_g4x4"),
+        ("ink_p60.hsaco", "ink60_f16_nv_g1"),
+        ("ink_p61.hsaco", "ink61_mx8_tm4_n1_g1"),
+        ("ink_p62.hsaco", "ink62_nv_p_g1"),
         ("ink_fa55.hsaco", "ink_fa55_ks128"),
         ("ink_ks54.hsaco", "ink_ks54_rv1"),
         ("ink_vt.hsaco", "ink_xsdc"),

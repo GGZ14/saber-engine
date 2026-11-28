@@ -22,6 +22,14 @@
 # INK52 / INK57: split-key decode attention + the row-shared verify body (`--ink-p49 ks,rv4`) is the default
 # (long-context decode / verify; byte-equal at <= 2,048 keys; rv4 byte-equal to ks per row). Rollbacks: pass
 # `--ink-p49 ks` (INK52's per-row verify) or `--ink-p49 none` (no split).
+# INK59: the byte-equal prefill trunk re-tiles (`--ink-p58 all`, INK58) are the default. Rollback: pass
+# `--ink-p58 none` (the shipped trunk bodies).
+# INK61: the bf16 coded prefill reduce wire (`--ink-p55 c16`, INK55 / INK60's KL) is the default. Rollback:
+# pass `--ink-p55 none` (the pulled f32 exchange).
+# INK61: the byte-equal prefill stack (`--ink-p61 ab`: the MXFP8 64-row tile + the router with the act quant)
+# is the default. Rollback: pass `--ink-p61 none` (the shipped bodies).
+# INK62: the NVFP4 MoE prefill GEMM on the 64 x 256 tile with the prefetched slab (`--ink-p62 w`, byte-equal)
+# is the default. Rollback: pass `--ink-p62 none` (FN153's 64 x 128 tile).
 # OpenAI-compatible: /v1/models, /v1/chat/completions, /v1/completions; served name Inkling-2-Mini.
 # Logs: podman logs -f saber-inkling-serve. Refuses to start while another Saber server holds the cards.
 set -uo pipefail
