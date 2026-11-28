@@ -58,7 +58,7 @@ const ALPHA: f32 = 0.1;
 const EXT: u64 = 1024;
 
 /// The code objects this path launches.
-pub const PLUGINS: [&str; 38] = [
+pub const PLUGINS: [&str; 39] = [
     "ink_loop",
     "ink_glue",
     "ink_attn",
@@ -96,6 +96,8 @@ pub const PLUGINS: [&str; 38] = [
     "ink_p60",
     // INK61: the byte-equal prefill stack (MXFP8 64-row tile, router + act quant)
     "ink_p61",
+    // INK62: byte-equal NVFP4 MoE prefill GEMM schedules
+    "ink_p62",
     // INK55 task C: the key-split prefill attention (global layers, late chunks)
     "ink_fa55",
     // INK54: the row-shared split-key verify attention
@@ -722,6 +724,97 @@ fn p61_line(c: &Card<'_, '_>, f: &InkFlags, tag: &str, rank: u32) {
             f.ink61, c.p61, c.p61_n[0], c.p61_n[1]
         );
     }
+}
+
+/// INK62 `--ink-p62` letters (hip/ink_p62.hip): schedules of the NVFP4 MoE prefill GEMM, each byte-equal
+/// per row to FN153's `fn153_w4a8b_pf_tm4_g*` (INK37's `moe` cell) wherever that 64-row tile fires:
+/// `p` = the parent's 64 x 128 tile, the next slab prefetched into registers; `w` = 64 x 256 (a wave = 4
+/// row x 2 column fragments); `t` = 128 x 128 on the route sort's 128-row tables (INK37's `moe8` sort).
+/// One body runs a visit: the first of w, t, p that is set (w = the twin's fastest at the 2,048-row chunk).
+pub const P62_P: u32 = 1;
+pub const P62_W: u32 = 2;
+pub const P62_T: u32 = 4;
+
+/// INK62: `--ink-p62` -> item bits (`none` / empty = 0, the control): letters p / w / t (comma
+/// separated or not), `all` = every letter.
+pub fn ink62_bits(v: &str) -> anyhow::Result<u32> {
+    let mut b = 0;
+    for it in v
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && *x != "none")
+    {
+        if it == "all" {
+            b |= P62_P | P62_W | P62_T;
+            continue;
+        }
+        for ch in it.chars() {
+            b |= match ch {
+                'p' => P62_P,
+                'w' => P62_W,
+                't' => P62_T,
+                o => anyhow::bail!(
+                    "--ink-p62 {it:?} ({o:?}): letters p (prefetched slab) | w (64 x 256) | t (128 x 128) | all | none (the control)"
+                ),
+            };
+        }
+    }
+    Ok(b)
+}
+
+/// INK62: the body a sorted NVFP4 prefill visit runs under `bits` (the first of w, t, p set):
+/// (gate_up symbol, down symbol, columns a workgroup, tile rows, letter index).
+pub fn p62_body(bits: u32) -> Option<(&'static str, &'static str, u64, u64, usize)> {
+    if bits & P62_W != 0 {
+        Some(("ink62_nv_w_g1", "ink62_nv_w_g0", 256, 64, 1))
+    } else if bits & P62_T != 0 {
+        Some(("ink62_nv_t_g1", "ink62_nv_t_g0", 128, 128, 2))
+    } else if bits & P62_P != 0 {
+        Some(("ink62_nv_p_g1", "ink62_nv_p_g0", 128, 64, 0))
+    } else {
+        None
+    }
+}
+
+/// INK62: the flag's bits + the boot line (the control named).
+fn p62_setup(c: &mut Card<'_, '_>, f: &InkFlags) -> anyhow::Result<()> {
+    c.p62 = ink62_bits(&f.ink62)?;
+    c.p62_routes = f.ink_p62_routes;
+    println!(
+        "INK62 boot: --ink-p62 {:?} = 0x{:x} (byte-equal NVFP4 MoE prefill GEMM schedules: p = prefetched slab, w = \
+         64 x 256, t = 128 x 128; the default `w` since INK62, `{}` = FN153's tile){}",
+        f.ink62,
+        c.p62,
+        crate::inkling2::INK62_CONTROL,
+        if c.p62_routes { "; route census ON (a sync a visit)" } else { "" }
+    );
+    Ok(())
+}
+
+/// INK62: the end line (visits by letter) + the route census file.
+fn p62_line(c: &Card<'_, '_>, f: &InkFlags, tag: &str, rank: u32) -> anyhow::Result<()> {
+    if c.p62 != 0 {
+        println!(
+            "INK62 {tag} rank{rank}: p62 {:?} (0x{:x}): nvfp4 visits p {} / w {} / t {}",
+            f.ink62, c.p62, c.p62_n[0], c.p62_n[1], c.p62_n[2]
+        );
+    }
+    if c.p62_routes {
+        let v: Vec<Value> = c
+            .routes62
+            .iter()
+            .map(|(t, rows)| json!({"t": t, "rows": rows}))
+            .collect();
+        let n = v.len();
+        if let Some(d) = &f.ink_out {
+            std::fs::write(
+                d.join(format!("routes62_{tag}_rank{rank}.json")),
+                serde_json::to_vec(&json!({"visits": v}))?,
+            )?;
+        }
+        println!("INK62 {tag} rank{rank}: route census {n} visits");
+    }
+    Ok(())
 }
 
 /// INK61: the boot line of the prefill reduce wire (`c16` the default since INK61, the rollback named;
@@ -1824,6 +1917,12 @@ pub struct Card<'h, 'm> {
     /// INK61: `--ink-p61` letters + (a: MXFP8 64-row visits, b: fused router + quant launches)
     pub p61: u32,
     pub p61_n: [u64; 2],
+    /// INK62: `--ink-p62` letters + NVFP4 visits by letter (p, w, t, u); the route census
+    /// (`--ink-p62-routes`: per sorted NVFP4 visit, the chunk rows + each local expert's live rows)
+    pub p62: u32,
+    pub p62_n: [u64; 3],
+    pub p62_routes: bool,
+    pub routes62: Vec<(u64, Vec<u32>)>,
     /// INK60 `--ink-pfk`: a pass's head runs every row in 8-row GEMV launches
     pub pfk_head: bool,
     /// INK54: the row-shared verify launches
@@ -1950,6 +2049,10 @@ impl<'h, 'm> Card<'h, 'm> {
             p60_cnt: 0,
             p61: 0,
             p61_n: [0; 2],
+            p62: 0,
+            p62_n: [0; 3],
+            p62_routes: false,
+            routes62: Vec::new(),
             pfk_head: false,
             p54_n: 0,
             p54: P54 {
@@ -5380,7 +5483,15 @@ impl Forward<'_> {
                 && c.p35_live
                 && kind == "mxfp8_native"
                 && p37_rows(c.p37 | P37_MOE, t).is_some();
-            let tr = if p60 || p61a {
+            // INK62: the NVFP4 cell's byte-equal schedules where INK37's 64-row tile fires (`moe`, not `moe8`)
+            let p62 = if !p60 && kind == "nvfp4_native" && p37r == Some(64) {
+                p62_body(c.p62)
+            } else {
+                None
+            };
+            let tr = if let Some((.., rows, _)) = p62 {
+                rows
+            } else if p60 || p61a {
                 64
             } else if let Some(r) = p37r {
                 r
@@ -5464,6 +5575,25 @@ impl Forward<'_> {
             let dn = c.take(Reg::Visit, maxrows * D * 2, "dn")?;
             let mut a1 = vec![A::P(a8), A::P(xgu)];
             a1.extend(tt.iter().cloned());
+            if c.p62_routes && kind == "nvfp4_native" && p37r.is_some() {
+                // INK62 census: the tables are on the card after the sort (a sync: census runs only;
+                // the pending merged zero run is issued first, as the next launch would)
+                c.flush_z()?;
+                c.hip.sync_stream(&c.stream)?;
+                let rd = |c: &Card<'_, '_>, a: u64, n: u64| -> anyhow::Result<Vec<u32>> {
+                    Ok(c.read(a, n as usize * 4)?
+                        .chunks_exact(4)
+                        .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+                        .collect())
+                };
+                let nt = u64::from(rd(c, meta, 1)?[0]);
+                let (tex, tnv) = (rd(c, te, nt)?, rd(c, tn, nt)?);
+                let mut rows = vec![0u32; nloc as usize];
+                for (e, n) in tex.iter().zip(&tnv) {
+                    rows[*e as usize] += n;
+                }
+                c.routes62.push((t, rows));
+            }
             let (s1, s0) = match kind {
                 "nvfp4_native" if p60 => {
                     c.p60_n[0] += 1;
@@ -5477,6 +5607,12 @@ impl Forward<'_> {
                     "moe_grouped_w4a8_bk128_ks1_tm1_g1",
                     "moe_grouped_w4a8_bk128_ks1_tm1_g0",
                 ),
+                "nvfp4_native" if p62.is_some() => {
+                    let (g1, g0, _, _, li) = p62.unwrap_or_default();
+                    c.p62_n[li] += 1;
+                    c.p37_n[0] += 1;
+                    (g1, g0)
+                }
                 "nvfp4_native" if p37r.is_some() => {
                     c.p37_n[0] += 1;
                     if tr == 128 {
@@ -5525,7 +5661,9 @@ impl Forward<'_> {
                 }
             }
             // INK60: the NVFP4 f16 body (nv2) is 256 columns a workgroup
-            let bn = if p60 && kind == "nvfp4_native" {
+            let bn = if let Some((_, _, b, ..)) = p62 {
+                b
+            } else if p60 && kind == "nvfp4_native" {
                 256
             } else if p61a {
                 P61_MX8_BN
@@ -6642,6 +6780,7 @@ pub fn run(
     p58_boot_line(f, c.p58);
     p60_setup(&mut c, f)?;
     p61_setup(&mut c, f)?;
+    p62_setup(&mut c, f)?;
     c.p54 = ink54_bits(&f.ink54)?;
     if c.p49 != P49_OFF {
         println!(
@@ -7055,6 +7194,7 @@ fn run_one_card(
     p58_boot_line(f, c.p58);
     p60_setup(&mut c, f)?;
     p61_setup(&mut c, f)?;
+    p62_setup(&mut c, f)?;
     c.p54 = ink54_bits(&f.ink54)?;
     if c.p49 != P49_OFF {
         println!(
@@ -7101,6 +7241,7 @@ fn run_one_card(
     p58_line(&c, f, "serve1", 0);
     p60_line(&c, f, "serve1", 0)?;
     p61_line(&c, f, "serve1", 0);
+    p62_line(&c, f, "serve1", 0)?;
     drop(fw);
     drop(c);
     drop(ps);
@@ -7195,6 +7336,7 @@ fn rank_main(
     p58_boot_line(f, c.p58);
     p60_setup(&mut c, f)?;
     p61_setup(&mut c, f)?;
+    p62_setup(&mut c, f)?;
     c.p54 = ink54_bits(&f.ink54)?;
     if c.p49 != P49_OFF {
         println!(
@@ -7225,6 +7367,7 @@ fn rank_main(
     c.p58 = ink58_bits(&f.ink58)?;
     p60_setup(&mut c, f)?;
     p61_setup(&mut c, f)?;
+    p62_setup(&mut c, f)?;
     let pwin55 = match c.p55.mode {
         Some(m) if dev => {
             ensure!(
@@ -7306,6 +7449,7 @@ fn rank_main(
         p58_line(&c, f, "serve", rank);
         p60_line(&c, f, "serve", rank)?;
         p61_line(&c, f, "serve", rank);
+        p62_line(&c, f, "serve", rank)?;
         drop(fw);
         drop(peer);
         drop(c);
@@ -7797,6 +7941,7 @@ fn rank_main(
     p55_line(&c, f, tag, rank);
     p58_line(&c, f, tag, rank);
     p61_line(&c, f, tag, rank);
+    p62_line(&c, f, tag, rank)?;
     if c.p49 != P49_OFF {
         println!(
             "INK49 {tag} rank{rank}: p49 {:?} ({:?}): split launches target {} / drafter {}; INK54 row-shared verify {}",
@@ -9853,6 +9998,42 @@ mod tests {
         }
         for k in [I, D] {
             assert_eq!(k % 128, 0);
+        }
+    }
+
+    #[test]
+    fn ink62_the_nvfp4_moe_schedules_parse_and_w_is_the_default() {
+        assert_eq!(ink62_bits(crate::inkling2::DEFAULT_INK62).unwrap(), P62_W);
+        assert_eq!(crate::inkling2::INK62_CONTROL, "--ink-p62 none");
+        assert_eq!(
+            ink62_bits(crate::inkling2::INK62_CONTROL.trim_start_matches("--ink-p62 ")).unwrap(),
+            0
+        );
+        assert_eq!(ink62_bits("").unwrap(), 0);
+        assert_eq!(ink62_bits("p").unwrap(), P62_P);
+        assert_eq!(ink62_bits("w").unwrap(), P62_W);
+        assert_eq!(ink62_bits("t,p").unwrap(), P62_T | P62_P);
+        assert_eq!(ink62_bits("all").unwrap(), P62_P | P62_W | P62_T);
+        assert!(ink62_bits("q").is_err());
+        assert!(PLUGINS.contains(&"ink_p62"));
+        // one body a visit: w, then t, then p
+        assert_eq!(p62_body(0), None);
+        assert_eq!(p62_body(P62_P | P62_W).map(|b| b.0), Some("ink62_nv_w_g1"));
+        assert_eq!(
+            p62_body(ink62_bits("all").unwrap()).map(|b| b.0),
+            Some("ink62_nv_w_g1")
+        );
+        assert_eq!(p62_body(P62_T | P62_P).map(|b| b.0), Some("ink62_nv_t_g1"));
+        // N (2 I gate_up, D down) whole tiles of every body's columns, K whole 64-deep slabs
+        for bits in [P62_P, P62_W, P62_T] {
+            let (_, _, bn, rows, _) = p62_body(bits).unwrap();
+            for n in [2 * I, D] {
+                assert_eq!(n % bn, 0);
+            }
+            assert!(rows == 64 || rows == 128);
+        }
+        for k in [I, D] {
+            assert_eq!(k % 64, 0);
         }
     }
 

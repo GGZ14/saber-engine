@@ -395,12 +395,12 @@ picks it, `--ink-dflash2-path DIR` another drafter pack. **Long context:** decod
 verify rows share one pass over them (`--ink-p49 ks,rv4`, the default; byte-equal to the unsplit path up to 2,048
 keys). At a 32k context with the drafter the shared verify pass adds +17-25 % decode over the split alone
 (`--ink-p49 ks`), which itself added +7-29 % over no split (`--ink-p49 none`); short contexts are unchanged.
-**Prefill:** the trunk re-tiles (`--ink-p58 all`) and the MXFP8 64-row expert tile with the router and activation
-quant fused (`--ink-p61 ab`) are byte-equal to the earlier bodies; the cross-card prefill reduce sends a bf16 coded
-wire (`--ink-p55 c16`, a numerics change whose decode KL sits inside the measured perturbation floor). All three are
-the default (`none` is each one's rollback). Two cards, one sequence: 5,940 / 6,307 / 6,224 / 6,156 / 5,980 / 5,659
-tok/s at 1k / 2k / 4k / 8k / 16k / 32k prompt tokens (TTFT 5.79 s at 32k), +8.8-10.5 % over the previous defaults
-(`--ink-p55 none --ink-p61 none`).
+**Prefill:** the trunk re-tiles (`--ink-p58 all`), the MXFP8 64-row expert tile with the router and activation
+quant fused (`--ink-p61 ab`) and the NVFP4 expert GEMM on a 64 x 256 tile with the next slab prefetched
+(`--ink-p62 w`) are byte-equal to the earlier bodies; the cross-card prefill reduce sends a bf16 coded wire
+(`--ink-p55 c16`, a numerics change whose decode KL sits inside the measured perturbation floor). All four are the
+default (`none` is each one's rollback). Two cards, one sequence: 6,045 / 6,451 / 6,364 / 6,292 / 6,114 / 5,778
+tok/s at 1k / 2k / 4k / 8k / 16k / 32k prompt tokens (TTFT 5.67 s at 32k), +2.3-3.1 % over `--ink-p62 none`.
 Text only, 4,096 tokens a sequence by default (`--ink-serve-ctx` raises it), up to 8 sequences.
 One download serves both layouts: the pack's `tp1/` folder (286 KB) is the one-card view of the same files
 (`tools/pack/build_ink2_tp1.py`, checked by `tools/pack/check_ink2_tp1.py`). On one R9700 the weights take

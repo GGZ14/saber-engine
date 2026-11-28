@@ -282,6 +282,8 @@ pub fn rule_table_for_plugin(plugin: &str) -> Option<&'static str> {
         "ink_p60" => "noop_gfx1201.toml",
         // INK61: the byte-equal prefill stack (MXFP8 64-row tile, router + act quant).
         "ink_p61" => "noop_gfx1201.toml",
+        // INK62: byte-equal NVFP4 MoE prefill GEMM schedules (pipelined slab, 64 x 256 tile).
+        "ink_p62" => "noop_gfx1201.toml",
         // INK55 task C: the key-split prefill attention (global layers, late chunks; a numerics arm).
         "ink_fa55" => "noop_gfx1201.toml",
         // INK54: the row-shared split-key verify attention (byte-equal to ink_ks49_part's rows).
@@ -848,6 +850,7 @@ pub mod prebuilt {
         ("ink_p58.hsaco", "ink58_i8l_m2n1_g4x4"),
         ("ink_p60.hsaco", "ink60_f16_nv_g1"),
         ("ink_p61.hsaco", "ink61_mx8_tm4_n1_g1"),
+        ("ink_p62.hsaco", "ink62_nv_p_g1"),
         ("ink_fa55.hsaco", "ink_fa55_ks128"),
         ("ink_ks54.hsaco", "ink_ks54_rv1"),
         ("ink_vt.hsaco", "ink_xsdc"),

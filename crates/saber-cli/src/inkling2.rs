@@ -168,6 +168,16 @@ pub const DEFAULT_INK60: &str = "none";
 /// the rollback (the shipped bodies).
 pub const DEFAULT_INK61: &str = "ab";
 pub const INK61_CONTROL: &str = "--ink-p61 none";
+/// INK62: `--ink-p62` -- byte-equal schedules of the NVFP4 MoE PREFILL GEMM (`hip/ink_p62.hip`; letters,
+/// `none` = off, THE DEFAULT and the control = FN153's `fn153_w4a8b_pf_tm4_g*`): `p` = the parent's
+/// 64 x 128 tile with the next slab's A / W / scale words loaded into registers while the current slab
+/// computes (`ink62_nv_p_g*`), `w` = the same on a 64 x 256 tile, a wave = 4 row x 2 column fragments
+/// (`ink62_nv_w_g*`), `t` = 128 x 128 on the 128-row sort tables (`ink62_nv_t_g*`); one body a visit (w,
+/// then t, then p); `all` = every letter. Byte-equal per row to the shipped tile wherever INK37's 64-row
+/// tile fires. INK62: `w` IS THE DEFAULT (the stacked byte-equal gate passed; LEDGER INK62);
+/// `INK62_CONTROL` (`--ink-p62 none`) = the rollback (FN153's tile).
+pub const DEFAULT_INK62: &str = "w";
+pub const INK62_CONTROL: &str = "--ink-p62 none";
 /// INK54: `--ink-p54` -- serve-plane scheduling arms (default `none` = the control): `il<N>` = after a
 /// prefill chunk that ran while sequences decode, N decode-only steps before the next chunk
 /// (`PrefillChunking::yield_steps`; the schedule only, every row's bytes are its own).
@@ -568,6 +578,13 @@ pub struct InkFlags {
     /// INK61: the byte-equal prefill stack (`DEFAULT_INK61` = ab; `none` = the control): letters a | b, all
     #[arg(long = "ink-p61", default_value = DEFAULT_INK61)]
     pub ink61: String,
+    /// INK62: byte-equal NVFP4 MoE prefill GEMM schedules (`DEFAULT_INK62` = w; none = the control): letters p | w | t, all
+    #[arg(long = "ink-p62", default_value = DEFAULT_INK62)]
+    pub ink62: String,
+    /// INK62 census: every sorted NVFP4 prefill MoE visit's per-expert live rows read back (a sync a
+    /// visit: a census run only, never a timing run) -> `routes62_rank<r>.json` in `--ink-out`
+    #[arg(long, hide = true)]
+    pub ink_p62_routes: bool,
     /// INK60: `--ink-run pfc` scores EVERY row of each chunk (the head over all rows): rank 0 writes
     /// `pfk_<id>.bin` with each row's argmax, log-sum-exp, own top-K (ids + logprobs) and the logprobs at
     /// the reference's top-20 ids (`--ink-pfk-ref`); 0 = off (the chunk-end rows only)
@@ -887,6 +904,8 @@ impl Default for InkFlags {
             ink58: DEFAULT_INK58.into(),
             ink60: DEFAULT_INK60.into(),
             ink61: DEFAULT_INK61.into(),
+            ink62: DEFAULT_INK62.into(),
+            ink_p62_routes: false,
             ink_pfk: 0,
             ink_pfk_ref: None,
             ink54: DEFAULT_INK54.into(),

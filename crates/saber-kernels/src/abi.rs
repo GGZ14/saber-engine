@@ -5640,6 +5640,7 @@ pub fn signature_for(kernel: &str) -> Option<&'static [SigArg]> {
         || kernel.starts_with("fn151_w4a8b_")
         || kernel.starts_with("fn153_w4a8b_")
         || kernel.starts_with("ink60_f16_")
+        || kernel.starts_with("ink62_nv_")
     {
         SIG_FN148_GROUPED
     } else if kernel.starts_with("macfn7_back_h2_far_") {

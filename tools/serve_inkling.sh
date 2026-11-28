@@ -28,6 +28,8 @@
 # pass `--ink-p55 none` (the pulled f32 exchange).
 # INK61: the byte-equal prefill stack (`--ink-p61 ab`: the MXFP8 64-row tile + the router with the act quant)
 # is the default. Rollback: pass `--ink-p61 none` (the shipped bodies).
+# INK62: the NVFP4 MoE prefill GEMM on the 64 x 256 tile with the prefetched slab (`--ink-p62 w`, byte-equal)
+# is the default. Rollback: pass `--ink-p62 none` (FN153's 64 x 128 tile).
 # OpenAI-compatible: /v1/models, /v1/chat/completions, /v1/completions; served name Inkling-2-Mini.
 # Logs: podman logs -f saber-inkling-serve. Refuses to start while another Saber server holds the cards.
 set -uo pipefail
