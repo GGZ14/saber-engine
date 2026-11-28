@@ -2249,3 +2249,133 @@ async fn a_dropped_blocking_request_aborts_the_engine_request() {
     }
     assert_eq!(engine.aborted().len(), 1, "no abort after {waited:?}");
 }
+
+#[tokio::test]
+async fn per_request_timings_are_available_for_streaming_and_blocking_responses() {
+    for (path, stream) in [
+        ("/v1/chat/completions", false),
+        ("/v1/chat/completions", true),
+        ("/v1/completions", false),
+        ("/v1/completions", true),
+    ] {
+        let tokens = bytes_of("Measured response");
+        let (base, _) = spawn_with(
+            vec![MockScript::in_steps_of(
+                tokens.clone(),
+                3,
+                FinishReason::Stop,
+            )],
+            Duration::from_millis(2),
+        )
+        .await;
+        let body = if path.contains("chat") {
+            chat_body(json!({"stream": stream, "max_tokens": 100,
+                "chat_template_kwargs": {"enable_thinking": false}}))
+        } else {
+            json!({"model":"Qwen3.8", "prompt":"Say hi", "stream":stream, "max_tokens":100})
+        };
+        let response = reqwest::Client::new()
+            .post(format!("{base}{path}"))
+            .json(&body)
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(response.status(), 200);
+        let text = response.text().await.expect("body");
+        let timings = if stream {
+            text.lines()
+                .filter_map(|l| l.strip_prefix("data:"))
+                .filter_map(|v| serde_json::from_str::<Value>(v.trim()).ok())
+                .find_map(|v| v.get("timings").cloned())
+                .expect("terminal chunk includes timings without include_usage")
+        } else {
+            serde_json::from_str::<Value>(&text).expect("json")["timings"].clone()
+        };
+        assert!(
+            timings["prompt_n"].as_u64().unwrap() > 0,
+            "{path} {stream}: {timings}"
+        );
+        assert_eq!(timings["predicted_n"], json!(tokens.len()));
+        assert!(timings["prompt_per_second"].as_f64().unwrap() > 0.0);
+        assert!(timings["predicted_per_second"].as_f64().unwrap() > 0.0);
+    }
+}
+
+#[tokio::test]
+async fn timings_exclude_cached_prompt_tokens_from_prompt_n() {
+    let (base, engine) = spawn_with(
+        vec![MockScript::in_steps_of(
+            bytes_of("ok"),
+            1,
+            FinishReason::Stop,
+        )],
+        Duration::from_millis(2),
+    )
+    .await;
+    let prompt = "x".repeat(40);
+    engine.set_cached_tokens(Some(30));
+    let response: Value = reqwest::Client::new()
+        .post(format!("{base}/v1/completions"))
+        .json(&json!({"model":"Qwen3.8", "prompt": prompt, "max_tokens": 10}))
+        .send()
+        .await
+        .expect("request")
+        .json()
+        .await
+        .expect("json");
+    let timings = &response["timings"];
+    let total = response["usage"]["prompt_tokens"].as_u64().unwrap();
+    assert_eq!(timings["cache_n"], json!(30), "{timings}");
+    assert_eq!(
+        timings["prompt_n"].as_u64().unwrap(),
+        total - 30,
+        "{timings}"
+    );
+    let expected =
+        timings["prompt_n"].as_f64().unwrap() * 1000.0 / timings["prompt_ms"].as_f64().unwrap();
+    assert!((timings["prompt_per_second"].as_f64().unwrap() - expected).abs() < 1e-6);
+}
+
+#[tokio::test]
+async fn concurrent_requests_keep_their_own_token_counts_and_timings() {
+    let (base, _) = spawn_with(
+        vec![
+            MockScript::in_steps_of(bytes_of("first measured answer"), 2, FinishReason::Stop),
+            MockScript::in_steps_of(bytes_of("second measured answer"), 2, FinishReason::Stop),
+        ],
+        Duration::from_millis(3),
+    )
+    .await;
+    let client = reqwest::Client::new();
+    let request = |prompt: &'static str| {
+        let client = client.clone();
+        let url = format!("{base}/v1/completions");
+        async move {
+            client
+                .post(url)
+                .json(&json!({"model":"Qwen3.8", "prompt":prompt,
+                "max_tokens":100}))
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        }
+    };
+    let (a, b) = tokio::join!(request("a"), request("a longer input"));
+    assert_eq!(a["timings"]["prompt_n"], json!(1));
+    assert_eq!(b["timings"]["prompt_n"], json!(14));
+    for response in [a, b] {
+        assert_eq!(
+            response["timings"]["predicted_n"],
+            response["usage"]["completion_tokens"]
+        );
+        assert!(
+            response["timings"]["predicted_per_second"]
+                .as_f64()
+                .unwrap()
+                > 0.0
+        );
+    }
+}

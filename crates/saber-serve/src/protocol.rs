@@ -400,8 +400,25 @@ pub struct ChatChoice {
     pub token_ids: Option<Vec<u32>>,
 }
 
+/// Per-request wall-clock rates for llama.cpp-compatible metrics consumers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResponseTimings {
+    /// Prompt tokens actually evaluated (cache-reused prefix excluded), as in llama.cpp.
+    pub prompt_n: u64,
+    /// Prompt tokens served from the prefix cache.
+    #[serde(default)]
+    pub cache_n: u64,
+    pub predicted_n: u64,
+    pub prompt_ms: f64,
+    pub predicted_ms: f64,
+    pub prompt_per_second: f64,
+    pub predicted_per_second: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatCompletionResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timings: Option<ResponseTimings>,
     pub id: String,
     pub object: &'static str,
     pub created: u64,
@@ -466,6 +483,8 @@ pub struct ChunkChoice {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatCompletionChunk {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timings: Option<ResponseTimings>,
     pub id: String,
     pub object: &'static str,
     pub created: u64,
@@ -527,6 +546,8 @@ pub struct CompletionStreamChoice {
 /// fingerprint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompletionStreamChunk {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timings: Option<ResponseTimings>,
     pub id: String,
     pub object: &'static str,
     pub created: u64,
@@ -540,6 +561,8 @@ pub struct CompletionStreamChunk {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompletionResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timings: Option<ResponseTimings>,
     pub id: String,
     pub object: &'static str,
     pub created: u64,
